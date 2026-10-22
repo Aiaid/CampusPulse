@@ -1,0 +1,36 @@
+# Pre-hackathon material stays on this machine.
+/local-reference/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+.ssid
+*.pem
+*.key
+
+# Runtime observations and databases
+captures/
+data/
+*.sqlite*
+*.db
+*.db-*
+*.log
+
+# Build outputs and environments
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+node_modules/
+dist/
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
