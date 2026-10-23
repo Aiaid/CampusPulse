@@ -117,7 +117,10 @@ instructions take precedence.
   The proposed baseline is Workers Static Assets + Workers API + D1.
 - The upload design is `docs/specs/ingest-v1.md`: separate window/raw/status
   streams; research raw batches use private R2 and independent durable receipts.
-  It is a design draft, not an implemented or hardware-validated protocol.
+  Its first server slice is implemented and locally verified; see
+  `docs/notes/backend-ingestion.md` for limitations and verified Cloudflare
+  deployment/demo acceptance. Firmware, physical-node onboarding and hardware
+  acceptance remain pending.
 - If board drivers are reused from `aipassport/ai-passport/components/bsp`, preserve
   their pin mapping, copyright, and license. Do not initialize unused audio.
 - On the AI Passport, preserve the 3 MB application partition and `cardid` at

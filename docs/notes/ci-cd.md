@@ -28,6 +28,7 @@ Set these repository Actions variables:
 | --- | --- |
 | `CLOUDFLARE_ACCOUNT_ID` | Target Cloudflare account ID |
 | `CLOUDFLARE_D1_DATABASE_ID` | UUID from `wrangler d1 create campuspulse` |
+| `CLOUDFLARE_R2_RAW_BUCKET` | Private raw archive bucket; required for ingestion deployment |
 | `CLOUDFLARE_DEPLOYMENT_URL` | Published HTTPS origin, currently `https://campuspulse.anend.workers.dev` |
 
 Use repository-level variables for the two IDs because deployment job selection
@@ -36,6 +37,9 @@ evaluates them before entering the `production` environment. Set
 Workers Scripts Edit and D1 Edit on the intended account. If Cloudflare requires
 additional access to the account's workers.dev subdomain, grant only the relevant
 account read permission. No DNS/zone write permission is required by this workflow.
+The R2 archive is bound through the Worker; creation and privacy checks use the
+separate authorized operator session. The pipeline refuses to deploy ingestion
+without the bucket variable and verifies `raw_storage: configured` afterward.
 
 If either ID variable is absent, deployment is skipped while checks still run.
 With both IDs present, successful checks on `main` enable a serialized production
@@ -65,6 +69,21 @@ fail closed. Existing Worker secrets are preserved by deployment.
 
 GitHub environment protection rules can be added on `production` if desired;
 this workflow does not create approval requirements itself.
+
+## Main branch policy
+
+The owner's `Aiaid` account may push its own work directly to `main`; an owner
+PR is not required. Both repository rulesets list only this user as an
+always-allowed bypass actor. Other collaborators must use a PR, obtain an
+approval from code owner `@Aiaid` (the whole repository is covered by
+`.github/CODEOWNERS`), and pass the `check` status from the GitHub Actions app.
+New commits dismiss old approvals, and required checks use the latest `main`.
+
+The owner exception applies to repository push/merge gates. The deployment
+workflow still runs `check` after an owner's main push and deploys only when it
+succeeds; the owner exception does not skip tests inside the delivery pipeline.
+This reflects the owner's explicit clarification on 2026-10-23 that their own
+changes need not go through a PR.
 
 ## Initial connection status (historical)
 
@@ -143,3 +162,15 @@ Sources: [Workers pricing](https://developers.cloudflare.com/workers/platform/pr
 [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/),
 [R2 pricing](https://developers.cloudflare.com/r2/pricing/),
 [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
+
+## Ingestion cloud acceptance — 2026-10-23
+
+[Run 39921619389](https://github.com/Aiaid/CampusPulse/actions/runs/39921619389)
+published backend-only commit `6f7775a` after all checks passed. It binds private
+`campuspulse-raw`, preserves operator/research secrets and configures the 15-minute
+cleanup schedule. D1 migration 0002 is applied. Three synthetic demo streams and
+private R2 reads passed online; cross-role checks passed and the temporary node
+was disabled afterward. This supersedes earlier no-ingestion/no-R2 statements
+above; their first-release cost table is historical. No subscription upgrade or
+measured usage-cost claim is made here. Exact tests, initial Worker version and
+limits are in [backend ingestion acceptance](backend-ingestion.md).

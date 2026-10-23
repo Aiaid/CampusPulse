@@ -40,8 +40,11 @@ export interface CreateObservation {
   wait_seconds?: number;
 }
 
-export interface Env {
-  DB: D1Database;
-  ASSETS?: Fetcher;
+// Generated binding types follow wrangler.jsonc. Production may intentionally
+// omit raw storage; tests and API-only environments can omit Static Assets.
+export interface Env extends Pick<WorkerBindings, 'DB'> {
+  ASSETS?: WorkerBindings['ASSETS'];
   OPERATOR_TOKEN?: string;
+  RAW_BUCKET?: WorkerBindings['RAW_BUCKET'];
+  RESEARCH_TOKEN?: string;
 }

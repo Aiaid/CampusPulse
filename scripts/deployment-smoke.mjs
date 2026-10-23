@@ -26,6 +26,8 @@ for (let attempt = 0; attempt < 6; attempt++) {
     ]);
     assert.equal(html, expectedHtml, 'Published frontend must match this build');
     assert.equal(health.status, 'ok');
+    assert.equal(health.ingestion, 'implemented', 'Published Worker must implement ingestion');
+    assert.equal(health.raw_storage, 'configured', 'Published Worker must bind the private raw archive');
     assert.ok(Array.isArray(data.places) && data.places.some(place => place.id === 'library'), 'D1 must return seeded places');
     const assets = [...html.matchAll(/(?:src|href)="(\/assets\/[^\"]+)"/g)].map(match => match[1]);
     assert.ok(assets.length > 0, 'The frontend must reference its built assets');
