@@ -1,0 +1,47 @@
+export type PlaceKind = 'activity' | 'parking' | 'elevator';
+export interface Place {
+  id: string;
+  name: string;
+  kind: PlaceKind;
+  anchor: { x: number; y: number };
+  /** Full 24576-square GIS image coordinates normalized to [0,1]. */
+  gis_anchor?: { x: number; y: number; verified: boolean };
+  coverage: 'unconfigured';
+}
+
+export interface Observation {
+  id: string;
+  place_id: string;
+  kind: 'parking' | 'elevator';
+  source: 'manual';
+  status: 'active' | 'cancelled';
+  observed_at: string;
+  valid_until: string;
+  parking_min: number | null;
+  parking_max: number | null;
+  wait_seconds: number | null;
+}
+
+export interface PlaceSummary {
+  place: Place;
+  sensor: null;
+  latest_observation: Observation | null;
+  freshness: 'no_data' | 'fresh' | 'stale';
+  as_of: string;
+}
+
+export interface CreateObservation {
+  id: string;
+  place_id: string;
+  kind: 'parking' | 'elevator';
+  observed_at: string;
+  parking_min?: number;
+  parking_max?: number;
+  wait_seconds?: number;
+}
+
+export interface Env {
+  DB: D1Database;
+  ASSETS?: Fetcher;
+  OPERATOR_TOKEN?: string;
+}
