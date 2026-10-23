@@ -52,13 +52,20 @@ controls the attribution link. These are public source URLs, never credentials.
 
 For automated checks and deployment, see [CI/CD setup](ci-cd.md).
 
-No account or existing database is configured in this checkout. Create a D1 database
-using `npx wrangler d1 create campuspulse`, replace the placeholder database ID in
-`wrangler.jsonc`, apply `npx wrangler d1 migrations apply campuspulse --remote`,
-and set `npx wrangler secret put OPERATOR_TOKEN`. Then `npm run deploy` builds and
-deploys the Worker and assets. Keep the credential out of frontend environment
-variables. Review operator access, retention, rate limits and map display terms
-before public use. This session does not claim a deployed service.
+The first cloud deployment is live at
+[campuspulse.anend.workers.dev](https://campuspulse.anend.workers.dev), backed by
+the APAC `campuspulse` D1 database. The committed Wrangler config deliberately
+keeps its local placeholder. Use the configured GitHub Actions pipeline for
+production releases; `npm run deploy` uses the local placeholder and is not the
+configured production command.
+
+For authorized manual recovery, supply `CLOUDFLARE_ACCOUNT_ID` and
+`CLOUDFLARE_D1_DATABASE_ID`, run `node scripts/cloudflare-config.mjs`, build, and
+pass `--config .wrangler/deploy/wrangler.json` to remote migrations, secret
+commands and deployment. Do not create another database merely because the
+tracked local configuration contains a placeholder. Keep runtime credentials out
+of frontend environment variables. Operator identity, retention, rate limits and
+map display terms still require review before broader public use.
 
 See [CCNU GIS research](../research/ccnu-gis.md) for the map source and limitations,
 and [web API contract](../specs/web-api-v0.md) for the implemented routes.

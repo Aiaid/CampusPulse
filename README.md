@@ -13,6 +13,9 @@ The first runnable slice includes a React/Three.js frontend, official CCNU GIS
 tile-base integration, and a Cloudflare Workers/D1 API for places and manual
 observations. Sensor ingestion, firmware, raw R2 archival, and hardware validation
 remain unimplemented. See [local setup](docs/notes/development.md).
+The first web/API release is available at
+[campuspulse.anend.workers.dev](https://campuspulse.anend.workers.dev);
+[deployment and costs](docs/notes/ci-cd.md) describe its validation and limits.
 
 The proposed MVP combines two fixed BLE observation nodes, manual parking and
 elevator-wait observations, a campus map, and an e-paper place display.

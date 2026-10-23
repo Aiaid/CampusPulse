@@ -9,6 +9,10 @@ mandatory track requirements remain unknown.
 
 - [ ] Verify production Cloudflare deployment after CF credentials and target
       resource IDs are configured.
+- [ ] Complete the first production setup: provision D1, configure scoped CI
+      credentials, verify automatic deployment and real-browser/API behavior;
+      keep local-reference tests outside the application test suite and review
+      dependency advisories before release.
 
 
 - [ ] Confirm competition requirements, deadline, team capacity, and demo places.

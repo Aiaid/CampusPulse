@@ -10,7 +10,8 @@ CampusPulse 探索用 BLE 观测描述校园不同地点的活动变化。本公
 
 当前已开始实现 React/Three.js 前端、华师 GIS 瓦片底图，以及 Cloudflare Workers/D1
 地点查询与人工观察接口。可在本地运行，步骤见[开发说明](docs/notes/development.md)。
-固件、BLE 上传、原始 R2 存档与硬件验证尚未实现；未部署云端服务。
+首版前后端已部署到 [campuspulse.anend.workers.dev](https://campuspulse.anend.workers.dev)，
+部署验证与费用见[CI/CD 说明](docs/notes/ci-cd.md)。固件、BLE 上传、原始 R2 存档与硬件验证尚未实现。
 
 拟定 MVP 组合两个固定 BLE 观测节点、人工停车与候梯记录、校园地图和墨水屏
 地点卡，明确区分传感器观测、人工记录与模拟数据。BLE 可见标识数量不能作为精确人数。
