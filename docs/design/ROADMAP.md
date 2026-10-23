@@ -75,9 +75,15 @@ assignments; firmware and device acceptance remain pending.
 
 ## P2 — Refine the product and presentation
 
-- [ ] Complete explicitly approved browser submission/cancellation acceptance for
-      the migrated field-record flow; the current local mutation check was blocked
-      by automatic approval review.
+- [ ] Improve full-campus lighting coverage and material response toward the
+      concept; current local shared illumination remains a partial visual match.
+
+
+- [ ] Field-record browser write regression is deferred at the user's request
+      (2026-10-23); resume only when that verification is requested.
+- [ ] Refine night lighting with a surface-aware 2.5D field: connected warm
+      pavement/entrance illumination, path-aligned falloff, restrained source
+      halos and cooler ambient depth; preserve the current map and interactions.
 - [ ] Evaluate registered depth/light masks or licensed baked night assets for
       greater fidelity beyond the fixed-raster warm-light treatment.
 - [ ] Confirm map-asset display/redistribution rights before reusing the old GIS
@@ -118,6 +124,23 @@ assignments; firmware and device acceptance remain pending.
       synthetic upload node after acceptance. This does not validate firmware,
       field coverage, long-run retention execution or mainland availability.
 
+- [x] Replace detached facade dots with14 reviewed wall planes and polygonal
+      panes, stable room variation, continuous reception and selective night
+      grading. Fix asynchronous camera invalidation ownership and raster-only
+      transform interpolation. Build,28 frontend tests and current desktop/phone
+      browser checks passed; GIS/actors/interactions retained, no DB writes.
+
+- [x] Share registered local illumination between ground and people/vehicle
+      materials; add reviewed forecourt/entry spill and soft facade response.
+      Preserve geometry, actor scale, paths and controls. Build,23 frontend tests
+      and desktop/phone checks passed; fidelity remains partial, no DB writes.
+
+- [x] Correct oversized/stretched actor sprites using per-direction alpha bounds,
+      preserved aspect ratio, registered world sizes and foot/tyre anchoring.
+      Overview/local zoom and phone checks passed; routes/counts stayed intact.
+      Build and 17 frontend-only tests passed, without database tests or writes.
+
+
 - [x] Implement ingestion v1 server: scoped per-node credentials, immutable
       placement/config with append-only closures, strict three-stream validation,
       atomic D1 receipts and range exclusion, conditional private R2 archival,
@@ -133,6 +156,12 @@ assignments; firmware and device acceptance remain pending.
       read-only API. Reachability improved substantially, but download anomalies
       and actual demo-network/device acceptance remain open. See
       [connectivity evidence](../notes/mainland-connectivity-2026-10-23.md).
+
+- [x] Add PixiJS 8.22 / pixi-filters 6.1 lighting-only overlay, real bloom/blur,
+      original/Canvas fallback, registered paving/facade masks and on-demand
+      rendering. Build, 13 frontend tests and desktop/phone light-layer checks
+      passed locally; no database tests or writes were performed for this pass.
+
 
 - [x] Publish same-origin `/docs` and `/openapi.json` for the six implemented
       operations with self-hosted Swagger UI, explicit shared-operator auth and

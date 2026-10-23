@@ -17,7 +17,7 @@ validation records are not evidence for this implementation.
 | Document | Purpose | Status |
 | --- | --- | --- |
 | [Architecture overview](notes/architecture.md) | Stack, current data flow, source layout and planned hardware roles | Current frontend/API; ingestion server cloud-demo verified, firmware planned |
-| [Frontend migration and lighting](design/frontend-lighting.md) | October 21 interaction migration, light comparison and rendering choices | Local visual/read-only QA passed; write-flow browser approval pending |
+| [Frontend migration and lighting](design/frontend-lighting.md) | October 21 interaction migration, light comparison and rendering choices | Pixi/shared actor illumination and14 registered wall planes implemented locally; full-scene fidelity partial; frontend checks passed; database checks excluded |
 | [Frontend reuse manifest](notes/frontend-reuse-manifest.json) | Exact reused source/destination file fingerprints | Current source provenance |
 | [Ingestion server](notes/backend-ingestion.md) | API, provisioning, field projection, retention and acceptance boundaries | Cloudflare deployed; three-stream demo/ACK/private archive/isolation checks passed |
 | [Local development](notes/development.md) | Run, test and configure the web/API slice | Current |

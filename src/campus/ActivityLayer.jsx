@@ -2,6 +2,9 @@ import { useEffect, useRef } from 'react';
 import { getMetrics } from './scene-data';
 import { routes, parkingAreas, buildings, sampleRoute, classifyOcclusion } from './spatial-scene';
 import './activity-layer.css';
+import { ACTOR_WORLD_HEIGHT, actorDimensions, imageFrames } from './actor-style';
+import { sampleLocalLight } from './lighting-field';
+import { actorLightMaterial, litActorFrame, actorLightingCacheStats } from './actor-lighting';
 
 const EPOCH = typeof performance === 'undefined' ? 0 : performance.now();
 // Every mounted map reads this one clock, including panes opened later. Root
@@ -73,12 +76,12 @@ function loadImage(src, redraw) {
 /** Synthetic route animation; speed and density are demonstrations, not tracking. */
 export default function ActivityLayer({ project, scale, translateX, translateY, viewWidth, viewHeight,
   layers = { people: true, bikes: true }, minute = 1200, isDark = false, xray = false, moving = true,
-  selectedId = 'library', demo = true,
+  selectedId = 'library', demo = true, lighting = 'atmospheric',
 }) {
   const canvasRef = useRef(null);
   const current = useRef(null);
   const invalidate = useRef(null);
-  current.current = { project, scale, translateX, translateY, viewWidth, viewHeight, layers, minute, isDark, xray, moving, selectedId, demo };
+  current.current = { project, scale, translateX, translateY, viewWidth, viewHeight, layers, minute, isDark, xray, moving, selectedId, demo, lighting };
 
   useEffect(() => {
     let request = 0;
@@ -130,12 +133,18 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       const actors = (props.demo ? makeActors(props.minute, props.layers) : []).map((actor) => actorPosition(actor, elapsed)).sort((a, b) => a.y - b.y);
       let hiddenCount = 0;
       let visibleCount = 0;
+      const localLighting = props.isDark && props.lighting === 'atmospheric';
+      let lightingMin = Infinity, lightingMax = -Infinity, warmActorCount = 0;
+      const lightingBuckets = new Set();
       const headings = new Set();
       for (const actor of actors) {
         const screen = projectPoint(actor.x, actor.y);
-        const size = clamp(mapScale, .8, 2.2);
-        const spriteWidth = (actor.kind === 'walk' ? 13 : actor.parked ? 7.5 : 22) * size;
-        const spriteHeight = (actor.kind === 'walk' ? 22 : actor.parked ? 8 : 23) * size;
+        const sprite = actor.kind === 'walk' ? assets.person : actor.parked ? assets.parkedBike : assets.movingBike;
+        if (!sprite.complete || !sprite.naturalWidth) continue;
+        const [column, row] = directionCell(actor.heading ?? 0);
+        const frame = imageFrames(sprite)?.[row * 2 + column];
+        if (!frame || frame.empty) continue;
+        const {width:spriteWidth,height:spriteHeight} = actorDimensions(actor, frame, mapScale);
         if (screen.left < -spriteWidth || screen.left > width + spriteWidth || screen.top < -spriteHeight || screen.top > height + spriteHeight) continue;
         const occludingBuilding = classifyOcclusion([actor.x, actor.y]);
         const occluded = Boolean(occludingBuilding);
@@ -144,16 +153,26 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
         if (occluded && !revealed) continue;
         // Even a sprite whose feet are outside a building is clipped by the
         // projected facade below. This prevents bright figures on roof pixels.
-        const sprite = actor.kind === 'walk' ? assets.person : actor.parked ? assets.parkedBike : assets.movingBike;
-        if (!sprite.complete || !sprite.naturalWidth) continue;
-        const [column, row] = directionCell(actor.heading ?? 0);
         headings.add(`${column}-${row}`);
         visibleCount += 1;
         context.save();
         context.globalAlpha = revealed ? .72 : actor.parked ? .88 : .98;
-        context.filter = props.isDark ? 'brightness(1.18)' : 'none';
-        context.drawImage(sprite, column * sprite.naturalWidth / 2, row * sprite.naturalHeight / 2,
-          sprite.naturalWidth / 2, sprite.naturalHeight / 2,
+        // Sample at the unchanged world-space feet/tyres, so both map views
+        // receive the same local light even at different screen zoom levels.
+        let litFrame = null;
+        if (localLighting) {
+          const sample = sampleLocalLight(actor.x, actor.y);
+          const material = actorLightMaterial(sample);
+          lightingMin = Math.min(lightingMin, sample.intensity);
+          lightingMax = Math.max(lightingMax, sample.intensity);
+          if (sample.intensity * sample.warmth > .15) warmActorCount += 1;
+          lightingBuckets.add(material.key);
+          litFrame = litActorFrame(sprite, frame, material);
+        }
+        context.filter = litFrame ? 'none' : props.isDark ? 'brightness(1.18)' : 'none';
+        if (litFrame) context.drawImage(litFrame,
+          screen.left - spriteWidth / 2, screen.top - spriteHeight, spriteWidth, spriteHeight);
+        else context.drawImage(sprite, frame.x, frame.y, frame.width, frame.height,
           screen.left - spriteWidth / 2, screen.top - spriteHeight, spriteWidth, spriteHeight);
         if (revealed) {
           context.filter = 'none';
@@ -162,7 +181,7 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
           context.lineWidth = 1;
           context.setLineDash([2, 2]);
           context.beginPath();
-          context.ellipse(screen.left, screen.top - 1, spriteWidth * .24, 2.6 * size, 0, 0, Math.PI * 2);
+          context.ellipse(screen.left, screen.top - .25 * mapScale, spriteWidth * .3, .45 * mapScale, 0, 0, Math.PI * 2);
           context.stroke();
         }
         context.restore();
@@ -195,6 +214,16 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       canvas.dataset.visibleCount = String(visibleCount);
       canvas.dataset.headingCount = String(headings.size);
       canvas.dataset.motion = animated ? 'running' : 'paused';
+      canvas.dataset.spriteScaleMode = 'registered-world-alpha-bounds';
+      canvas.dataset.actorLighting = localLighting ? 'local-field-2.5d' : props.isDark ? 'original-uniform' : 'day-original';
+      canvas.dataset.lightingMin = Number.isFinite(lightingMin) ? lightingMin.toFixed(3) : '0.000';
+      canvas.dataset.lightingMax = Number.isFinite(lightingMax) ? lightingMax.toFixed(3) : '0.000';
+      canvas.dataset.warmActorCount = String(warmActorCount);
+      canvas.dataset.lightingBuckets = [...lightingBuckets].sort().join(';');
+      canvas.dataset.lightingCacheFrames = String(actorLightingCacheStats().variants);
+      canvas.dataset.personHeight = String(ACTOR_WORLD_HEIGHT.walk * mapScale);
+      canvas.dataset.ridingHeight = String(ACTOR_WORLD_HEIGHT.riding * mapScale);
+      canvas.dataset.parkedHeight = String(ACTOR_WORLD_HEIGHT.parked * mapScale);
       canvas.dataset.drawFrame = String(++frame);
       canvas.dataset.sceneTime = elapsed.toFixed(3);
       canvas.dataset.poseSignature = actors.filter((actor) => !actor.parked).slice(0, 4).map((actor) => `${actor.x.toFixed(2)},${actor.y.toFixed(2)}`).join(';');

@@ -1,5 +1,5 @@
 import { MapPin, Elevator } from "@phosphor-icons/react";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useId, useRef, useState } from 'react';
 import { getMetrics, MAP_HEIGHT, MAP_WIDTH, places, sceneAttribution } from './scene-data';
 import { buildings, pointInPolygon } from './spatial-scene';
 import ActivityLayer from './ActivityLayer';
@@ -21,6 +21,7 @@ export const CampusMap = forwardRef(function CampusMap({
   selectedId = 'library', onSelect = () => {},
   layers = { people: true, bikes: true, waits: true }, minute = 1200, isDark = false, onZoomChange, maxZoom = 4, xray = false, moving = true, demo = true, lighting = 'atmospheric',
 }, ref) {
+  const gradeId = useId().replace(/:/g, '');
   const container = useRef(null);
   const drag = useRef(null);
   const suppressClick = useRef(false);
@@ -144,10 +145,20 @@ export const CampusMap = forwardRef(function CampusMap({
   };
 
   return (
-    <div ref={container} className={`cp-map ${isDark ? 'cp-map--night' : 'cp-map--day'} ${dragging ? 'cp-map--dragging' : ''} cp-map--lighting-${lighting}`} data-lighting-mode={lighting} data-demo={demo ? 'true' : 'false'}
+    <div ref={container} className={`cp-map ${isDark ? 'cp-map--night' : 'cp-map--day'} ${dragging ? 'cp-map--dragging' : ''} cp-map--lighting-${lighting}`} style={{ '--cp-night-grade': `url(#${gradeId})` }} data-lighting-mode={lighting} data-demo={demo ? 'true' : 'false'}
       tabIndex={0} role="region" aria-label="华中师范大学校园活动示意地图，可拖动或用方向键平移，加减键缩放"
       onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} onClick={selectRegion}
       onLostPointerCapture={() => { drag.current = null; setDragging(false); }} onKeyDown={keyboardPan}>
+      <svg width="0" height="0" aria-hidden="true" style={{position:'absolute',pointerEvents:'none'}}>
+        <defs><filter id={gradeId} colorInterpolationFilters="sRGB">
+          <feColorMatrix type="matrix" values=".42 .03 .02 0 .008 .02 .46 .05 0 .014 .03 .10 .48 0 .028 0 0 0 1 0" />
+          <feComponentTransfer>
+            <feFuncR type="gamma" amplitude="1" exponent="1.13" offset="0" />
+            <feFuncG type="gamma" amplitude="1" exponent="1.13" offset="0" />
+            <feFuncB type="gamma" amplitude="1" exponent="1.13" offset="0" />
+          </feComponentTransfer>
+        </filter></defs>
+      </svg>
       <div className="cp-map__raster" role="img" aria-label="华中师范大学公开校园 GIS 在线图块"
         style={{ width: MAP_WIDTH, height: MAP_HEIGHT, transform: `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`, maskImage: buildingMask, WebkitMaskImage: buildingMask, maskSize: '100% 100%', WebkitMaskSize: '100% 100%' }}>
         {TILES.filter(tile => (tile.x + 128) * scale + translateX >= -128 && tile.x * scale + translateX <= size.width + 128 && (tile.y + 128) * scale + translateY >= -128 && tile.y * scale + translateY <= size.height + 128).map(tile => {
@@ -159,7 +170,7 @@ export const CampusMap = forwardRef(function CampusMap({
         })}
       </div>
       <div className="cp-map__atmosphere" aria-hidden="true" />
-      <ActivityLayer project={project} scale={scale} translateX={translateX} translateY={translateY} viewWidth={size.width} viewHeight={size.height} layers={layers} minute={minute} isDark={isDark} xray={xray} moving={moving} selectedId={selectedId} demo={demo} />
+      <ActivityLayer project={project} scale={scale} translateX={translateX} translateY={translateY} viewWidth={size.width} viewHeight={size.height} layers={layers} minute={minute} isDark={isDark} xray={xray} moving={moving} selectedId={selectedId} demo={demo} lighting={lighting} />
       <NightLighting project={project} scale={scale} viewWidth={size.width} viewHeight={size.height} isDark={isDark} xray={xray} selectedId={selectedId} lighting={lighting} />
       <MapRegions project={project} viewWidth={size.width} viewHeight={size.height} selectedId={selectedId} xray={xray} />
       <div className="cp-map__landmarks">

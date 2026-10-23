@@ -151,6 +151,27 @@ entire application was created during the hackathon.
   bearer credentials are never persisted by the docs UI. Contract/browser
   validation is recorded with the API feature, separately from cloud deployment.
 
+## 2026-10-23 — Pixi light-only integration
+
+The user selected PixiJS + pixi-filters. Runtime dependencies are now PixiJS
+8.22.0 and pixi-filters 6.1.5 (both MIT), installed through npm with their license
+files retained; exact resolution/integrity is in package-lock.json. Their APIs
+supply bloom, blur, textures and masking; no vendor implementation was copied
+into tracked source. New wrappers/geometry helpers are in PixiLightLayer.jsx,
+NightLighting.jsx and lighting-field.js. The selected historical renderer now
+lives in CanvasNightLighting.jsx; the reuse manifest tracks that destination.
+
+Map tiles, actor assets, route geometry and UI handlers were not replaced.
+World light/mask textures are procedural local canvases, not captured school
+pixels or a new geographic model. Final review screenshots stay in /tmp and
+were stripped/rechecked with ExifTool. No new external-use bitmap asset was added.
+
+Validation: production build, 13 frontend-only geometry tests and real-browser
+GPU/filter/registration/switch/phone checks passed. Database tests/writes were
+excluded as requested. The rendering fallback is implemented but was not forcibly
+triggered. Renderer/filter lifetime compatibility guards for the installed
+versions are documented in the lighting study and should be rechecked on upgrades.
+
 ## 2026-10-23 — Ingestion server implementation
 
 The ingest validator, D1 migration/store, R2 upload handler, public projection,
@@ -161,3 +182,40 @@ fixtures are contract inputs, not field evidence. The implementation uses the
 Cloudflare D1/R2 APIs and existing development dependencies; it adds no copied
 third-party implementation or new license claim. Local workerd and docs-browser
 acceptance do not establish production deployment or device validation.
+
+## 2026-10-23 — Actor proportion correction
+
+The adapted historical ActivityLayer renderer now measures each direction's
+alpha bounds and draws the visible artwork at its natural aspect ratio using
+new actor-style.js helpers. The generated sprite PNGs are unchanged. Per-map
+screen-space clamps and mismatched vehicle frame scales were removed in favour
+of a shared registered illustration size; foot/tyre anchors use the same route
+points. This is a visual calibration, not measured metres or a new map source.
+The reuse manifest destination hash for ActivityLayer was updated. Build,
+17 frontend tests and current desktop/phone screenshots verified the change;
+no database tests or writes ran. Final screenshots remain local and were
+metadata-checked/stripped before sharing.
+
+## 2026-10-23 — Shared ground and actor illumination
+
+lighting-field.js receiver/entry-spill additions and new actor-lighting.js cached
+materials are newly authored for this baseline. They reuse existing selected
+scene coordinates and unchanged generated sprite assets; no additional map,
+model, bitmap, vendor source or pre-hackathon backend was copied. ActivityLayer
+and CampusMap adaptations plus the night CSS hashes are reflected in the reuse
+manifest. Final screenshots stay in /tmp, stripped/rechecked before sharing.
+Build,23 frontend tests and browser checks passed; reference fidelity remains
+partial and database writes/tests were excluded.
+
+## 2026-10-23 — Registered wall-light surfaces
+
+New facade-surfaces.js defines14 manually reviewed wall-light masks/pane polygons
+in the retained map projection. New facade-atlas.js bakes only procedural light
+receivers/emission, without copying reference raster pixels. These helpers, the
+selective SVG color filter, camera-registration fixes and material variation are
+new work. Historical facadeLights remain solely for original-night mode. The
+selected generated sprite assets are unchanged; no new dependency or third-party
+code/bitmap/model was added. Canvas/Pixi enhanced paths now share these wall
+surfaces. Reuse-manifest hashes were refreshed for modified adapted modules.
+Build and28 frontend tests passed; no database tests/writes, commit or deployment
+were performed for this iteration. Screenshots remain local evidence only.

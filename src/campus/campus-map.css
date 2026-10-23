@@ -32,7 +32,9 @@
   transform-origin: 0 0;
   pointer-events: none;
   will-change: transform;
-  transition: transform 240ms cubic-bezier(.2, .75, .3, 1), filter 650ms ease;
+  /* Raster and canvas overlays must share the exact same camera transform.
+     Interpolating only this layer detaches wall lights during pan and zoom. */
+  transition: filter 650ms ease;
   filter: saturate(.81) brightness(1.12) contrast(.92);
 }
 .cp-map--night .cp-map__raster { filter: saturate(.55) brightness(.58) contrast(1.08); }
@@ -141,11 +143,18 @@
 .cp-map__tile-notice { position: absolute; z-index: 8; left: 12px; right: 12px; bottom: 40px; width: fit-content; max-width: calc(100% - 24px); padding: 9px 12px; border: 1px solid var(--cp-label-border); border-radius: 9px; color: var(--cp-label-color); background: var(--cp-label-bg); font-family: inherit; font-size: 12px; line-height: 1.5; box-shadow: var(--cp-label-shadow); cursor: default; }
 .cp-map__tile-notice button { margin-left: 8px; padding: 4px 9px; border: 1px solid currentColor; border-radius: 5px; color: inherit; background: transparent; cursor: pointer; }
 
-/* Keep the actual school image; only the artistic night treatment changes. */
+/* Grade only the source raster: emitted light is composited above this layer.
+   The registered SVG grade preserves dark green foliage while shifting neutral
+   roofs toward slate blue. Its per-channel response replaces a uniform dimmer;
+   the fallback is for hosts that do not provide the SVG filter definition. */
 .cp-map--night.cp-map--lighting-atmospheric .cp-map__raster {
-  filter: saturate(.7) brightness(.49) contrast(1.13);
+  filter: var(--cp-night-grade, saturate(.46) sepia(.16) hue-rotate(165deg) saturate(.7) brightness(.54) contrast(1.12));
 }
 .cp-map--night.cp-map--lighting-atmospheric .cp-map__atmosphere {
-  background: #0a254630;
+  /* Broad sky exposure, with a restrained edge falloff; no screen-space lamps.
+     This sits below the actor and illumination layers and never intercepts input. */
+  background:
+    radial-gradient(ellipse at 46% 40%, transparent 40%, #050c1826 100%),
+    linear-gradient(145deg, #5d82ae14, #1d365503 52%, #050d1829);
   mix-blend-mode: multiply;
 }
