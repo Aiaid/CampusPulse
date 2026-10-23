@@ -13,11 +13,20 @@ mandatory track requirements remain unknown.
 - [ ] Verify device/phone access to Cloudflare HTTPS on the actual demo network.
 - [ ] Finalize observation, manual-report, privacy, retention, and freshness
       contracts; distinguish sensor/manual/demo data and live/replay modes.
+- [ ] Review and freeze the [v1 ingestion draft](../specs/ingest-v1.md): window/raw/status
+      streams, MAC/token/none identity policies, AD preservation, and batch ACKs.
+- [ ] Generate machine schemas and meaningful contract fixtures after review;
+      verify parser byte order, repeated AD elements, and malformed payload handling.
 - [ ] Implement Workers ingestion + D1 persistence with authentication,
       validation, acknowledgement, and idempotent window/event handling.
+- [ ] Add private R2 archival for research raw batches, D1 receipts, conflict
+      handling, separate stream acknowledgement, and retention controls.
 - [ ] Implement and verify one T-Energy BLE node before enabling the second.
 - [ ] Run two fixed nodes with bounded durable buffering, failure counters,
       observable gaps, and offline recovery; preserve unacknowledged data.
+- [ ] Measure per-board local record size, ACK throughput and reclamation; add
+      immediate size/age/watermark upload triggers, reserved control capacity,
+      observable raw/scan pauses and recovery before storage exhaustion.
 - [ ] Implement the map frontend on Workers Static Assets: place selection,
       local detail, recent trends, explicit coverage, freshness, and phone layout.
 - [ ] Complete manual parking reports and elevator-wait timing, including
@@ -55,6 +64,8 @@ mandatory track requirements remain unknown.
 - [ ] Study node-to-node comparability, identifier randomization, and sampling bias.
 - [ ] Explore calibrated vehicle candidates, richer parking observations, and
       elevator reference models with separately acquired ground truth.
+- [ ] Evaluate address-window summaries and candidate evidence from raw reports;
+      keep association hypotheses separate from physical device identities.
 - [ ] Evaluate map registration and broader coverage; retain unsupported states.
 
 ## P4 — Longer-term work
@@ -72,3 +83,9 @@ mandatory track requirements remain unknown.
 - [x] Inspect and retain a metadata-checked prior concept image with provenance.
 - [x] Find an author-published T-Energy-S3 enclosure reference and official DXF;
       document the unverified fit, printability, and external-model terms.
+- [x] Commit and push the existing plan/design baseline as `b503243` before
+      beginning the upload-protocol design.
+- [x] Draft a new upload protocol and synthetic request/ACK examples; migrate
+      selected pre-hackathon Markdown with provenance and historical boundaries.
+- [x] Clone the invited Radar reference into ignored local storage and review
+      its scan/parser/classification flow without publishing its private contents.

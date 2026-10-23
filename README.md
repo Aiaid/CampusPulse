@@ -36,6 +36,7 @@ Start with the [roadmap](docs/design/ROADMAP.md) and [project rules](AGENTS.md).
 Available hardware: two AI Passports, two LILYGO T-Energy-S3 boards, and one
 Waveshare 1.54-inch ESP32-S3 ePaper board. The frontend, API, and database will all
 run on Cloudflare; the proposed stack is Workers Static Assets, Workers, and D1.
+Research raw uploads add private R2 storage; see the [upload protocol draft](docs/specs/ingest-v1.md).
 Board revisions, data contracts, and acceptance criteria still need validation.
 
 Keep secrets and raw observations out of Git. Use `uv` for Python tasks, and

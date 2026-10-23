@@ -1,0 +1,62 @@
+{
+  "protocol": "campuspulse/1",
+  "node_id": "cp-demo-01",
+  "boot_id": "11111111-1111-4111-8111-111111111111",
+  "placement_id": "demo-placement-01",
+  "capture_config_id": "demo-capture-raw-v1",
+  "dataset": "demo",
+  "firmware_version": "design-fixture-v1",
+  "batch_id": "44444444-4444-4444-8444-444444444444",
+  "stream": "node_status",
+  "items": [
+    {
+      "seq": 1,
+      "time": {
+        "mono_ms": 46000,
+        "utc_ms": null,
+        "clock_epoch": 0,
+        "uncertainty_ms": null
+      },
+      "uptime_ms": 46000,
+      "scan_state": "running",
+      "wifi_state": "connected",
+      "free_heap_bytes": 180000,
+      "queue_pending": {
+        "ble_windows": 0,
+        "ble_reports": 1,
+        "node_status": 0
+      },
+      "queue_capacity": {
+        "ble_windows": 64,
+        "ble_reports": 1024,
+        "node_status": 8
+      },
+      "storage_free_bytes": 1044480,
+      "raw_capture_state": "sampled",
+      "loss_totals": {
+        "aggregation_drops": 0,
+        "raw_queue_drops": 0,
+        "storage_drops": 0,
+        "windows_dropped": 0,
+        "upload_failures": 0,
+        "ack_failures": 0,
+        "status_samples_coalesced": 0,
+        "raw_pressure_skips": 0
+      },
+      "buffer_health": {
+        "log_budget_bytes": 1048576,
+        "used_bytes": 4096,
+        "unacked_bytes": 512,
+        "reclaimable_bytes": 3584,
+        "incoming_local_Bps": null,
+        "newly_acknowledged_local_Bps": null,
+        "time_to_full_s": null,
+        "growth_state": "unknown",
+        "pressure_level": "normal",
+        "pause_reason": null,
+        "raw_paused_ms": 0,
+        "pre_pause_incoming_local_Bps": null
+      }
+    }
+  ]
+}

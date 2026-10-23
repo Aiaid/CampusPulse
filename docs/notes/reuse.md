@@ -46,3 +46,19 @@ any permitted reuse transparently; do not relabel prior code as newly written.
 - No blanket license for prior material or third-party map assets is inferred.
   The old GIS raster, sprites, screenshots, and third-party enclosure models
   have not been copied into this public baseline in this change.
+
+## 2026-10-23 — Selected historical Markdown
+
+The user requested carrying earlier observations into the new documentation.
+`docs/upstream/pre-hackathon/vehicle-rules.md` retains the prior document body;
+`wire-v0.md` retains the old contract with two internal links adapted.
+Each wrapper records its source path and SHA-256. `observations.md` summarizes
+selected device, storage, network, and GIS evidence with original Markdown hashes.
+All three are explicitly historical and have not been rerun against new code.
+
+Only documentation was migrated. Prior application code, captures, MAC lists,
+databases, credentials, and deployment configuration remain excluded.
+The current upload protocol and JSON examples were newly authored; examples
+use synthetic identities/payloads/counters and are not field measurements.
+An invited private Radar repository was cloned to ignored local reference storage;
+its code, detailed review, and field data have not been copied into public docs.

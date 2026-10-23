@@ -1,0 +1,38 @@
+{
+  "capture_config_id": "demo-capture-raw-v1",
+  "node_id": "cp-demo-01",
+  "placement_id": "demo-placement-01",
+  "dataset": "demo",
+  "capture_profile": "research_raw",
+  "allowed_streams": [
+    "ble_windows",
+    "ble_reports",
+    "node_status"
+  ],
+  "scan": {
+    "stack": "nimble",
+    "adapter_version": "nimble-legacy-v1",
+    "mode": "passive",
+    "interval_ms": 100,
+    "window_ms": 80,
+    "filter_duplicates": false,
+    "host_filter": "none"
+  },
+  "raw_capture": {
+    "mode": "sampled",
+    "sample_every_n": 280,
+    "selection": "seq_mod_n_eq_0"
+  },
+  "identity_scheme": "mac",
+  "accept_until": "2026-10-30T04:00:00.000Z",
+  "upload_policy": {
+    "max_items": 32,
+    "max_body_bytes": 16384,
+    "flush_max_age_ms": 1000,
+    "warn_pct": 60,
+    "raw_pause_pct": 80,
+    "critical_pct": 95,
+    "resume_pct": 40,
+    "overload_action": "pause_raw"
+  }
+}

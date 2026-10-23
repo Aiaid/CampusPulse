@@ -1,0 +1,70 @@
+{
+  "source": {
+    "node_id": "cp-demo-01",
+    "boot_id": "11111111-1111-4111-8111-111111111111",
+    "batch_id": "33333333-3333-4333-8333-333333333333",
+    "seq": 280
+  },
+  "parser_version": "design-fixture-v1",
+  "parse_status": "ok",
+  "elements": [
+    {
+      "offset": 0,
+      "type": 1,
+      "value_hex": "06"
+    },
+    {
+      "offset": 3,
+      "type": 9,
+      "value_hex": "4e49552044454d4f"
+    },
+    {
+      "offset": 13,
+      "type": 3,
+      "value_hex": "0f18"
+    },
+    {
+      "offset": 17,
+      "type": 255,
+      "value_hex": "ffff1122"
+    }
+  ],
+  "names": [
+    {
+      "ad_offset": 3,
+      "complete": true,
+      "bytes_hex": "4e49552044454d4f",
+      "display_text": "NIU DEMO"
+    }
+  ],
+  "service_uuids": [
+    {
+      "ad_offset": 13,
+      "ad_type": 3,
+      "source_width_bits": 16,
+      "uuid": "0000180f-0000-1000-8000-00805f9b34fb"
+    }
+  ],
+  "manufacturer_data": [
+    {
+      "ad_offset": 17,
+      "company_id": 65535,
+      "company_name": null,
+      "vendor_data_hex": "1122",
+      "vendor_data_length": 2
+    }
+  ],
+  "service_data": [],
+  "classification": {
+    "category": "e_bike_related",
+    "confidence": "low",
+    "rule_id": "synthetic-name-prefix-fixture",
+    "ruleset_version": "design-fixture-v1",
+    "evidence": [
+      {
+        "ad_offset": 3,
+        "reason": "Synthetic NIU prefix; this is not a physical vehicle identification"
+      }
+    ]
+  }
+}

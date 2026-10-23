@@ -1,0 +1,11 @@
+{
+  "node_id": "cp-demo-01",
+  "boot_id": "11111111-1111-4111-8111-111111111111",
+  "stream": "ble_reports",
+  "batch_id": "33333333-3333-4333-8333-333333333333",
+  "body_sha256": "03d03c7005d261b8f715e0ab9bc5b211504897eadb87219f12269bcd7f813497",
+  "accepted_count": 1,
+  "durability": "committed",
+  "receipt_id": "55555555-5555-4555-8555-555555555555",
+  "received_at": "2026-10-23T04:00:00.000Z"
+}

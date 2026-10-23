@@ -28,6 +28,7 @@ CampusPulse 探索用 BLE 观测描述校园不同地点的活动变化。本公
 AI Passport ×2、LILYGO T-Energy-S3 ×2、微雪 1.54 英寸墨水屏 ESP32-S3 板 ×1。
 前端、API 和数据库全部放在 Cloudflare，拟采用 Workers Static Assets、Workers
 和 D1。板卡具体版本、数据契约与验收标准仍需核实。
+研究模式的原始上传增加私有 R2，详见[上传协议草案](docs/specs/ingest-v1.md)。
 
 凭据与原始观测数据不进入 Git。Python 操作统一使用 `uv`，构建、自动测试和
 真机验证分别报告。
