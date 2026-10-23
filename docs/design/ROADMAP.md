@@ -7,6 +7,9 @@ mandatory track requirements remain unknown.
 
 ## P0 — Deliver the core MVP
 
+- [ ] Verify hosted CI and Cloudflare deployment after repository Actions access
+      and CF credentials are available.
+
 
 - [ ] Confirm competition requirements, deadline, team capacity, and demo places.
 - [ ] Inventory both T-Energy-S3 boards, both AI Passports, and the Waveshare
@@ -76,6 +79,10 @@ mandatory track requirements remain unknown.
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] Add GitHub Actions PR/main tests, builds, local Worker browser checks and
+      conditional Workers/D1 deployment; validate workflow with actionlint and
+      generated config with Wrangler dry-run. Remote execution remains unverified.
 
 - [x] Build the first runnable React/Three.js frontend and Workers/D1 API slice:
       official CCNU GIS visible tiles, verified library image anchor, separate

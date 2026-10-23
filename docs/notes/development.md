@@ -50,6 +50,8 @@ controls the attribution link. These are public source URLs, never credentials.
 
 ## Cloudflare deployment
 
+For automated checks and deployment, see [CI/CD setup](ci-cd.md).
+
 No account or existing database is configured in this checkout. Create a D1 database
 using `npx wrangler d1 create campuspulse`, replace the placeholder database ID in
 `wrangler.jsonc`, apply `npx wrangler d1 migrations apply campuspulse --remote`,

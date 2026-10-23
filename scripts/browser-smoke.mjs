@@ -1,5 +1,5 @@
 import { chromium } from '@playwright/test';
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, mkdirSync, existsSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { X509Certificate, createHash } from 'node:crypto';
 
@@ -16,17 +16,24 @@ if (process.env.NODE_EXTRA_CA_CERTS) {
   const spki = createHash('sha256').update(ca.publicKey.export({type:'spki',format:'der'})).digest('base64');
   args.push(`--ignore-certificate-errors-spki-list=${spki}`);
 }
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args,
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || (existsSync(chromium.executablePath()) ? chromium.executablePath() : '/usr/bin/chromium'), headless: true, args,
   proxy: process.env.HTTPS_PROXY ? { server: process.env.HTTPS_PROXY, bypass: 'localhost,127.0.0.1' } : undefined,
 });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
+  if (process.env.SMOKE_GIS === 'offline') {
+    await page.route('https://gis.ccnu.edu.cn/mapdata/**', route => route.abort());
+  }
   await page.goto(baseURL);
   await page.getByRole('heading', { name: '图书馆', exact: true }).waitFor();
   await page.locator('.gis-map').waitFor();
-  await page.waitForFunction(() => [...document.querySelectorAll('.gis-map img')].some(i => i instanceof HTMLImageElement && i.complete && i.naturalWidth > 0), {timeout: 20000});
+  if (process.env.SMOKE_GIS === 'offline') {
+    await page.getByRole('button', {name:'重新加载'}).waitFor();
+  } else {
+    await page.waitForFunction(() => [...document.querySelectorAll('.gis-map img')].some(i => i instanceof HTMLImageElement && i.complete && i.naturalWidth > 0), null, {timeout:20000});
+  }
   await page.getByRole('button', { name: '模拟演示', exact: true }).click();
   await page.getByText('以下为合成模拟数值，与现场数据隔离').waitFor();
   await page.getByRole('button', { name: '退出模拟', exact: true }).click();
@@ -74,5 +81,5 @@ try {
   await page.getByRole('button', { name: '关闭记录表单' }).click();
   await page.screenshot({ path: '/tmp/campuspulse-qa/mobile.png' });
   assert.deepEqual(errors, [], 'Browser runtime errors');
-  console.log('Browser smoke passed: actual GIS tile rendering, simulation, WebGL, local D1 writes/cancellation, mobile layout.');
+  console.log(`Browser smoke passed: ${process.env.SMOKE_GIS === 'offline' ? 'GIS unavailable fallback' : 'actual GIS tile rendering'}, simulation, WebGL, local D1 writes/cancellation, mobile layout.`);
 } finally { await browser.close(); }
