@@ -1,0 +1,42 @@
+{
+  "sourceId": null,
+  "sourceNamespace": "ccnu_gis_getroute_response",
+  "provenance": {
+    "kind": "official-route-response",
+    "sourceFile": "captures/gis-audit-20261021/route-walk.txt",
+    "sourceUrl": "https://gis.ccnu.edu.cn/GetRoute?type=walk&x1=15656&y1=9059&x2=15358&y2=9681",
+    "responseSha256": "3076f4777545d6824d43d9ce2af6ba824589b23a23e1a987b6ed29f3bd0a93c3",
+    "requestedAt": "2026-10-21T13:19:26.614Z",
+    "coordinateSystem": "ccnu_gis_zoom1_pixels"
+  },
+  "worldPoints": [
+    [
+      15656,
+      9059
+    ],
+    [
+      15658,
+      9066
+    ],
+    [
+      15658,
+      9066
+    ],
+    [
+      15600,
+      9553
+    ],
+    [
+      15404,
+      9628
+    ],
+    [
+      15355,
+      9676
+    ],
+    [
+      15358,
+      9681
+    ]
+  ]
+}

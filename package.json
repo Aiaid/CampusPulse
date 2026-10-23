@@ -13,10 +13,9 @@
     "test:browser": "node scripts/browser-smoke.mjs"
   },
   "dependencies": {
-    "lucide-react": "^0.468.0",
+    "@phosphor-icons/react": "^2.1.10",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "three": "^0.180.0"
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261023.1",
@@ -24,11 +23,10 @@
     "@types/node": "^26.6.5",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "@types/three": "^0.180.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "^5.9.0",
     "vite": "^7.1.0",
-    "vitest": "^3.2.0",
+    "vitest": "^4.1.12",
     "wrangler": "^4.40.0"
   }
 }
