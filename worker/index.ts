@@ -1,5 +1,8 @@
 import type { CreateObservation, Env, Observation, Place, PlaceSummary } from './types';
 import { handleDocs } from './docs';
+import { handleIngestion } from './ingest';
+import { readPublicWindows } from './sensors';
+import { expireIngestion } from './retention';
 
 const TTL_MS = 15 * 60_000;
 const MAX_BODY = 8192;
@@ -99,7 +102,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return null;
   try {
-    if (url.pathname === '/api/v1/health' && request.method === 'GET') return json({ status: 'ok', ingestion: 'not_implemented' });
+    const ingestion = await handleIngestion(request, env);
+    if (ingestion) return ingestion;
+    if (url.pathname === '/api/v1/health' && request.method === 'GET') return json({ status: 'ok', ingestion: 'implemented', raw_storage: env.RAW_BUCKET ? 'configured' : 'unconfigured' });
     if (url.pathname === '/api/v1/places' && request.method === 'GET') {
       const result = await env.DB.prepare('SELECT id,name,kind,anchor_x,anchor_y,gis_anchor_x,gis_anchor_y FROM places ORDER BY id').all<PlaceRow>();
       return json({ places: result.results.map(placeFromRow) });
@@ -109,14 +114,19 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
       const place = await findPlace(env, route[1]);
       if (route[2] === 'summary') {
         const latest = await env.DB.prepare(`SELECT ${OBS_COLUMNS} FROM observations WHERE place_id = ? AND status = 'active' ORDER BY observed_at DESC, id DESC LIMIT 1`).bind(place.id).first<Observation>();
-        return json(summarize(place, latest));
+        const now = Date.now();
+        const windows = await readPublicWindows(env, place.id, now - 86_400_000, now);
+        const summary = summarize(place, latest, now);
+        const sensor = windows[0] ?? null;
+        return json({ ...summary, sensor, freshness: sensor?.freshness === 'fresh' || summary.freshness === 'fresh' ? 'fresh' : sensor || latest ? 'stale' : 'no_data' });
       }
       const minutesText = url.searchParams.get('minutes') ?? '15';
       if (!['1', '5', '15', '60', '1440'].includes(minutesText)) throw new ApiError(422, 'invalid_range', 'minutes must be 1, 5, 15, 60, or 1440.');
       const to = new Date().toISOString();
       const from = new Date(Date.parse(to) - Number(minutesText) * 60_000).toISOString();
       const result = await env.DB.prepare(`SELECT ${OBS_COLUMNS} FROM observations WHERE place_id = ? AND status = 'active' AND observed_at >= ? AND observed_at <= ? ORDER BY observed_at DESC, id DESC LIMIT 201`).bind(place.id, from, to).all<Observation>();
-      return json({ place_id: place.id, observations: result.results.slice(0, 200), from, to, truncated: result.results.length > 200 });
+      const windows = await readPublicWindows(env, place.id, Date.parse(from), Date.parse(to));
+      return json({ place_id: place.id, observations: result.results.slice(0, 200), sensor_windows: windows.slice(0, 200), from, to, truncated: result.results.length > 200, sensor_truncated: windows.length > 200 });
     }
     if (url.pathname === '/api/v1/observations' && request.method === 'POST') {
       await authorize(request, env);
@@ -152,6 +162,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
 }
 
 export default {
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    await expireIngestion(env);
+  },
   async fetch(request: Request, env: Env): Promise<Response> {
     return handleDocs(request) ?? await handleApi(request, env) ?? (env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 }));
   },

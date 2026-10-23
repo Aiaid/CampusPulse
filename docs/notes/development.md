@@ -85,3 +85,13 @@ map display terms still require review before broader public use.
 
 See [CCNU GIS research](../research/ccnu-gis.md) for the map source and limitations,
 and [web API contract](../specs/web-api-v0.md) for the implemented routes.
+
+## Device ingestion server (2026-10-23)
+
+The window/raw/status server now has separate local acceptance. Read
+[backend ingestion](backend-ingestion.md) before provisioning: it documents exact
+body hashing, per-node credentials, immutable policy, optional private R2,
+retention and the boundary between server tests and hardware acceptance.
+`node scripts/ingest-runtime-smoke.mjs` exercises ephemeral real local workerd
+D1/R2 using synthetic data. It requires local loopback/process permissions.
+No new dependency installation is needed with the current lockfile.

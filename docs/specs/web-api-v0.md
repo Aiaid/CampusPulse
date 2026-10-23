@@ -2,12 +2,15 @@
 
 Status: implemented first slice; local SQLite, build and browser checks recorded
 in [development notes](../notes/development.md).
-This is not the BLE ingestion v1 implementation. No firmware is included.
+This document retains the original manual API contract. The additive device API
+and sensor projection are described in [ingestion implementation](../notes/backend-ingestion.md)
+and [ingest v1](ingest-v1.md). No firmware is included.
 
 ## Interactive documentation
 
 `GET /docs` (also `/docs/`) serves Swagger UI; `GET /openapi.json` returns the
-OpenAPI 3.1 description of the six implemented operations. These routes are
+OpenAPI 3.1 description of nine implemented operations (six web/manual plus three
+device/research operations). These routes are
 public and require no database access or operator credential. The specification
 uses the current origin, so the same routes work in local development and after
 deployment. Unsupported methods return 405; HEAD returns headers without a body.
@@ -37,14 +40,15 @@ separate acceptance step.
 
 ## Public reads
 
-- `GET /api/v1/health`: runtime liveness, explicitly reports ingestion unavailable.
+- `GET /api/v1/health`: runtime liveness, reports ingestion implemented and whether raw storage is bound; it does not probe dependencies.
 - `GET /api/v1/places`: registered logical places, kind, provisional normalized
   schematic anchors, an optional verified GIS image anchor (library only), and
   unconfigured sensor coverage.
 - `GET /api/v1/places/:id/summary`: latest active manual observation, source,
-  observation time, validity deadline and freshness. Sensor data is `null`.
+  observation time, validity deadline and freshness; an independently sourced eligible field sensor window may also be present.
 - `GET /api/v1/places/:id/history?minutes=15`: active manual observations in
   1/5/15/60/1440 minutes; maximum 200 records and a truncation indicator.
+  Adds a separate bounded `sensor_windows` array and `sensor_truncated` flag.
 
 An empty summary means no data, never zero people or zero vehicles. Public fields
 exclude device credentials, BLE identifiers and raw payloads. Responses are not cached.
@@ -79,7 +83,8 @@ an existing ID returns 409. Response confirmation follows the D1 write. Cancella
 is idempotent `DELETE /api/v1/observations/:id` with the same operator credential.
 Correct an error by cancelling it and submitting a fresh record.
 
-No device ingestion or research/raw receipt route is implemented. Production
-operator identity, rate limiting and a retention job remain unimplemented.
+Device ingestion/research routes and a bounded ingestion-retention job are now
+implemented; see the linked implementation notes. Production account identity,
+rate limiting and manual-observation retention remain unimplemented.
 Cloud deployment and browser/API verification are recorded in the
 [CI/CD notes](../notes/ci-cd.md); these do not validate devices or BLE reception.

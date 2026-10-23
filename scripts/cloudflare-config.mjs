@@ -9,6 +9,11 @@ if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data
   throw new Error('Set CLOUDFLARE_D1_DATABASE_ID to a real D1 database UUID.');
 }
 const config = JSON.parse(readFileSync('wrangler.jsonc', 'utf8'));
+// This delivery includes raw ingestion: fail closed before a deployment could
+// remove its archive binding. Local metrics-only tests may still omit the binding.
+const rawBucket = process.env.CLOUDFLARE_R2_RAW_BUCKET;
+if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(rawBucket || '')) throw new Error('Set CLOUDFLARE_R2_RAW_BUCKET to the intended private raw bucket.');
+config.r2_buckets = [{ binding: 'RAW_BUCKET', bucket_name: rawBucket }];
 config.account_id = accountId;
 config.main = resolve(config.main);
 config.assets.directory = resolve(config.assets.directory);

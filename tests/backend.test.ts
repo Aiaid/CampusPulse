@@ -37,6 +37,7 @@ const post = (value: unknown, authorization = 'Bearer test-operator') => api('/a
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
   db.exec(readFileSync(new URL('../migrations/0001_initial.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../migrations/0002_ingestion.sql', import.meta.url), 'utf8'));
   env = { DB: sqliteD1(db), OPERATOR_TOKEN: 'test-operator' };
 });
 afterEach(() => db.close());

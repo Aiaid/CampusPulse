@@ -50,8 +50,8 @@ try {
     return route.continue();
   });
   await page.goto(`${origin}/docs?url=https://example.invalid/forbidden.json`);
-  await page.locator('.opblock').nth(5).waitFor();
-  assert.equal(await page.locator('.opblock').count(), 6, 'Exactly the six implemented operations');
+  await page.locator('.opblock').nth(8).waitFor();
+  assert.equal(await page.locator('.opblock').count(), 9, 'Exactly the nine implemented operations');
   assert.ok(!(await page.content()).includes(token), 'Credential absent from initial HTML');
   const op = (method, path) => page.locator(`.opblock-${method}`).filter({ has: page.locator(`.opblock-summary-path[data-path="${path}"]`) });
   const open = async operation => {
@@ -64,13 +64,28 @@ try {
       page.waitForResponse(response => new URL(response.url()).pathname === path && response.request().method() === method),
       operation.getByRole('button', { name: 'Execute', exact: true }).click(),
     ]);
-    assert.equal(response.status(), status, `${method} ${path} status`);
-    await operation.locator('.live-responses-table .response-col_status').filter({ hasText: String(status) }).waitFor();
+    assert.ok((Array.isArray(status) ? status : [status]).includes(response.status()), `${method} ${path} status: ${response.status()}`);
+    await operation.locator('.live-responses-table .response-col_status').filter({ hasText: String(response.status()) }).waitFor();
     return response.json();
   };
   const health = op('get', '/api/v1/health');
   await open(health);
-  assert.deepEqual(await execute(health, 'GET', '/api/v1/health', 200), { status: 'ok', ingestion: 'not_implemented' });
+  const healthBody = await execute(health, 'GET', '/api/v1/health', 200);
+  assert.equal(healthBody.status, 'ok');
+  assert.equal(healthBody.ingestion, 'implemented');
+  assert.ok(['configured', 'unconfigured'].includes(healthBody.raw_storage));
+
+  // The docs expose protected GETs with independent credentials; neither the
+  // operator token nor a synthetic device token is embedded in this page.
+  const deviceConfig = op('get', '/api/v1/device/config');
+  await open(deviceConfig);
+  assert.equal((await execute(deviceConfig, 'GET', '/api/v1/device/config', 401)).error.code, 'unauthorized');
+  const research = op('get', '/api/v1/research/batches/{id}');
+  await open(research);
+  await research.locator('input[placeholder="id"]').fill('33333333-3333-4333-8333-333333333333');
+  await research.locator('input[placeholder="node_id"]').fill('cp-demo-01');
+  assert.ok(['research_not_configured', 'unauthorized'].includes(
+    (await execute(research, 'GET', '/api/v1/research/batches/33333333-3333-4333-8333-333333333333', [401, 503])).error.code));
 
   const post = op('post', '/api/v1/observations');
   await open(post);
@@ -80,9 +95,11 @@ try {
 
   await page.locator('.auth-wrapper').getByRole('button', { name: 'Authorize' }).click();
   const auth = page.locator('.dialog-ux');
-  await auth.locator('.auth-container input').fill(token);
-  await auth.getByRole('button', { name: 'Apply credentials', exact: true }).click();
-  await auth.getByRole('button', { name: 'Close', exact: true }).click();
+  const operatorAuth = auth.locator('.auth-container').filter({ hasText: 'OperatorToken' });
+  assert.equal(await operatorAuth.count(), 1, 'One OperatorToken authorization control');
+  await operatorAuth.locator('input').fill(token);
+  await operatorAuth.getByRole('button', { name: 'Apply credentials', exact: true }).click();
+  await operatorAuth.getByRole('button', { name: 'Close', exact: true }).click();
   attemptedWrite = true;
   const receipt = await execute(post, 'POST', '/api/v1/observations', 201);
   assert.equal(receipt.durability, 'committed');
@@ -100,7 +117,7 @@ try {
   const stored = await page.evaluate(() => ({ local: Object.entries(localStorage), session: Object.entries(sessionStorage) }));
   assert.ok(!JSON.stringify(stored).includes(token), 'Credential must not enter browser storage');
   await page.reload();
-  await page.locator('.opblock').nth(5).waitFor();
+  await page.locator('.opblock').nth(8).waitFor();
   await page.waitForFunction(() => Boolean(window.ui));
   const authAfterReload = await page.evaluate(() => window.ui.authSelectors.authorized().toJS());
   assert.equal(Object.keys(authAfterReload).length, 0, 'Authorization must not persist after reload');
@@ -110,7 +127,7 @@ try {
   assert.deepEqual(external, [], 'Docs must not contact validators, CDNs, or query-selected specs');
   assert.deepEqual(credentialLeaks, [], 'Credential only sent on the intended same-origin mutations');
   assert.deepEqual(errors, [], 'Swagger UI runtime errors');
-  console.log('Docs browser smoke passed: six local operations, public GET, guarded write, UI authorize/create/cancel, no credential persistence or external requests.');
+  console.log('Docs browser smoke passed: nine local operations, protected device/research reads, public GET, guarded write, UI authorize/create/cancel, no credential persistence or external requests.');
 } catch (error) {
   // Playwright action diagnostics can include a fill() argument on failure.
   const redact = text => String(text).split(token).join('[REDACTED]');

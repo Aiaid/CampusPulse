@@ -28,6 +28,7 @@ Set these repository Actions variables:
 | --- | --- |
 | `CLOUDFLARE_ACCOUNT_ID` | Target Cloudflare account ID |
 | `CLOUDFLARE_D1_DATABASE_ID` | UUID from `wrangler d1 create campuspulse` |
+| `CLOUDFLARE_R2_RAW_BUCKET` | Private raw archive bucket; required for ingestion deployment |
 | `CLOUDFLARE_DEPLOYMENT_URL` | Published HTTPS origin, currently `https://campuspulse.anend.workers.dev` |
 
 Use repository-level variables for the two IDs because deployment job selection
@@ -36,6 +37,9 @@ evaluates them before entering the `production` environment. Set
 Workers Scripts Edit and D1 Edit on the intended account. If Cloudflare requires
 additional access to the account's workers.dev subdomain, grant only the relevant
 account read permission. No DNS/zone write permission is required by this workflow.
+The R2 archive is bound through the Worker; creation and privacy checks use the
+separate authorized operator session. The pipeline refuses to deploy ingestion
+without the bucket variable and verifies `raw_storage: configured` afterward.
 
 If either ID variable is absent, deployment is skipped while checks still run.
 With both IDs present, successful checks on `main` enable a serialized production

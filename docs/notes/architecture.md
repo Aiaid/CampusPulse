@@ -1,7 +1,8 @@
 # Contributor architecture overview
 
 Status: the web/API slice and selected frontend migration are implemented.
-BLE ingestion, raw archival and device firmware remain planned. Recorded
+BLE ingestion and private raw archival are now implemented with separate local
+acceptance; device firmware remains planned. Recorded
 deployment and verification evidence is in [CI/CD](ci-cd.md) and
 [development notes](development.md).
 The stack below describes the current source. Earlier release verification does
@@ -16,10 +17,10 @@ not validate or establish deployment of later frontend revisions; see the
 | Campus map | External CCNU GIS raster tiles, DOM/CSS positioning | Official zoom-3 tiles in a registered 1024×640 scene extent. The raster is not a 3D campus model or evidence of sensor coverage. |
 | Illustrative overlays | Canvas 2D and CSS | Synthetic moving/parked actors, occlusion, optional building transparency and warm night lighting. Three.js is no longer a dependency. |
 | Hosting and API | Cloudflare Workers Static Assets and a TypeScript Worker | Implemented: frontend assets and same-origin `/api/*` routes. GitHub stores source and runs delivery checks. |
-| Persistence | Cloudflare D1, SQL migrations | Implemented: logical places and manual observations, including cancellation. No sensor windows are stored by this slice. |
+| Persistence | Cloudflare D1, SQL migrations | Implemented: places/manual records, immutable capture/placement policy, sensor windows, status, durable receipts and range exclusion. |
 | Development and checks | Node 24, Wrangler, Vitest, Playwright | Configured: local Worker/D1 development, SQLite/API tests, build and browser smoke checks. Follow the linked guides for commands and recorded results. |
-| Device ingestion | HTTPS window/raw/status streams | Draft only: authentication, durable buffering, sequence handling and independent acknowledgements are specified in [ingest v1](../specs/ingest-v1.md), not implemented. |
-| Research raw archive | Private R2 with D1 receipts | Planned in ingest v1; no R2 binding or raw-receipt route exists in the current Worker. |
+| Device ingestion | HTTPS window/raw/status streams | Server implemented: scoped auth, strict validation, atomic sequence handling and independent stream acknowledgements. Firmware buffering remains planned. See [ingestion implementation](backend-ingestion.md). |
+| Research raw archive | Private R2 with D1 receipts | Implemented with conditional immutable R2 writes, D1 receipts, private research reads and bounded retention. Production R2 binding is opt-in; deployment remains pending. |
 | Firmware and displays | ESP32 BLE nodes, portable terminals, ePaper | Planned; no firmware is included in this repository. |
 
 ## Frontend rendering

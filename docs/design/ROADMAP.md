@@ -13,6 +13,11 @@ assignments; firmware and device acceptance remain pending.
 
 ## P0 — Deliver the core MVP
 
+- [ ] Provision the new ingestion server in production: reviewed D1 migration,
+      real node/config/placement registries, private R2 binding and independent
+      research secret; then deploy and verify synthetic cloud upload/retention.
+      Local implementation acceptance is archived below; hardware remains separate.
+
 - [ ] Confirm competition requirements, deadline, team capacity, and demo places.
 - [ ] Inventory both T-Energy-S3 boards, both AI Passports, and the Waveshare
       1.54-inch ePaper variant; confirm protected data and board-specific layouts.
@@ -21,12 +26,8 @@ assignments; firmware and device acceptance remain pending.
       contracts; distinguish sensor/manual/demo data and live/replay modes.
 - [ ] Review and freeze the [v1 ingestion draft](../specs/ingest-v1.md): window/raw/status
       streams, MAC/token/none identity policies, AD preservation, and batch ACKs.
-- [ ] Generate machine schemas and meaningful contract fixtures after review;
-      verify parser byte order, repeated AD elements, and malformed payload handling.
-- [ ] Implement Workers ingestion + D1 persistence with authentication,
-      validation, acknowledgement, and idempotent window/event handling.
-- [ ] Add private R2 archival for research raw batches, D1 receipts, conflict
-      handling, separate stream acknowledgement, and retention controls.
+- [ ] Freeze server/firmware compatibility against OpenAPI and strict validators;
+      replay firmware-produced fixtures and verify ACK reclamation on device.
 - [ ] Implement and verify the shared collection/upload core on one T-Energy:
       BLE windows, optional configured raw stream, status, durable buffering,
       independent ACKs, retries and safe reclamation.
@@ -53,6 +54,10 @@ assignments; firmware and device acceptance remain pending.
       duplicate uploads, stale data, and a controlled network interruption.
 
 ## P1 — Add interaction and display after collection/upload acceptance
+
+- [ ] Add ingestion rate limiting, operational alerts, capacity/orphan audits and
+      a lease-safe orphan cleanup process; add research roles and versioned
+      vehicle classification only after evaluation with independent evidence.
 
 - [ ] On both AI Passports, add scan/network/queue/cloud-ACK status and explicit
       place selection, then manual parking reports and wait start/finish with
@@ -105,6 +110,15 @@ assignments; firmware and device acceptance remain pending.
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] Implement ingestion v1 server: scoped per-node credentials, immutable
+      placement/config with append-only closures, strict three-stream validation,
+      atomic D1 receipts and range exclusion, conditional private R2 archival,
+      research-only AD parsing, field-only sensor projection, retention and secure
+      provisioning helper. Local SQLite/workerd D1/R2 concurrency/failure tests,
+      32-window transaction, build and nine-operation Swagger browser regression
+      passed. See [acceptance and limits](../notes/backend-ingestion.md).
+      Production provisioning/deployment and firmware/device validation pending.
 
 - [x] Bind unused `pulse.anend.net` to the existing Worker without deploying
       local parallel work; independently probe mainland DNS, frontend, JS and

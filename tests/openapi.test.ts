@@ -12,6 +12,7 @@ const implemented = [
   'GET /api/v1/health', 'GET /api/v1/places',
   'GET /api/v1/places/{id}/summary', 'GET /api/v1/places/{id}/history',
   'POST /api/v1/observations', 'DELETE /api/v1/observations/{id}',
+  'POST /api/v1/ingest', 'GET /api/v1/device/config', 'GET /api/v1/research/batches/{id}',
 ];
 const token = 'test-only-private-operator-token';
 function noStorageEnv(): Env {
@@ -126,16 +127,19 @@ describe('same-origin documentation routes', () => {
 });
 
 describe('OpenAPI contract and existing authorization', () => {
-  it('documents exactly the implemented operations with only writes requiring Bearer', () => {
+  it('documents exactly nine implemented operations with distinct bearer scopes', () => {
     const root = document();
     expect(root.openapi).toMatch(/^3\.1\./);
     const operations = Object.entries(root.paths).flatMap(([path, item]) => methods.filter(method => (item as Json)[method]).map(method => ({ path, method, operation: (item as Json)[method] })));
     expect(operations.map(({ path, method }) => `${method.toUpperCase()} ${path}`).sort()).toEqual([...implemented].sort());
-    for (const { method, operation } of operations) {
+    for (const { path, method, operation } of operations) {
       const security = operation.security ?? root.security ?? [];
-      if (method === 'get') expect(security).toEqual([]);
+      const expectedScheme = path === '/api/v1/ingest' || path === '/api/v1/device/config' ? 'DeviceToken'
+        : path === '/api/v1/research/batches/{id}' ? 'ResearchToken'
+          : method !== 'get' ? 'OperatorToken' : null;
+      if (!expectedScheme) expect(security).toEqual([]);
       else {
-        expect(security.length).toBeGreaterThan(0);
+        expect(security).toEqual([{ [expectedScheme]: [] }]);
         for (const alternative of security) {
           expect(Object.keys(alternative)).toHaveLength(1);
           const scheme = root.components.securitySchemes[Object.keys(alternative)[0]];
@@ -154,19 +158,59 @@ describe('OpenAPI contract and existing authorization', () => {
     expect(root.servers?.every((server: Json) => server.url.startsWith('/') && !server.url.startsWith('//')) ?? true).toBe(true);
   });
 
-  it('fails closed for both documented writes before storage and leaves GET public', async () => {
+  it('fails closed for protected routes before storage and leaves public GET public', async () => {
     for (const [path, method] of [['/api/v1/observations', 'POST'], ['/api/v1/observations/12345678-1234-4234-8234-123456789abc', 'DELETE']]) {
       expect((await fetchWorker(path, { method })).status).toBe(401);
       expect((await fetchWorker(path, { method, headers: { Authorization: 'Bearer incorrect' } })).status).toBe(401);
       expect((await fetchWorker(path, { method }, { ...noStorageEnv(), OPERATOR_TOKEN: undefined })).status).toBe(503);
       expect((await fetchWorker(path, { method, headers: { Authorization: `Bearer ${token}`, Origin: 'https://other.example' } })).status).toBe(403);
     }
+    for (const [path, method] of [['/api/v1/ingest', 'POST'], ['/api/v1/device/config', 'GET']]) {
+      expect((await fetchWorker(path, { method })).status).toBe(401);
+      expect((await fetchWorker(path, { method, headers: { Authorization: 'Bearer wrong' } })).status).toBe(401);
+    }
+    const research = '/api/v1/research/batches/33333333-3333-4333-8333-333333333333?node_id=cp-demo-01';
+    expect((await fetchWorker(research)).status).toBe(503);
+    expect((await fetchWorker(research, { headers: { Authorization: 'Bearer wrong' } }, { ...noStorageEnv(), RESEARCH_TOKEN: 'private-research-token' })).status).toBe(401);
     expect((await fetchWorker('/api/v1/health')).status).toBe(200);
+  });
+
+  it('describes strict wire schemas and exact-byte hashing for each synthetic stream fixture', () => {
+    const root = document();
+    const ingest = root.paths['/api/v1/ingest'].post;
+    expect(ingest.parameters).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'X-Body-SHA256', required: true })]));
+    expect(ingest.description).toMatch(/exact UTF-8 HTTP body bytes/);
+    expect(ingest.responses).toHaveProperty('409');
+    expect(ingest.responses).toHaveProperty('410');
+    const schema = ingest.requestBody.content['application/json'].schema;
+    for (const file of ['ble-windows.request.json', 'ble-reports.request.json', 'node-status.request.json']) {
+      const value = JSON.parse(readFileSync(new URL(`../docs/specs/examples/${file}`, import.meta.url), 'utf8'));
+      checkSchema(root, schema, value);
+      expect(() => checkSchema(root, schema, { ...value, unexpected: true })).toThrow();
+      expect(() => checkSchema(root, schema, { ...value, stream: 'unknown' })).toThrow();
+    }
+    const reports = JSON.parse(readFileSync(new URL('../docs/specs/examples/ble-reports.request.json', import.meta.url), 'utf8'));
+    expect(() => checkSchema(root, schema, { ...reports, items: [{ ...reports.items[0], payload_hex: 'f' }] })).toThrow();
+    const health = root.components.schemas.Health;
+    expect(health.properties).toMatchObject({ ingestion: { const: 'implemented' }, raw_storage: { enum: ['configured', 'unconfigured'] } });
+    const sensor = {
+      node_id: 'cp-demo-01', boot_id: '11111111-1111-4111-8111-111111111111',
+      placement_id: 'demo-placement-01', capture_config_id: 'demo-capture-raw-v1',
+      source: 'sensor', dataset: 'field', seq: 1,
+      observed_at: '2026-10-23T00:00:00.000Z', valid_until: '2026-10-23T00:01:29.980Z',
+      uncertainty_ms: 20, duration_ms: 30000, scan_enabled_ms: 30000,
+      reports_aggregated: 280, visible_identifiers: 12, unique_table_overflow: false,
+      aggregation_drops: 0, quality_flags: [], freshness: 'fresh',
+    };
+    checkSchema(root, root.components.schemas.PublicSensorWindow, sensor);
+    expect(() => checkSchema(root, root.components.schemas.PublicSensorWindow, { ...sensor, uncertainty_ms: null })).toThrow();
+    expect(() => checkSchema(root, root.components.schemas.PublicSensorWindow, { ...sensor, uncertainty_ms: 30001 })).toThrow();
   });
 
   it('matches the contract to actual SQLite-backed responses and both request variants', async () => {
     const db = new DatabaseSync(':memory:');
     db.exec(readFileSync(new URL('../migrations/0001_initial.sql', import.meta.url), 'utf8'));
+    db.exec(readFileSync(new URL('../migrations/0002_ingestion.sql', import.meta.url), 'utf8'));
     const env = noStorageEnv();
     env.DB = { prepare(sql: string) {
       let values: unknown[] = [];

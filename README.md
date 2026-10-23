@@ -65,7 +65,7 @@ As of 2026-10-23, this repository contains:
 | Simulation | Separate, explicitly labeled synthetic demonstration; does not write field records |
 | Web delivery | First release deployed, with automated checks, cloud delivery, and browser verification recorded |
 | BLE and hardware | Planned: all five devices collect, buffer and upload first; both AI Passports then add interaction, and ePaper adds a place card. Firmware and device acceptance remain pending |
-| Research raw data | Upload protocol drafted; raw-batch archival and acknowledgement are not implemented |
+| Device API and research archive | Window/raw/status ingestion, per-node auth, D1 receipts, private R2 and research parsing implemented and locally verified; production provisioning and hardware acceptance pending |
 
 Visit the [online prototype](https://pulse.anend.net) to explore the
 current flow. It opens in the explicitly labeled “模拟演示” mode with synthetic
@@ -73,7 +73,8 @@ data. Switch to “现场观察” for field records; empty summaries are expect
 there are no manual records. Field submissions require a credential from
 the project administrator; local development uses a locally chosen credential.
 
-The recorded verification covers the web and manual-recording flow. It does not
+The deployed verification covers the earlier web and manual-recording flow. The new
+ingestion server has separate [local acceptance and setup notes](docs/notes/backend-ingestion.md). It does not
 establish BLE reception, hardware acceptance, or field validation on campus. The
 next priorities are the data contracts, one sensing node and its upload path,
 followed by adaptation and individual collection/upload acceptance on all five
@@ -85,7 +86,7 @@ devices, multi-point verification, then Passport interaction and ePaper display.
 - **Product goals and device roles:** [overall plan (中文)](docs/design/hackathon-plan.md) and [roadmap](docs/design/ROADMAP.md).
 - **Stack, data flow, and source layout:** [technical and architecture overview](docs/notes/architecture.md).
 - **Run and verify locally:** [development guide](docs/notes/development.md).
-- **Work on APIs or sensing:** [implemented web API](docs/specs/web-api-v0.md) and [upload protocol draft, not yet implemented](docs/specs/ingest-v1.md).
+- **Work on APIs or sensing:** [implemented web API](docs/specs/web-api-v0.md) and [upload protocol and server implementation boundary](docs/specs/ingest-v1.md).
 - **Delivery and collaboration rules:** [CI/CD](docs/notes/ci-cd.md) and [project instructions](AGENTS.md). With the current configuration, passing checks on `main` trigger automatic deployment.
 
 This repository implements the hackathon application incrementally from a fresh

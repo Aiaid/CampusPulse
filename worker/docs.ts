@@ -23,8 +23,8 @@ const html = `<!doctype html>
   <header class="swagger-ui wrapper">
     <h1>CampusPulse API 文档</h1>
     <p><a href="/">返回校园地图</a> · <a href="/openapi.json">下载 OpenAPI JSON</a></p>
-    <p>读取接口公开；新增和撤销人工记录需要共享操作员凭据。Authorize 中只输入 token，不加 Bearer 前缀。凭据仅保留在当前页面内存中，刷新后清除。</p>
-    <p>本页连接当前站点。执行 POST / DELETE 会写入或撤销真实记录；请求示例是合成数据，请替换为实际观察后提交。目前没有用户登录、个人权限或 BLE 上传接口。</p>
+    <p>地点读取公开；人工记录、设备上传、研究读取分别使用独立凭据。Authorize 中只输入 token，不加 Bearer 前缀。凭据仅保留在当前页面内存中，刷新后清除。</p>
+    <p>本页连接当前站点。执行 POST / DELETE 会写入或撤销真实记录；请求示例是合成数据，请使用登记的 demo 配置测试上传。设备 ACK 表示云端已提交该批，不代表硬件或无线完整性验证。当前没有用户登录或个人权限。</p>
   </header>
   <main id="swagger-ui" aria-label="交互式 API 文档"></main>
   <noscript>请启用 JavaScript，或直接下载上方 OpenAPI JSON 查看接口描述。</noscript>

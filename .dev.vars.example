@@ -1,2 +1,5 @@
 # Local development only. Copy to .dev.vars and choose a random token.
 OPERATOR_TOKEN=replace-with-a-long-random-local-token
+# Independent private research reads; never use the operator or device token.
+# RESEARCH_TOKEN=replace-with-an-independent-random-local-token
+# Device tokens are provisioned as SHA-256 digests in D1, not Worker secrets.

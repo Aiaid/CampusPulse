@@ -150,3 +150,14 @@ entire application was created during the hackathon.
   Swagger's remote validator and query configuration override are disabled;
   bearer credentials are never persisted by the docs UI. Contract/browser
   validation is recorded with the API feature, separately from cloud deployment.
+
+## 2026-10-23 — Ingestion server implementation
+
+The ingest validator, D1 migration/store, R2 upload handler, public projection,
+retention handler, provisioning helper, AD parser and tests are newly authored
+for this baseline. No pre-hackathon backend, parser implementation, firmware,
+raw capture, credential or database was copied. Existing synthetic protocol
+fixtures are contract inputs, not field evidence. The implementation uses the
+Cloudflare D1/R2 APIs and existing development dependencies; it adds no copied
+third-party implementation or new license claim. Local workerd and docs-browser
+acceptance do not establish production deployment or device validation.
