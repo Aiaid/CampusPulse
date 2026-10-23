@@ -162,3 +162,15 @@ Sources: [Workers pricing](https://developers.cloudflare.com/workers/platform/pr
 [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/),
 [R2 pricing](https://developers.cloudflare.com/r2/pricing/),
 [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
+
+## Ingestion cloud acceptance — 2026-10-23
+
+[Run 39921619389](https://github.com/Aiaid/CampusPulse/actions/runs/39921619389)
+published backend-only commit `6f7775a` after all checks passed. It binds private
+`campuspulse-raw`, preserves operator/research secrets and configures the 15-minute
+cleanup schedule. D1 migration 0002 is applied. Three synthetic demo streams and
+private R2 reads passed online; cross-role checks passed and the temporary node
+was disabled afterward. This supersedes earlier no-ingestion/no-R2 statements
+above; their first-release cost table is historical. No subscription upgrade or
+measured usage-cost claim is made here. Exact tests, initial Worker version and
+limits are in [backend ingestion acceptance](backend-ingestion.md).

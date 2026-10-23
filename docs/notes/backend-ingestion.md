@@ -1,8 +1,9 @@
 # Ingestion server implementation and local acceptance
 
-Date: 2026-10-23. Status: **implemented and locally verified; production
-provisioning/deployment is in progress; firmware/hardware validation is pending**.
-Earlier deployment records cover the earlier web/manual API only.
+Date: 2026-10-23. Status: **deployed on Cloudflare and verified with isolated
+synthetic online uploads; firmware/hardware validation is pending**.
+The cloud acceptance section below covers this ingestion server. Earlier
+web/manual deployment records are historical and do not substitute for it.
 
 ## Implemented API
 
@@ -163,7 +164,7 @@ operator creation/cancellation, no authorization leakage to public reads and no
 credential persistence after refresh. It uses only an isolated local database;
 this is backend docs regression, not renewed frontend field-flow acceptance.
 
-Not established: cloud provisioning/deployment of this slice, firmware encoder or
+Not established: physical-node provisioning, firmware encoder or
 ACK reclamation, sustained throughput/quotas, measured radio completeness, device
 clock trust, battery/storage acceptance, vehicle classification, research account
 roles, rate limiting or alert delivery. No old backend implementation was copied.
@@ -181,3 +182,61 @@ bytes, duplicate/conflict/overlap responses, authentication/validation negatives
 private research parsing, and public field snapshots before/after demo writes.
 It writes a sanitized local report; a rejected raw overlap may leave one known
 unreferenced object. It does not assert hardware or radio acceptance.
+
+## Cloudflare production acceptance — 2026-10-23
+
+Backend-only implementation commit: `6f7775af2c71efa36e4a5a38a9e33629de1b387b`.
+[CI/CD run 39921619389](https://github.com/Aiaid/CampusPulse/actions/runs/39921619389)
+passed checks and deployment, including 66 tests, build, real local workerd D1/R2,
+frontend browser regression and nine-operation Swagger UI browser checks.
+The published frontend and CSS/JS hashes matched the exact committed release
+snapshot; concurrent Pixi/actor changes were excluded. Four unchanged release
+PNGs were metadata-checked without exposing private values; no identifying
+embedded metadata was found.
+
+Initial accepted Worker version: `8cfe8cf0-53b9-4876-9d7c-a1f09dd49ddf`, 100% traffic.
+The additive `0002_ingestion.sql` migration is applied to the existing production
+D1. `campuspulse-raw` is R2 Standard with APAC location hint, public r2.dev disabled,
+no bucket custom domains and no object-expiration rule. The default seven-day
+incomplete multipart abort rule is separate from evidence retention. Worker
+`RAW_BUCKET` and the 15-minute cleanup schedule are configured; actual 24-hour
+expiry execution has not been observed yet.
+
+The owner enabled R2 and explicitly approved an independent `RESEARCH_TOKEN` and
+a demo-only node credential. Local recovery material is mode 0600 under ignored
+`.wrangler/ops/`; no credential was committed or printed. Existing operator
+credentials were preserved. No physical device is registered by this test.
+
+Online acceptance used [pulse.anend.net](https://pulse.anend.net), with:
+
+| Check | Observed result |
+| --- | --- |
+| Health/config | 200; ingestion implemented, raw storage configured, demo policy only |
+| Window/raw/status upload | One committed batch/record each; exact hash/identity/count/durability verified |
+| Identical frozen retries | Same original receipt IDs and receive times; no duplicate D1 batches |
+| Changed bytes / overlapping sequence range | 409 batch_conflict / seq_range_overlap |
+| Missing auth / other node / field escalation | 401 / 403 / 422 |
+| Wrong body hash / inconsistent hex length | 400 / 422 |
+| Research read | 200 only with independent researcher credential; original body hash and versioned parsing matched |
+| Public field projection | Before/after unchanged: no sensor windows or manual records from the demo |
+| Cross-role access | Nine checks passed; device/research/operator scopes stayed separate, original operator still authenticates |
+| Post-test disable | Synthetic node disabled in D1; its former credential returns 401 |
+
+D1 reconciled exactly three demo batches, one window row and one status row. The
+raw-overlap rejection intentionally exercised the R2-before-D1 failure boundary
+and may leave one small synthetic unreferenced object. It is not a success receipt
+and automatic orphan deletion remains disabled. Synthetic committed evidence
+follows the configured retention policy. Raw test addresses/names are fixture
+content, not captured radio observations.
+
+`/docs` rendered all nine operations in a real browser; `/openapi.json` returned
+OpenAPI 3.1. The workers.dev origin passed the hosted deployment smoke. One direct
+request to workers.dev from this Mac reset before TLS establishment, whereas
+the custom domain passed the full API acceptance. That single network sample
+does not establish a durable availability rate or a Worker API failure.
+
+The sanitized local evidence files are `.wrangler/ops/ingestion-smoke-result.json`,
+`auth-isolation-result.json`, `ingestion-public-result.json`,
+`ingestion-cleanup-result.json` and `ingestion-deployment.json`. They contain no
+credentials or raw advertisement content. The two independent secrets remain
+separate; real firmware devices require their own scoped enrollment.

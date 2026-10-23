@@ -13,10 +13,9 @@ assignments; firmware and device acceptance remain pending.
 
 ## P0 — Deliver the core MVP
 
-- [ ] Provision the new ingestion server in production: reviewed D1 migration,
-      real node/config/placement registries, private R2 binding and independent
-      research secret; then deploy and verify synthetic cloud upload/retention.
-      Local implementation acceptance is archived below; hardware remains separate.
+- [ ] Register individually verified physical nodes, capture policies and fixed
+      placements in production, then validate firmware ACK/reclamation and actual
+      retention timing. Cloud backend/demo acceptance is archived below.
 
 - [ ] Confirm competition requirements, deadline, team capacity, and demo places.
 - [ ] Inventory both T-Energy-S3 boards, both AI Passports, and the Waveshare
@@ -111,6 +110,14 @@ assignments; firmware and device acceptance remain pending.
 
 ## Completed archive
 
+- [x] Deploy the ingestion server on Cloudflare from backend-only commit
+      `6f7775a`; apply additive D1 migration, bind private APAC-hint R2, set an
+      independent research secret and verify three real cloud demo streams, exact
+      retry ACKs, conflicts, private parsing and public isolation. CI run
+      `39921619389` passed; 9 extra permission-boundary checks passed. Disable the
+      synthetic upload node after acceptance. This does not validate firmware,
+      field coverage, long-run retention execution or mainland availability.
+
 - [x] Implement ingestion v1 server: scoped per-node credentials, immutable
       placement/config with append-only closures, strict three-stream validation,
       atomic D1 receipts and range exclusion, conditional private R2 archival,
@@ -118,7 +125,8 @@ assignments; firmware and device acceptance remain pending.
       provisioning helper. Local SQLite/workerd D1/R2 concurrency/failure tests,
       32-window transaction, build and nine-operation Swagger browser regression
       passed. See [acceptance and limits](../notes/backend-ingestion.md).
-      Production provisioning/deployment and firmware/device validation pending.
+      Cloud deployment/demo acceptance is recorded separately below; firmware
+      and physical-device validation remain pending.
 
 - [x] Bind unused `pulse.anend.net` to the existing Worker without deploying
       local parallel work; independently probe mainland DNS, frontend, JS and

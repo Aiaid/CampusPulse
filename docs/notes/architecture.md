@@ -1,8 +1,8 @@
 # Contributor architecture overview
 
 Status: the web/API slice and selected frontend migration are implemented.
-BLE ingestion and private raw archival are now implemented with separate local
-acceptance; device firmware remains planned. Recorded
+BLE ingestion and private raw archival are implemented and deployed with separate
+local/cloud demo acceptance; device firmware remains planned. Recorded
 deployment and verification evidence is in [CI/CD](ci-cd.md) and
 [development notes](development.md).
 The stack below describes the current source. Earlier release verification does
@@ -20,7 +20,7 @@ not validate or establish deployment of later frontend revisions; see the
 | Persistence | Cloudflare D1, SQL migrations | Implemented: places/manual records, immutable capture/placement policy, sensor windows, status, durable receipts and range exclusion. |
 | Development and checks | Node 24, Wrangler, Vitest, Playwright | Configured: local Worker/D1 development, SQLite/API tests, build and browser smoke checks. Follow the linked guides for commands and recorded results. |
 | Device ingestion | HTTPS window/raw/status streams | Server implemented: scoped auth, strict validation, atomic sequence handling and independent stream acknowledgements. Firmware buffering remains planned. See [ingestion implementation](backend-ingestion.md). |
-| Research raw archive | Private R2 with D1 receipts | Implemented with conditional immutable R2 writes, D1 receipts, private research reads and bounded retention. Production R2 binding is opt-in; deployment remains pending. |
+| Research raw archive | Private R2 with D1 receipts | Implemented with conditional immutable R2 writes, D1 receipts, private research reads and bounded retention. Production D1/R2 is bound and the server passed isolated demo uploads; firmware and physical-node acceptance remain separate. |
 | Firmware and displays | ESP32 BLE nodes, portable terminals, ePaper | Planned; no firmware is included in this repository. |
 
 ## Frontend rendering

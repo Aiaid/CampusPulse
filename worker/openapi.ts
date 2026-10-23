@@ -86,7 +86,7 @@ export function createOpenApiDocument(): Record<string, unknown> {
     openapi: '3.1.0',
     info: {
       title: 'CampusPulse API', version: '0.2.0',
-      description: 'Implemented public place reads, shared-operator manual observations, device ingestion/config reads and private research batch reads. BLE firmware, device field validation and production provisioning are separate pending work. Synthetic examples illustrate the wire format; replace values and credentials before use. Try it out writes real data to this origin. Device uploads require X-Body-SHA256 of the exact UTF-8 JSON bytes sent; Swagger UI does not calculate it. API responses use Cache-Control: no-store.',
+      description: 'Implemented public place reads, shared-operator manual observations, device ingestion/config reads and private research batch reads. Firmware and hardware field validation are pending; runtime provisioning and real-device onboarding must be verified separately in each environment. Synthetic examples illustrate the wire format; replace values and credentials before use. Try it out writes real data to this origin. Device uploads require X-Body-SHA256 of the exact UTF-8 JSON bytes sent; Swagger UI does not calculate it. API responses use Cache-Control: no-store.',
     },
     servers: [{ url: '/' }],
     security: [],

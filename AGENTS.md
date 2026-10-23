@@ -118,8 +118,9 @@ instructions take precedence.
 - The upload design is `docs/specs/ingest-v1.md`: separate window/raw/status
   streams; research raw batches use private R2 and independent durable receipts.
   Its first server slice is implemented and locally verified; see
-  `docs/notes/backend-ingestion.md` for limitations. Firmware, production
-  provisioning/deployment of that slice, and hardware acceptance remain pending.
+  `docs/notes/backend-ingestion.md` for limitations and verified Cloudflare
+  deployment/demo acceptance. Firmware, physical-node onboarding and hardware
+  acceptance remain pending.
 - If board drivers are reused from `aipassport/ai-passport/components/bsp`, preserve
   their pin mapping, copyright, and license. Do not initialize unused audio.
 - On the AI Passport, preserve the 3 MB application partition and `cardid` at

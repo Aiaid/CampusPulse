@@ -65,7 +65,7 @@ As of 2026-10-23, this repository contains:
 | Simulation | Separate, explicitly labeled synthetic demonstration; does not write field records |
 | Web delivery | First release deployed, with automated checks, cloud delivery, and browser verification recorded |
 | BLE and hardware | Planned: all five devices collect, buffer and upload first; both AI Passports then add interaction, and ePaper adds a place card. Firmware and device acceptance remain pending |
-| Device API and research archive | Window/raw/status ingestion, per-node auth, D1 receipts, private R2 and research parsing implemented and locally verified; production provisioning and hardware acceptance pending |
+| Device API and research archive | Window/raw/status ingestion, per-node auth, D1 receipts, private R2 and research parsing implemented, deployed on Cloudflare and verified with isolated demo uploads; hardware acceptance pending |
 
 Visit the [online prototype](https://pulse.anend.net) to explore the
 current flow. It opens in the explicitly labeled “模拟演示” mode with synthetic
