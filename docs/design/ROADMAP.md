@@ -7,14 +7,6 @@ mandatory track requirements remain unknown.
 
 ## P0 — Deliver the core MVP
 
-- [ ] Verify production Cloudflare deployment after CF credentials and target
-      resource IDs are configured.
-- [ ] Complete the first production setup: provision D1, configure scoped CI
-      credentials, verify automatic deployment and real-browser/API behavior;
-      keep local-reference tests outside the application test suite and review
-      dependency advisories before release.
-
-
 - [ ] Confirm competition requirements, deadline, team capacity, and demo places.
 - [ ] Inventory both T-Energy-S3 boards, both AI Passports, and the Waveshare
       1.54-inch ePaper variant; confirm protected data and board-specific layouts.
@@ -83,6 +75,15 @@ mandatory track requirements remain unknown.
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] Verify production Cloudflare deployment after CF credentials and target
+      resource IDs are configured: hosted run 39910663742 passed checks, D1
+      migrations, Worker/Static Assets deployment and online smoke verification.
+- [x] Complete the first production setup: provision APAC D1, configure scoped CI
+      credentials, verify automatic deployment and real-browser/API behavior;
+      keep local-reference tests outside the application test suite and replace
+      the vulnerable Vitest 3 toolchain. Operator writes and cancellation passed
+      with synthetic browser QA records; no BLE/hardware validation is claimed.
 
 - [x] Add GitHub Actions PR/main tests, builds, local Worker browser checks and
       conditional Workers/D1 deployment; validate workflow with actionlint and

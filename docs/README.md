@@ -6,7 +6,7 @@ validation records are not evidence for this implementation.
 | Document | Purpose | Status |
 | --- | --- | --- |
 | [Local development](notes/development.md) | Run, test and configure the web/API slice | Current |
-| [CI/CD](notes/ci-cd.md) | GitHub checks, Cloudflare setup, online validation and costs | First cloud deployment verified; hosted CD verification pending |
+| [CI/CD](notes/ci-cd.md) | GitHub checks, Cloudflare setup, online validation and costs | Hosted CI/CD and first cloud deployment verified |
 | [Web API v0](specs/web-api-v0.md) | Implemented public reads and authenticated manual records | First slice |
 | [CCNU GIS](research/ccnu-gis.md) | Official tile source, image coordinates and integration limits | Current research |
 | [Hackathon plan / 黑客松方案](design/hackathon-plan.md) | Product scope, five-device roles, all-Cloudflare architecture, MVP and acceptance | Proposal; web/API first slice underway, hardware pending |

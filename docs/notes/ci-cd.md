@@ -98,7 +98,10 @@ The three repository variables above are configured. The owner created the
 separate deployment token and stored it as `CLOUDFLARE_API_TOKEN` in the GitHub
 `production` environment. The setup requests Workers Scripts Edit, D1 Edit and
 Account Settings Read for the target account; no DNS or zone write access is requested.
-The first complete hosted deployment still needs its workflow result recorded.
+[Hosted run 39910663742](https://github.com/Aiaid/CampusPulse/actions/runs/39910663742)
+on `ba4472b` passed the check job (47 seconds) and production deployment job
+(28 seconds), including remote migrations and the published frontend/API/D1 smoke.
+This verifies the GitHub-to-Cloudflare delivery path, not device ingestion.
 
 A separate random `OPERATOR_TOKEN` is configured on the Worker. Its local
 recovery copy is in ignored `.wrangler/ops/runtime-secrets.json` with mode 0600;

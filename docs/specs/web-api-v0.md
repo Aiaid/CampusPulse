@@ -48,5 +48,7 @@ an existing ID returns 409. Response confirmation follows the D1 write. Cancella
 is idempotent `DELETE /api/v1/observations/:id` with the same operator credential.
 Correct an error by cancelling it and submitting a fresh record.
 
-No device ingestion or research/raw receipt route is implemented. No production
-operator identity, rate limiting, retention job or deployment is claimed by this slice.
+No device ingestion or research/raw receipt route is implemented. Production
+operator identity, rate limiting and a retention job remain unimplemented.
+Cloud deployment and browser/API verification are recorded in the
+[CI/CD notes](../notes/ci-cd.md); these do not validate devices or BLE reception.
