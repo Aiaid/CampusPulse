@@ -1,0 +1,29 @@
+# --- 目标芯片 ---
+CONFIG_IDF_TARGET="esp32c3"
+# ESP32-C3 无 PSRAM，不设 CONFIG_SPIRAM。
+
+# --- Flash ---
+# FoloToy AI Passport 硬件基线为 8MB Flash。
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+# 固定 8MB 镜像头，关闭 detect，便于烧录参数可复现。
+CONFIG_ESPTOOLPY_HEADER_FLASHSIZE_UPDATE=n
+# 自定义分区：3MB factory + 0x356000 cardid 保护区（见 partitions.csv 注释）。
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# --- 控制台：USB-Serial-JTAG（C3 原生 USB，GPIO18/19）---
+# 不用 UART0：其默认 TX=GPIO21 与本板背光引脚冲突。
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# --- 系统 ---
+CONFIG_FREERTOS_HZ=1000
+
+# --- HTTPS ---
+# 提交记录走 Cloudflare Workers HTTPS，使用证书 bundle 校验服务端。
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# 本固件不启用 Bluetooth：记录终端只做人工录入与上传。
+# BLE 观测节点是另一块板（T-Energy-S3）的另一个固件。

@@ -1,0 +1,10 @@
+# AI Passport 布局硬约束（CampusPulse AGENTS.md）：
+#   factory 固定 3MB（0x10000..0x30FFFF），cardid 固定在 0x356000。
+# cardid 是设备身份保护区：禁止整体擦除 Flash，烧录只发
+# bootloader / partition-table / app 三个分开的镜像，不发合并镜像。
+# 该布局只适用于 AI Passport（ESP32-C3），不要套用到 T-Energy-S3 等其它板。
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xf000,   0x1000,
+factory,  app,  factory, 0x10000,  0x300000,
+cardid,   data, nvs,     0x356000, 0x4000,

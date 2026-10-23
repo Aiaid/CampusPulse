@@ -43,6 +43,37 @@ Before committing reused code, add an entry with:
 Reused board drivers must retain their upstream copyright and license. Record
 any permitted reuse transparently; do not relabel prior code as newly written.
 
+## 2026-10-23 — AI Passport field terminal firmware
+
+- Source: the user's local pre-hackathon `ai-passport` firmware workspace
+  (FoloToy AI Passport, MIT License, Copyright (c) 2026 FoloToy), at local
+  revision `5fb8ab532414eb0029fc5ea131a03cb0993db180`. That repository is a
+  read-only neighbor and remains unpublished here; only the files listed
+  below were carried over.
+- Destination: `firmware/passport-terminal/`, the CampusPulse field terminal
+  for manual parking/elevator observations against `docs/specs/web-api-v0.md`.
+- Copied without modification: `components/bsp/include/bsp_*.h` (pins, i2c,
+  display, button, battery) and `components/bsp/src/` implementations,
+  `main/key_guard.h`, `main/ui_mini.c/h`, and `tools/gen_font.ps1`.
+  Copyright headers and pin mappings are preserved per project rules.
+- Modified during reuse: `components/bsp/CMakeLists.txt` and
+  `idf_component.yml` were trimmed to display/button/battery/i2c only; audio
+  (ES8311) and the LVGL layer are excluded and never initialized.
+  `tools/gen_font.ps1` gained the terminal's Chinese glyph set; generated
+  `font_zh`/`font_digit` outputs are artifacts of that tool.
+- Adapted, not copied: `main/main.c` keeps the old boot/input-dispatch
+  structure with new module wiring; `main/net_link.c` reuses the old
+  wifi_time.c connection/diagnostics/SNTP patterns but changes the lifecycle
+  to on-demand connect with idle disconnect (this firmware runs no BLE scan).
+- Newly written: `main/page_term.*`, `main/obs_api.*`, `main/obs_store.*`,
+  `main/term_cred.example.h`, project CMake/partition/sdkconfig files.
+  The old radar pages, BLE scan pipeline, demos, and vehicle rules were
+  not copied.
+- Partition layout preserves the 3 MB factory app and the protected `cardid`
+  at 0x356000 per hardware constraints; no merged padded image is produced.
+- Validation: pending first ESP-IDF build and on-device checks; no radio,
+  upload, or UI validation is claimed yet.
+
 ## 2026-10-23 — Prior visual concept
 
 - Source: the user's pre-hackathon CampusPulse generated concept, locally saved

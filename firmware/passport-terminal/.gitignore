@@ -1,0 +1,9 @@
+# ESP-IDF 构建产物与本地配置（仓库根 .gitignore 已覆盖 build/、
+# managed_components/、sdkconfig，这里再兜一层，防止在子目录单独开仓库时泄露）
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+
+# 真实凭据：Wi-Fi / API 地址 / 操作员令牌。只提交 term_cred.example.h。
+main/term_cred_local.h

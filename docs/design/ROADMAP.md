@@ -41,6 +41,9 @@ mandatory track requirements remain unknown.
 ## P1 — Complete the hardware demonstration
 
 - [ ] Add AI Passport field entry/status screens without copying the old app.
+      Started 2026-10-23 as `firmware/passport-terminal/`: new terminal flow
+      (place list, parking range, elevator timing, outbox retry) on a trimmed
+      reuse basis; build and device validation pending.
 - [ ] Use the second Passport as a separately tagged controlled beacon and
       backup terminal; exclude test broadcasts from public activity metrics.
 - [ ] Implement the Waveshare place card with source/time/valid-until text and

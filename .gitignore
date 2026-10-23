@@ -38,3 +38,6 @@ sdkconfig.old
 .DS_Store
 .idea/
 .vscode/
+
+# Firmware local credentials (ESP-IDF projects under firmware/)
+term_cred_local.h
