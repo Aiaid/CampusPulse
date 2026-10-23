@@ -1,7 +1,7 @@
 # CampusPulse
 
 [English](README.md) · [文档索引](docs/README.md) ·
-[路线图](docs/design/ROADMAP.md) · [在线原型](https://campuspulse.anend.workers.dev)
+[路线图](docs/design/ROADMAP.md) · [在线原型](https://pulse.anend.net)
 
 CampusPulse 希望在一张校园地图上，呈现地点的活动变化、电动车停车观察和最近
 候梯实测。这个黑客松项目面向华中师范大学（CCNU）的校园场景，当前已完成首版
@@ -59,7 +59,7 @@ CampusPulse 在这个基础上，把带有时间和来源的观察关联到地�
 | BLE 与硬件 | 规划为五台设备先采集、缓存、上传，再给两台 AI Passport 加交互、墨水屏加地点卡；固件与真机验收仍待完成 |
 | 研究原始数据 | 上传协议已有草案；原始批次存档与确认机制尚未实现 |
 
-可以访问[在线原型](https://campuspulse.anend.workers.dev)了解当前流程。当前前端默认
+可以访问[在线原型](https://pulse.anend.net)了解当前流程。当前前端默认
 进入明确标注的“模拟演示”，展示合成数据；切换“现场观察”后，没有人工记录时
 显示空状态是正常情况。提交现场
 记录需要由项目管理员提供凭据；本地开发使用自行设置的本地凭据。

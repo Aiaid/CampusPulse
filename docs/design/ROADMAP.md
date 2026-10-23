@@ -106,6 +106,12 @@ assignments; firmware and device acceptance remain pending.
 
 ## Completed archive
 
+- [x] Bind unused `pulse.anend.net` to the existing Worker without deploying
+      local parallel work; independently probe mainland DNS, frontend, JS and
+      read-only API. Reachability improved substantially, but download anomalies
+      and actual demo-network/device acceptance remain open. See
+      [connectivity evidence](../notes/mainland-connectivity-2026-10-23.md).
+
 - [x] Publish same-origin `/docs` and `/openapi.json` for the six implemented
       operations with self-hosted Swagger UI, explicit shared-operator auth and
       errors. OpenAPI validation, 23 unit/contract tests, real local browser

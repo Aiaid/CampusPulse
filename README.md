@@ -1,7 +1,7 @@
 # CampusPulse
 
 [简体中文](README.zh_CN.md) · [Documentation](docs/README.md) ·
-[Roadmap](docs/design/ROADMAP.md) · [Online prototype](https://campuspulse.anend.workers.dev)
+[Roadmap](docs/design/ROADMAP.md) · [Online prototype](https://pulse.anend.net)
 
 CampusPulse aims to bring place activity, e-bike parking observations, and recent
 measured elevator waits onto one campus map. This hackathon project focuses on
@@ -67,7 +67,7 @@ As of 2026-10-23, this repository contains:
 | BLE and hardware | Planned: all five devices collect, buffer and upload first; both AI Passports then add interaction, and ePaper adds a place card. Firmware and device acceptance remain pending |
 | Research raw data | Upload protocol drafted; raw-batch archival and acknowledgement are not implemented |
 
-Visit the [online prototype](https://campuspulse.anend.workers.dev) to explore the
+Visit the [online prototype](https://pulse.anend.net) to explore the
 current flow. It opens in the explicitly labeled “模拟演示” mode with synthetic
 data. Switch to “现场观察” for field records; empty summaries are expected when
 there are no manual records. Field submissions require a credential from
