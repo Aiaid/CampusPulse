@@ -1,0 +1,151 @@
+.cp-map {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  isolation: isolate;
+  cursor: grab;
+  background: #cddbd7;
+  touch-action: none;
+  outline: none;
+  user-select: none;
+  --cp-label-bg: rgba(251, 253, 255, .93);
+  --cp-label-border: rgba(255, 255, 255, .9);
+  --cp-label-color: #263951;
+  --cp-label-shadow: 0 3px 12px #183d5930, 0 1px 3px #183d591a;
+}
+.cp-map:focus-visible { box-shadow: inset 0 0 0 3px #0786ff; }
+.cp-map--dragging { cursor: grabbing; }
+.cp-map--night {
+  background: #101f31;
+  --cp-label-bg: rgba(12, 31, 52, .88);
+  --cp-label-border: rgba(129, 172, 216, .6);
+  --cp-label-color: #edf5ff;
+  --cp-label-shadow: 0 3px 14px #0006, 0 0 12px #071d3933;
+}
+.cp-map__raster {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: none;
+  transform-origin: 0 0;
+  pointer-events: none;
+  will-change: transform;
+  transition: transform 240ms cubic-bezier(.2, .75, .3, 1), filter 650ms ease;
+  filter: saturate(.81) brightness(1.12) contrast(.92);
+}
+.cp-map--night .cp-map__raster { filter: saturate(.55) brightness(.58) contrast(1.08); }
+.cp-map__atmosphere {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: transparent;
+}
+.cp-map--night .cp-map__atmosphere { background: #0b24421a; }
+.cp-map__objects, .cp-map__landmarks { position: absolute; inset: 0; pointer-events: none; }
+.cp-map__objects { z-index: 1; }
+.cp-map__landmarks { z-index: 2; }
+.cp-map__sprite {
+  position: absolute;
+  object-fit: contain;
+  transform: translate(-50%, -92%);
+  pointer-events: none;
+  transition: left 240ms cubic-bezier(.2, .75, .3, 1), top 240ms cubic-bezier(.2, .75, .3, 1), opacity 250ms ease;
+}
+.cp-map__sprite--person { width: 15px; height: 25px; filter: drop-shadow(0 1px 2px #05387865); }
+.cp-map__sprite--bike { width: 25px; height: 23px; filter: drop-shadow(0 1px 2px #64300066); }
+.cp-map--night .cp-map__sprite--person { filter: brightness(1.3) drop-shadow(0 0 4px #1389ffb3); }
+.cp-map--night .cp-map__sprite--bike { filter: brightness(1.2) drop-shadow(0 0 4px #ff771d99); }
+.cp-map__anchor {
+  position: absolute;
+  width: 0;
+  height: 0;
+  transition: left 240ms cubic-bezier(.2, .75, .3, 1), top 240ms cubic-bezier(.2, .75, .3, 1);
+}
+.cp-map__label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: max-content;
+  padding: 7px 12px;
+  border: 1px solid var(--cp-label-border);
+  border-radius: 7px;
+  color: var(--cp-label-color);
+  background: var(--cp-label-bg);
+  box-shadow: var(--cp-label-shadow);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: .025em;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: background 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+.cp-map__label:hover { border-color: #058bff; box-shadow: 0 3px 20px #007aff35; }
+.cp-map__label:focus-visible { outline: 3px solid #27a0ff; outline-offset: 3px; }
+.cp-map__anchor--selected { z-index: 5; }
+.cp-map__anchor--selected .cp-map__label { top: 17px; color: #fff; border-color: #61b5ff; background: #087dff; box-shadow: 0 4px 20px #087dff70; }
+.cp-map__label-dot { width: 5px; height: 5px; border-radius: 50%; background: #fff; box-shadow: 0 0 8px #fff9; }
+.cp-map__selection { position: absolute; width: 65px; height: 30px; left: -32.5px; top: -10px; border: 1.5px solid #39b8ff; border-radius: 50%; background: #008cff21; box-shadow: 0 0 18px #078cff44, inset 0 0 12px #00b7ff22; transform: rotate(-15deg); }
+.cp-map__selection > svg { position: absolute; left: 16px; top: -23px; color: #168cff; stroke: white; stroke-width: 1.5; filter: drop-shadow(0 2px 4px #007aff99); transform: rotate(15deg); }
+.cp-map__wait {
+  position: absolute;
+  top: 20px;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transform: translateX(-50%);
+  width: max-content;
+  padding: 5px 8px;
+  color: var(--cp-label-color);
+  background: var(--cp-label-bg);
+  border: 1px solid var(--cp-label-border);
+  border-radius: 6px;
+  box-shadow: var(--cp-label-shadow);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+}
+.cp-map__anchor--selected .cp-map__wait { top: 39px; }
+.cp-map__wait > span { font-size: 15px; font-weight: 700; }
+.cp-map__wait small { padding-left: 4px; opacity: .65; font-size: 9px; border-left: 1px solid currentColor; }
+.cp-map__source { position: absolute; z-index: 3; bottom: 10px; left: 14px; padding: 3px 6px; border-radius: 4px; font: 10px/1.3 sans-serif; color: #365169; background: #ffffffa6; cursor: default; pointer-events: none; }
+.cp-map--night .cp-map__source { color: #bed2e7; background: #0b2036b8; }
+.cp-map--dragging .cp-map__raster, .cp-map--dragging .cp-map__anchor, .cp-map--dragging .cp-map__sprite { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .cp-map__raster, .cp-map__anchor, .cp-map__sprite { transition: none; }
+}
+@media (max-width: 650px) {
+  .cp-map__label { padding: 6px 8px; font-size: 11px; }
+  .cp-map__source { font-size: 8px; bottom: 6px; left: 8px; }
+}
+.cp-map__regions{position:absolute;inset:0;z-index:3;pointer-events:none;display:block}.cp-map__landmarks{z-index:4}
+.cp-map__raster{mask-repeat:no-repeat;-webkit-mask-repeat:no-repeat}
+.cp-map__raster{transition:filter 250ms ease}
+.cp-map__anchor{transition:none}
+.cp-map{overflow-anchor:none}
+
+/* Remote tiles retain the historical 1024x640 coordinate registration. */
+.cp-map__raster { overflow: hidden; }
+.cp-map__tile { position: absolute; width: 128px; height: 128px; max-width: none; display: block; pointer-events: none; user-select: none; }
+.cp-map__tile-notice { position: absolute; z-index: 8; left: 12px; right: 12px; bottom: 40px; width: fit-content; max-width: calc(100% - 24px); padding: 9px 12px; border: 1px solid var(--cp-label-border); border-radius: 9px; color: var(--cp-label-color); background: var(--cp-label-bg); font-family: inherit; font-size: 12px; line-height: 1.5; box-shadow: var(--cp-label-shadow); cursor: default; }
+.cp-map__tile-notice button { margin-left: 8px; padding: 4px 9px; border: 1px solid currentColor; border-radius: 5px; color: inherit; background: transparent; cursor: pointer; }
+
+/* Keep the actual school image; only the artistic night treatment changes. */
+.cp-map--night.cp-map--lighting-atmospheric .cp-map__raster {
+  filter: saturate(.7) brightness(.49) contrast(1.13);
+}
+.cp-map--night.cp-map--lighting-atmospheric .cp-map__atmosphere {
+  background: #0a254630;
+  mix-blend-mode: multiply;
+}

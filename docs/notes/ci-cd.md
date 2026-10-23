@@ -10,7 +10,7 @@ Pull requests and pushes to `main` run Node 24 dependency installation, SQLite
 API tests, TypeScript/Vite build, a local D1 migration and browser smoke against
 the actual local Worker. The browser checks submit and cancel a manual record.
 They require no CF account or production credentials.
-Vitest is restricted to `tests/**/*.test.ts`, so ignored historical reference
+Vitest is restricted to `tests/**/*.test.{ts,js}`, so ignored historical reference
 projects cannot enter the application test suite. Vitest 4.1.12 replaces the
 unmaintained 3.x test toolchain; the release audit reports zero vulnerabilities.
 

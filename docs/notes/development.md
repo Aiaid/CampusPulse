@@ -16,7 +16,8 @@ Vite forwards `/api` to the local Worker on port 8787. Or run the built applicat
 directly through `http://localhost:8787` after `npm run build`.
 
 The seed contains logical demonstration places only. Sensor coverage is unconfigured;
-production views start empty. The frontend provides a separate explicit simulation.
+field views start empty. The frontend defaults to a visibly labelled simulation;
+switch to 现场观察 for the separate field-record flow.
 Manual entry needs the local operator token and a parking or elevator place.
 
 ## Verification
@@ -25,18 +26,33 @@ Manual entry needs the local operator token and a parking or elevator place.
 npm test
 npm run build
 # With the built local Worker already running and local .dev.vars configured:
+npx playwright install chromium
 npm run test:browser
 ```
 
 The API tests execute the actual migration and queries against Node's SQLite.
 This is local database/API validation, not Cloudflare deployment, hardware or radio
 validation. Browser checks use the local Worker with a disposable operator secret.
-The browser smoke expects Chromium at `/usr/bin/chromium`; override with
-`CHROMIUM_PATH` on another machine. `SMOKE_URL` accepts only localhost targets.
-In this managed environment it uses the configured HTTPS proxy and pins the
-configured proxy CA for Chromium, rather than disabling HTTPS validation globally.
+The browser smoke uses `CHROMIUM_PATH` when supplied, otherwise Playwright's
+installed Chromium, then `/usr/bin/chromium` as a fallback. `SMOKE_URL` accepts
+only localhost targets. If an HTTPS proxy and its CA are configured in the
+environment, the script uses that proxy and pins its CA for Chromium rather than
+disabling HTTPS validation globally. CI installs Chromium with system dependencies
+and uses `SMOKE_GIS=offline` to check the unavailable-map state independently of
+the school's tile server.
 
-On 2026-10-23, all 9 SQLite/API tests, TypeScript checking, Vite production build,
+The frontend migration passed all 18 SQLite/API and scene-geometry tests,
+TypeScript checking and the Vite production build locally on 2026-10-23. Scene
+geometry tests do not establish surveyed routes or real-world collision behavior.
+See the [frontend notes](../design/frontend-lighting.md) for interaction checks and
+their limits. Local authenticated browser writes are not included in that
+frontend validation; the updated browser smoke covers submission/cancellation
+against a local Worker and disposable CI D1 database when the CI job runs.
+
+### Historical first-slice verification
+
+Historical first-slice verification (before the October 21 UI migration): on
+2026-10-23, all 9 SQLite/API tests, TypeScript checking, Vite production build,
 and local D1 migration passed. Browser checks exercised actual official GIS tile
 rendering, explicit simulation, a WebGL canvas, manual record submission and
 cancellation, and a 390px phone layout. This is the first functional slice rather
@@ -45,8 +61,8 @@ Private QA screenshots contain only structural PNG chunks (IHDR/IDAT/IEND), no
 embedded text/EXIF metadata; they are not committed or published.
 
 The GIS tile origin defaults to `https://gis.ccnu.edu.cn`; an approved compatible
-origin can be supplied with `VITE_GIS_TILE_ORIGIN` at build time. `VITE_GIS_URL`
-controls the attribution link. These are public source URLs, never credentials.
+origin can be supplied with `VITE_GIS_TILE_ORIGIN` at build time. The attribution
+points to the official GIS site. These are public source URLs, never credentials.
 
 ## Cloudflare deployment
 

@@ -64,18 +64,20 @@ As of 2026-10-23, this repository contains:
 | Time and source | Observation time, validity, history queries, and stale markers implemented for manual records |
 | Simulation | Separate, explicitly labeled synthetic demonstration; does not write field records |
 | Web delivery | First release deployed, with automated checks, cloud delivery, and browser verification recorded |
-| BLE and hardware | New firmware, node uploads, two-node operation, and the e-paper place card are not yet implemented or device-validated |
+| BLE and hardware | Planned: all five devices collect, buffer and upload first; both AI Passports then add interaction, and ePaper adds a place card. Firmware and device acceptance remain pending |
 | Research raw data | Upload protocol drafted; raw-batch archival and acknowledgement are not implemented |
 
 Visit the [online prototype](https://campuspulse.anend.workers.dev) to explore the
-current flow. An empty view is expected when there are no manual records. Select
-“模拟演示” to explore synthetic data. Field submissions require a credential from
+current flow. It opens in the explicitly labeled “模拟演示” mode with synthetic
+data. Switch to “现场观察” for field records; empty summaries are expected when
+there are no manual records. Field submissions require a credential from
 the project administrator; local development uses a locally chosen credential.
 
 The recorded verification covers the web and manual-recording flow. It does not
 establish BLE reception, hardware acceptance, or field validation on campus. The
 next priorities are the data contracts, one sensing node and its upload path,
-followed by two-node and field end-to-end verification. See the
+followed by adaptation and individual collection/upload acceptance on all five
+devices, multi-point verification, then Passport interaction and ePaper display. See the
 [roadmap](docs/design/ROADMAP.md) for the full scope and priorities.
 
 ## Where contributors should start
