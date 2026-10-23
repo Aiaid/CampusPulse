@@ -14,6 +14,23 @@ These lessons do not establish that the new implementation works.
 Local pre-hackathon material is kept under the ignored `local-reference/`
 directory. It must never be force-added or published as part of this baseline.
 
+## 2026-10-23 — First web/API implementation
+
+- `src/`, `worker/`, migrations and tests are newly written for this baseline;
+  no pre-hackathon application or vendor renderer was copied.
+- The browser tile adapter references the official CCNU GIS remote JPG endpoint
+  and includes source attribution. No map images or POI datasets are bundled,
+  mirrored, committed or uploaded. Public display/redistribution terms still
+  require confirmation before wider publication.
+- The library focus anchor is a manually recorded fact from the official UI;
+  see [GIS research](../research/ccnu-gis.md). It is not a sensor position.
+- Runtime dependencies: React and React DOM (MIT), Three.js (MIT), and Lucide
+  React (ISC). Exact installed versions are recorded in `package-lock.json`;
+  package license notices are retained by npm. The code uses their APIs without
+  copying implementation into source files. Cloudflare Workers/D1 are the chosen
+  runtime services. No school-map or concept-image license is inferred from those
+  dependency licenses.
+
 ## Future reuse entries
 
 Before committing reused code, add an entry with:

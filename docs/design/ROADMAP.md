@@ -7,6 +7,7 @@ mandatory track requirements remain unknown.
 
 ## P0 — Deliver the core MVP
 
+
 - [ ] Confirm competition requirements, deadline, team capacity, and demo places.
 - [ ] Inventory both T-Energy-S3 boards, both AI Passports, and the Waveshare
       1.54-inch ePaper variant; confirm protected data and board-specific layouts.
@@ -75,6 +76,11 @@ mandatory track requirements remain unknown.
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] Build the first runnable React/Three.js frontend and Workers/D1 API slice:
+      official CCNU GIS visible tiles, verified library image anchor, separate
+      simulated scene, authenticated manual records and cancellation; local
+      SQLite API tests/build/browser checks. No cloud or hardware validation.
 
 - [x] Establish and publish a fresh documentation-only Git baseline, excluding
       local pre-hackathon source, deployments, captures, and databases.

@@ -5,7 +5,10 @@ validation records are not evidence for this implementation.
 
 | Document | Purpose | Status |
 | --- | --- | --- |
-| [Hackathon plan / 黑客松方案](design/hackathon-plan.md) | Product scope, five-device roles, all-Cloudflare architecture, MVP and acceptance | Current proposal; implementation pending |
+| [Local development](notes/development.md) | Run, test and configure the web/API slice | Current |
+| [Web API v0](specs/web-api-v0.md) | Implemented public reads and authenticated manual records | First slice |
+| [CCNU GIS](research/ccnu-gis.md) | Official tile source, image coordinates and integration limits | Current research |
+| [Hackathon plan / 黑客松方案](design/hackathon-plan.md) | Product scope, five-device roles, all-Cloudflare architecture, MVP and acceptance | Proposal; web/API first slice underway, hardware pending |
 | [Upload protocol v1 / 上传协议](specs/ingest-v1.md) | Window/raw/status streams, MAC and AD payload, private R2, durable ACK | Current draft; not implemented |
 | [Roadmap](design/ROADMAP.md) | Priorities, planned milestones, completed work | Current |
 | [Reuse record](notes/reuse.md) | Prior-work boundary and code attribution | Current |
