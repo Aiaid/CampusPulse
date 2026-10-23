@@ -1,0 +1,110 @@
+# Contributor architecture overview
+
+Status: the first web/API slice is implemented. BLE ingestion, raw archival and
+device firmware remain planned. This overview describes the repository; recorded
+deployment and verification evidence is in [CI/CD](ci-cd.md) and
+[development notes](development.md).
+The stack table below describes the committed first release. A frontend migration
+is being prepared separately; its local progress is described below and is not
+part of this documentation commit. Earlier release verification does not validate
+or establish deployment of that frontend revision.
+
+## Stack and delivery boundary
+
+| Layer | Technology | Current scope |
+| --- | --- | --- |
+| Web application | React 19, TypeScript, CSS, Vite; Lucide icons | First release: place selection, manual parking/elevator observations, source and freshness displays, and explicit simulation. |
+| Campus map | External CCNU GIS raster tiles | First release: visible tiles and a verified library image anchor. The raster is not a 3D campus model or evidence of sensor coverage. |
+| Synthetic scene | Three.js | First release: a separate illustrative scene with synthetic objects and activity. The migration below replaces this renderer. |
+| Hosting and API | Cloudflare Workers Static Assets and a TypeScript Worker | Implemented: frontend assets and same-origin `/api/*` routes. GitHub stores source and runs delivery checks. |
+| Persistence | Cloudflare D1, SQL migrations | Implemented: logical places and manual observations, including cancellation. No sensor windows are stored by this slice. |
+| Development and checks | Node 24, Wrangler, Vitest, Playwright | Configured: local Worker/D1 development, SQLite/API tests, build and browser smoke checks. Follow the linked guides for commands and recorded results. |
+| Device ingestion | HTTPS window/raw/status streams | Draft only: authentication, durable buffering, sequence handling and independent acknowledgements are specified in [ingest v1](../specs/ingest-v1.md), not implemented. |
+| Research raw archive | Private R2 with D1 receipts | Planned in ingest v1; no R2 binding or raw-receipt route exists in the current Worker. |
+| Firmware and displays | ESP32 BLE nodes, portable terminals, ePaper | Planned; no firmware is included in this repository. |
+
+## Frontend migration in progress
+
+On 2026-10-23 the user authorized migrating selected 2026-10-21 UI modules and
+generated visual assets. That work uses React/JSX, Canvas 2D, CSS and Phosphor
+icons, replacing the first release's Three.js scene. It preserves overview/local
+maps, search, replay, independent layers, directional moving/parked actors,
+occlusion and optional building transparency, and adds illustrative warm night
+lighting. A future 3D/GLTF approach is not implemented.
+
+The migration loads official zoom-3 GIS tiles into a registered 1024×640 scene
+extent rather than bundling the historical school raster. API-backed records use
+a separate panel; map places are not yet fully registered to the API's record
+places. Synthetic activity, waits and replay are hidden in field mode, and
+lighting remains a visual effect. Migrated source is being prepared under
+`src/campus/`, generated visuals under `public/`, and frontend tests under
+`tests/frontend/`, with provenance maintained in the [reuse record](reuse.md).
+These code and asset changes will be delivered independently of this document.
+
+## Current data path
+
+The browser loads the built frontend from Workers Static Assets. Its
+manual-recording interface queries the same Worker's public place, summary and
+history routes. The Worker reads logical
+places and active manual observations from D1. Summaries expose the observation's
+source, observation time, validity deadline and freshness. Sensor data is `null`
+and coverage is `unconfigured`; missing observations mean no data.
+
+An operator submits a parking quantity range or measured elevator wait through
+the browser. The Worker authenticates and validates the request, writes to D1,
+and returns a committed confirmation. Identical retries are idempotent; changed
+content with the same ID conflicts. An operator can cancel a record and submit a
+new one to correct it. Manual observations expire 15 minutes after their
+observation time. See the [implemented API contract](../specs/web-api-v0.md) for
+the exact routes, limits and remaining operational gaps.
+
+GIS images are fetched directly from the external tile origin, separately from
+the observation API. Tile availability does not establish data availability or
+coverage. The first release's separate Three.js scene and the migration's
+Canvas 2D/CSS overlays are illustrative. Synthetic activity never fills gaps in
+field records. In the D1 seed, only the library has a verified GIS image anchor.
+Scene actors and lighting do not establish measured counts, current elevator
+predictions or radio completeness.
+
+The planned device path adds BLE observation windows and node status in D1, with
+research raw batches in private R2 and independent durable receipts. It is a
+separate implementation direction, not another input supported by today's manual
+observation API. The [hackathon plan](../design/hackathon-plan.md) explains the
+intended product flow; [ingest v1](../specs/ingest-v1.md) defines the draft upload
+semantics.
+
+## Repository map
+
+| Path | Responsibility |
+| --- | --- |
+| [`src/`](../../src/) | First release: React interface and styles, `GisMap.tsx` for raster tiles and `scene.tsx` for the illustrative Three.js scene. The separate migration replaces this layout as described above. |
+| [`worker/index.ts`](../../worker/index.ts), [`worker/types.ts`](../../worker/types.ts) | Worker routing, validation, D1 queries and shared web/API types. |
+| [`migrations/`](../../migrations/) | D1 schema and seed places. |
+| [`tests/`](../../tests/) | SQLite/API tests; migration-specific frontend tests are being prepared separately. |
+| [`scripts/`](../../scripts/) | Browser/deployment smoke checks and production configuration generation. |
+| [`wrangler.jsonc`](../../wrangler.jsonc), [`vite.config.ts`](../../vite.config.ts) | Worker/assets/D1 bindings and local frontend API proxy. The tracked D1 ID is a placeholder; production setup is documented in CI/CD. |
+| [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | Checks and configured Cloudflare deployment. |
+| [`docs/`](../README.md) | Indexed specifications, design, engineering notes, research and explicitly historical material. |
+
+## Planned hardware roles
+
+These are inventory and proposed assignments, not firmware or device-validation
+claims. Confirm each board revision before choosing drivers or flash layouts.
+
+| Inventory | Proposed role |
+| --- | --- |
+| LILYGO T-Energy-S3 ×2 | Two fixed BLE observation nodes with Wi-Fi upload. |
+| FoloToy AI Passport ×2 | One portable manual-entry terminal; one controlled test beacon and backup terminal. |
+| Waveshare 1.54-inch ESP32-S3 ePaper board ×1 | A place-summary display showing source, observation time and validity deadline. |
+
+See the [hardware assignments and constraints](../design/hackathon-plan.md#2-五台硬件的分工)
+before implementing a device role. The [roadmap](../design/ROADMAP.md) tracks the
+remaining implementation and acceptance work.
+
+## Contributor entry points
+
+- [Development](development.md): prerequisites, local setup, commands and local verification evidence.
+- [Web/API contract](../specs/web-api-v0.md): implemented public reads and authenticated manual writes.
+- [CI/CD](ci-cd.md): checks, deployment configuration and recorded cloud verification.
+- [Ingest v1 draft](../specs/ingest-v1.md): planned device streams, raw storage and acknowledgement rules.
+- [Reuse record](reuse.md): provenance and licensing boundaries for reused material.

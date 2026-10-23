@@ -76,6 +76,10 @@ mandatory track requirements remain unknown.
 
 ## Completed archive
 
+- [x] Rewrite both READMEs around related work, CCNU activity/parking/elevator
+      scenarios, time-aware observations and the existing GIS. Document current
+      web progress separately from planned sensing; add a contributor architecture
+      overview and reading order with stack and source-layout details in docs.
 - [x] Verify production Cloudflare deployment after CF credentials and target
       resource IDs are configured: hosted run 39910663742 passed checks, D1
       migrations, Worker/Static Assets deployment and online smoke verification.
