@@ -92,6 +92,14 @@ instructions take precedence.
 - This repository starts the hackathon implementation from a fresh baseline.
   `local-reference/` contains pre-hackathon material for local reference only;
   never stage or publish it. Do not copy the previous application wholesale.
+- The user explicitly authorized migrating the selected 2026-10-21 frontend on
+  2026-10-23. Preserve its overview/local maps, search, replay, independent layers,
+  directional moving/parked actors, occlusion and optional building transparency.
+  This exception covers selected UI modules and generated visual assets, with
+  reuse provenance recorded; it does not include old backend, firmware, captures,
+  credentials or deployments. Load school raster tiles from their official
+  source rather than bundling the historical snapshot. Keep live API observations
+  separate from all synthetic activity, waits, replay and illustrative lighting.
 - User-requested historical Markdown has selected copies/summaries under
   `docs/upstream/pre-hackathon/`, with hashes and explicit historical status.
   This does not authorize publishing raw captures or invited private repositories.

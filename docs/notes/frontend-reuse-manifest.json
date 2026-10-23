@@ -1,0 +1,127 @@
+{
+  "source_snapshot": "2026-10-21",
+  "source_git_revision": null,
+  "authorization": "User explicitly selected this frontend for migration on 2026-10-23. No blanket third-party license is inferred.",
+  "entries": [
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/App.jsx",
+      "destination": "src/campus/App.jsx",
+      "source_sha256": "556ae726df80c65771012cee4f22871da5cd7ede20689c0b4557f483b9f5559e",
+      "destination_sha256": "494d3becf3d576df37354f6dffd9720b5eb8ef9893d830295ca2d4f914e8206b"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/CampusMap.jsx",
+      "destination": "src/campus/CampusMap.jsx",
+      "source_sha256": "2c89e6d692e0ac0e55d4367b123764d04200ce2a4a76311c505da9a29a9e1a5c",
+      "destination_sha256": "c1baf3cb3f3451beb7501ca3cb1adb37e7c283c5025f6cabeec51f87c335e56d"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/ActivityLayer.jsx",
+      "destination": "src/campus/ActivityLayer.jsx",
+      "source_sha256": "b158c98d07c65455bf1162c4bbe496f9ff94084718de31c6757679be24df13ae",
+      "destination_sha256": "0aa6f2b82e4fbecebffb2b40dec9f7df6331d20c3d54caa2c97d3c134d908dcd"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/NightLighting.jsx",
+      "destination": "src/campus/NightLighting.jsx",
+      "source_sha256": "210bfcd5da078d969ac66e5c5b419f8567e89e5c5aa1789147c36679138632d1",
+      "destination_sha256": "50b09cc8e9f0f9d2f911d4581b2539d03dc74241b27c6402f6aa806faa419875"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/MapRegions.jsx",
+      "destination": "src/campus/MapRegions.jsx",
+      "source_sha256": "400335ba74832bec01e83c426c31d7e8d9d64bc68a175c7765bef6b8454e6306",
+      "destination_sha256": "400335ba74832bec01e83c426c31d7e8d9d64bc68a175c7765bef6b8454e6306"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/scene-data.js",
+      "destination": "src/campus/scene-data.js",
+      "source_sha256": "77e9b09e0f0e4b8e81bbb889a481da2c69b664c8517b39ebefe5949adc3c5b52",
+      "destination_sha256": "77e9b09e0f0e4b8e81bbb889a481da2c69b664c8517b39ebefe5949adc3c5b52"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/spatial-scene.js",
+      "destination": "src/campus/spatial-scene.js",
+      "source_sha256": "6d33f66ef60893bacecd05a2abf1464eb61aeb054c0c3554eda238339855183b",
+      "destination_sha256": "6d33f66ef60893bacecd05a2abf1464eb61aeb054c0c3554eda238339855183b"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/gis-semantics.js",
+      "destination": "src/campus/gis-semantics.js",
+      "source_sha256": "8012d1aca8f7c0eb45fdf47e6a8dd363fe41807ac9ea27400cd733ce6af6b08b",
+      "destination_sha256": "8012d1aca8f7c0eb45fdf47e6a8dd363fe41807ac9ea27400cd733ce6af6b08b"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/gis-semantics.json",
+      "destination": "src/campus/gis-semantics.json",
+      "source_sha256": "8f159e60a474ef3ec941349beabfa2acf8979aea6d5fa7bcf9bc133e41cf308e",
+      "destination_sha256": "8f159e60a474ef3ec941349beabfa2acf8979aea6d5fa7bcf9bc133e41cf308e"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/gis-route-sample.json",
+      "destination": "src/campus/gis-route-sample.json",
+      "source_sha256": "d3ea1b08ac64bca7320539da3fe715fda28211f3fac272bf4ec4c0ce7cb621d1",
+      "destination_sha256": "d3ea1b08ac64bca7320539da3fe715fda28211f3fac272bf4ec4c0ce7cb621d1"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/styles.css",
+      "destination": "src/campus/styles.css",
+      "source_sha256": "1879bbc9a919378d7c1798e9a1aa6f516f2107ed802b2bbf7569978f851342ca",
+      "destination_sha256": "c10355839e943ce4f690f50d387672f7fb7d4c7869a306de36a3f19f4109240a"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/campus-map.css",
+      "destination": "src/campus/campus-map.css",
+      "source_sha256": "52bcdd7b705b4541c60c65c3297dc8051f87261e56763d6be0fe189145395ce4",
+      "destination_sha256": "8f2f6ea9e422e2ffa5c4ad25203586a6c4eeb2d248634a983055510410d0a2d4"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/activity-layer.css",
+      "destination": "src/campus/activity-layer.css",
+      "source_sha256": "9fa0752d149412a36527c0a95bf1c4033375205d014342c810ad6a7e61d5fcc1",
+      "destination_sha256": "9fa0752d149412a36527c0a95bf1c4033375205d014342c810ad6a7e61d5fcc1"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/night-lighting.css",
+      "destination": "src/campus/night-lighting.css",
+      "source_sha256": "41e0d725206a4bcd2c38590adf99372f0cc39d96eae5bb1980492fac88c24d74",
+      "destination_sha256": "41e0d725206a4bcd2c38590adf99372f0cc39d96eae5bb1980492fac88c24d74"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/src/scene-controls.css",
+      "destination": "src/campus/scene-controls.css",
+      "source_sha256": "0a9f007d61c4778beca8d431c7d18390ca82f57c99d376dc14bab4b4c99638ec",
+      "destination_sha256": "73a4a28efb0b04c6cc36f827450904b9b1a83ddce204ac223f10b9b6aab702e0"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/public/assets/person-directions.png",
+      "destination": "public/assets/person-directions.png",
+      "source_sha256": "abef6dad41e083d02994a799f0ee5aecce8b8bfb601ff459ea419c78b7c3c187",
+      "destination_sha256": "abef6dad41e083d02994a799f0ee5aecce8b8bfb601ff459ea419c78b7c3c187"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/public/assets/ebike-moving-directions.png",
+      "destination": "public/assets/ebike-moving-directions.png",
+      "source_sha256": "b7754014f4332eb55b1054cb5077420796b4cca3d74e57788b92b80e6f9bdd4b",
+      "destination_sha256": "b7754014f4332eb55b1054cb5077420796b4cca3d74e57788b92b80e6f9bdd4b"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/public/assets/ebike-parked-directions.png",
+      "destination": "public/assets/ebike-parked-directions.png",
+      "source_sha256": "41083b3a3e28ec9dc06097c45f18012f1a2bf6d9ad3d5edb4ffc3cc523fae313",
+      "destination_sha256": "41083b3a3e28ec9dc06097c45f18012f1a2bf6d9ad3d5edb4ffc3cc523fae313"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/public/assets/light-glow.png",
+      "destination": "public/assets/light-glow.png",
+      "source_sha256": "494719b3af6c29126d4dd834e33fa0d92bbe1c453202bc3bca62b052f07729cb",
+      "destination_sha256": "494719b3af6c29126d4dd834e33fa0d92bbe1c453202bc3bca62b052f07729cb"
+    },
+    {
+      "source": "local-reference/pre-hackathon/gis-prototype/tests/spatial-scene.test.mjs",
+      "destination": "tests/frontend/spatial-scene.test.js",
+      "source_sha256": "25abedf39aa2112bfc39fc9ba1f11f8064576c04d76708429fda4a06bf8292ba",
+      "destination_sha256": "e7264f0beb0fd991215c037936bd7c2e7dfef08829207bc10c875d9294cd75fb"
+    }
+  ]
+}
