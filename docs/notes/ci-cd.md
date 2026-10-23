@@ -66,6 +66,21 @@ fail closed. Existing Worker secrets are preserved by deployment.
 GitHub environment protection rules can be added on `production` if desired;
 this workflow does not create approval requirements itself.
 
+## Main branch policy
+
+The owner's `Aiaid` account may push its own work directly to `main`; an owner
+PR is not required. Both repository rulesets list only this user as an
+always-allowed bypass actor. Other collaborators must use a PR, obtain an
+approval from code owner `@Aiaid` (the whole repository is covered by
+`.github/CODEOWNERS`), and pass the `check` status from the GitHub Actions app.
+New commits dismiss old approvals, and required checks use the latest `main`.
+
+The owner exception applies to repository push/merge gates. The deployment
+workflow still runs `check` after an owner's main push and deploys only when it
+succeeds; the owner exception does not skip tests inside the delivery pipeline.
+This reflects the owner's explicit clarification on 2026-10-23 that their own
+changes need not go through a PR.
+
 ## Initial connection status (historical)
 
 Before this machine's setup on 2026-10-23, the earlier managed runtime reported no CF secret bindings or

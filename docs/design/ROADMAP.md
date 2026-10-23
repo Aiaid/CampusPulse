@@ -13,10 +13,6 @@ assignments; firmware and device acceptance remain pending.
 
 ## P0 — Deliver the core MVP
 
-- [ ] Publish same-origin interactive API documentation at `/docs` and a
-      machine-readable OpenAPI contract at `/openapi.json`; verify actual
-      operations, shared-operator authorization, errors and browser execution.
-
 - [ ] Confirm competition requirements, deadline, team capacity, and demo places.
 - [ ] Inventory both T-Energy-S3 boards, both AI Passports, and the Waveshare
       1.54-inch ePaper variant; confirm protected data and board-specific layouts.
@@ -109,6 +105,13 @@ assignments; firmware and device acceptance remain pending.
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] Publish same-origin `/docs` and `/openapi.json` for the six implemented
+      operations with self-hosted Swagger UI, explicit shared-operator auth and
+      errors. OpenAPI validation, 23 unit/contract tests, real local browser
+      execution and hosted CI/CD run 39917142898 passed; online rendering,
+      vendor hashes and token authentication were verified without production
+      record writes. BLE ingestion and account-based authorization remain planned.
 
 - [x] Migrate the user-selected October 21 UI: dual maps, shared replay, search,
       three independent layers, moving/parked sprites, occlusion, xray and phone
