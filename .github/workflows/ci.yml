@@ -43,6 +43,7 @@ jobs:
           done
           curl --fail --silent http://127.0.0.1:8787/api/v1/health > /dev/null
           npm run test:browser
+          node scripts/docs-browser-smoke.mjs
 
   deploy:
     needs: check

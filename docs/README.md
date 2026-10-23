@@ -21,7 +21,7 @@ validation records are not evidence for this implementation.
 | [Frontend reuse manifest](notes/frontend-reuse-manifest.json) | Exact reused source/destination file fingerprints | Current source provenance |
 | [Local development](notes/development.md) | Run, test and configure the web/API slice | Current |
 | [CI/CD](notes/ci-cd.md) | GitHub checks, Cloudflare setup, online validation and costs | Hosted CI/CD and first cloud deployment verified |
-| [Web API v0](specs/web-api-v0.md) | Implemented public reads and authenticated manual records | First slice |
+| [Web API v0](specs/web-api-v0.md) | Public reads, shared-operator writes and `/docs` / OpenAPI usage | Interactive contract and local Swagger UI browser validation passed |
 | [CCNU GIS](research/ccnu-gis.md) | Official tile source, image coordinates and integration limits | Current research |
 | [Hackathon plan / 黑客松方案](design/hackathon-plan.md) | Product scope, all-five collection/upload baseline, later Passport interaction/ePaper display, architecture and acceptance | Current hardware design; web/API first release deployed, firmware and device acceptance pending |
 | [Upload protocol v1 / 上传协议](specs/ingest-v1.md) | Window/raw/status streams, MAC and AD payload, private R2, durable ACK | Current draft; not implemented |

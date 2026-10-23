@@ -126,3 +126,27 @@ entire application was created during the hackathon.
   submission/cancellation was blocked by automatic approval review and was not
   executed; the updated CI browser smoke has not been run in this session.
   See [lighting/QA notes](../design/frontend-lighting.md).
+
+## 2026-10-23 — Self-hosted Swagger UI
+
+- Source: official npm artifact `swagger-ui-dist@5.34.0`, upstream
+  [swagger-api/swagger-ui](https://github.com/swagger-api/swagger-ui), published
+  Git revision `a3d333d7e99611288312d597c4023ee10df721e0`.
+- Package integrity was verified before extraction:
+  `sha512-H6tAIjr3XqE31PbkZl0OFya1ziRLDfTwh3J6OHdumPtPCLfjTnyLeagl/55kFNZcTOz9a9QI9WP0FXldwiGJag==`.
+- Destination: `public/vendor/swagger-ui/`. Only `swagger-ui-bundle.js`,
+  `swagger-ui.css`, `LICENSE`, `NOTICE` and the bundle's transitive
+  `swagger-ui-bundle.js.LICENSE.txt` were copied, unmodified. No upstream demo,
+  OAuth redirect, source map or favicon was copied. The project-specific HTML,
+  initializer and OpenAPI contract in `worker/` are newly authored.
+- License: Apache-2.0, with the upstream NOTICE and bundled dependency notices
+  retained beside the assets. Those notices remain available in the deployed
+  static files. This entry does not change the rest of the project's licenses.
+- Final JavaScript SHA-256:
+  `3f6abf70480db7e07914df4c98a77385f22ea585eaf457a3e6415ba0eae2d167`.
+  Final stylesheet SHA-256:
+  `c3cfe8248c4b0b89673600fb829924eafbac6de4bc4b2b06f5f5243483074d0a`.
+- Assets are served from the application origin rather than a runtime CDN.
+  Swagger's remote validator and query configuration override are disabled;
+  bearer credentials are never persisted by the docs UI. Contract/browser
+  validation is recorded with the API feature, separately from cloud deployment.

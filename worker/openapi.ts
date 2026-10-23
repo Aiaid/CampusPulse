@@ -1,0 +1,246 @@
+/** The implemented manual-observation API, independent of the ingestion draft. */
+export function createOpenApiDocument(): Record<string, unknown> {
+  // Generate examples per document request so Try it out does not reuse a stale
+  // timestamp or a shared observation ID. These are illustrative values only.
+  const observedAt = new Date().toISOString();
+  const parkingExample = {
+    id: crypto.randomUUID(), place_id: 'east-parking', kind: 'parking',
+    observed_at: observedAt, parking_min: 4, parking_max: 7,
+  };
+  const elevatorExample = {
+    id: crypto.randomUUID(), place_id: 'teaching-elevator', kind: 'elevator',
+    observed_at: observedAt, wait_seconds: 45,
+  };
+  const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+  const responseHeaders = {
+    'Cache-Control': { description: 'API responses are not cached.', schema: { type: 'string', const: 'no-store' } },
+    'X-Content-Type-Options': { schema: { type: 'string', const: 'nosniff' } },
+  };
+  const response = (description: string, schema: Record<string, unknown>) => ({
+    description, headers: responseHeaders, content: { 'application/json': { schema } },
+  });
+  const error = (description: string, codes: string[], retryable = false) => response(description, {
+    type: 'object', additionalProperties: false, required: ['error'],
+    properties: {
+      error: {
+        type: 'object', additionalProperties: false, required: ['code', 'message', 'retryable'],
+        properties: {
+          code: { type: 'string', enum: codes }, message: { type: 'string' },
+          retryable: { type: 'boolean', const: retryable },
+        },
+      },
+    },
+  });
+  const storageUnavailable = error('Storage or another runtime dependency is unavailable.', ['storage_unavailable'], true);
+  const writeErrors = {
+    '401': error('Missing or incorrect operator bearer credential.', ['unauthorized']),
+    '403': error('The supplied Origin differs from the request URL origin.', ['origin_rejected']),
+    '503': error('The operator secret is not configured, or storage/runtime is unavailable.', ['operator_not_configured', 'storage_unavailable'], true),
+  };
+  const placeIdParameter = {
+    name: 'id', in: 'path', required: true, description: 'Registered logical place ID.',
+    schema: ref('PlaceId'), example: 'east-parking',
+  };
+  const uuid = {
+    type: 'string', format: 'uuid',
+    pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
+  };
+  const timestamp = { type: 'string', format: 'date-time' };
+  const observedTimestamp = {
+    ...timestamp, pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$',
+    description: 'Canonical ISO UTC with exactly three fractional digits. Must be within the past 24 hours and at most 30 seconds ahead of server time when submitted.',
+  };
+  const createBase = {
+    id: { ...uuid, description: 'Fresh client-generated UUIDv4; retry the exact same content with this ID after an uncertain result.' },
+    place_id: ref('PlaceId'), observed_at: observedTimestamp,
+  };
+  const parkingValue = { type: 'integer', minimum: 0, maximum: 10000 };
+  const waitValue = { type: 'integer', minimum: 0, maximum: 7200 };
+
+  return {
+    openapi: '3.1.0',
+    info: {
+      title: 'CampusPulse manual observations API', version: '0.1.0',
+      description: 'Implemented public place reads and shared-operator manual parking/elevator observations. Sensor coverage is unconfigured and sensor data is always null; BLE/device ingestion, account login, per-user ownership, rate limiting and retention jobs are not implemented. Synthetic examples are generated when this document is requested: replace their values and timestamp with actual manual observations before submitting. Try it out writes real data to this origin. API responses use Cache-Control: no-store.',
+    },
+    servers: [{ url: '/' }],
+    security: [],
+    tags: [
+      { name: 'Public reads', description: 'No authentication required. No data must not be interpreted as zero people or vehicles.' },
+      { name: 'Operator writes', description: 'A shared opaque operator bearer secret, not a JWT or user account. All holders can create and cancel any manual record; there is no per-user ownership. A supplied Origin must match the request origin; absent Origin is allowed. No operator secret is published in this document.' },
+    ],
+    paths: {
+      '/api/v1/health': {
+        get: {
+          operationId: 'getHealth', tags: ['Public reads'], summary: 'Check runtime liveness',
+          description: 'Reports that ingestion is not implemented. Does not probe database availability or validate any device.',
+          responses: { '200': response('Worker is responding.', ref('Health')) },
+        },
+      },
+      '/api/v1/places': {
+        get: {
+          operationId: 'listPlaces', tags: ['Public reads'], summary: 'List registered places',
+          description: 'Places are ordered by ID. Schematic anchors are provisional; GIS anchors are included only where configured. All sensor coverage is unconfigured.',
+          responses: { '200': response('Registered places.', ref('Places')), '503': storageUnavailable },
+        },
+      },
+      '/api/v1/places/{id}/summary': {
+        get: {
+          operationId: 'getPlaceSummary', tags: ['Public reads'], summary: 'Get the latest active manual observation',
+          description: 'Chooses the latest active record by observed_at descending, then ID descending, even if stale. Freshness is fresh only while valid_until is later than server time; otherwise stale. With no active record latest_observation is null and freshness is no_data. Sensor is always null.',
+          parameters: [placeIdParameter],
+          responses: {
+            '200': response('Current manual summary, including explicit missing-data state.', ref('PlaceSummary')),
+            '404': error('The place is not registered.', ['place_not_found']), '503': storageUnavailable,
+          },
+        },
+      },
+      '/api/v1/places/{id}/history': {
+        get: {
+          operationId: 'getPlaceHistory', tags: ['Public reads'], summary: 'Get recent active manual observations',
+          description: 'Returns active records whose observed_at is within the inclusive [from, to] server-time window, including stale records. Sorted by observed_at descending, then ID descending. At most 200 records are returned; truncated=true means more records matched. No pagination or limit parameter is implemented. Accepted minutes values are exact strings.',
+          parameters: [placeIdParameter, {
+            name: 'minutes', in: 'query', required: false,
+            schema: { type: 'string', enum: ['1', '5', '15', '60', '1440'], default: '15' },
+            description: 'History window in minutes; defaults to 15.',
+          }],
+          responses: {
+            '200': response('Bounded active observation history.', ref('PlaceHistory')),
+            '404': error('The place is not registered.', ['place_not_found']),
+            '422': error('Unsupported minutes value.', ['invalid_range']), '503': storageUnavailable,
+          },
+        },
+      },
+      '/api/v1/observations': {
+        post: {
+          operationId: 'createObservation', tags: ['Operator writes'], summary: 'Commit a manual observation',
+          description: 'Requires application/json (charset parameters are accepted), no Content-Encoding header, and a body no larger than 8192 bytes (8 KiB). Unknown fields, null numeric values, mixed parking/elevator fields and non-integer values are rejected. Parking minimum must not exceed maximum, and kind must match the registered place. valid_until is observed_at plus 15 minutes, not reception time; an accepted old observation may already be stale. New insertion returns 201; an identical ID/content retry returns 200, including the current cancelled status if already cancelled. Changed content for an existing ID returns 409. Relative timestamp validation is repeated on retries, so retries older than 24 hours are rejected. Confirmation follows the D1 write. Replace the synthetic examples with actual measurements: Try it out creates real records.',
+          security: [{ OperatorToken: [] }],
+          requestBody: {
+            required: true,
+            content: { 'application/json': {
+              schema: ref('CreateObservation'),
+              examples: {
+                parking: { summary: 'Synthetic parking example — replace with an actual observation', value: parkingExample },
+                elevator: { summary: 'Synthetic elevator example — replace with an actual measurement', value: elevatorExample },
+              },
+            } },
+            'x-max-body-bytes': 8192,
+          },
+          responses: {
+            '200': response('Identical ID/content retry; the existing record is returned without reactivation.', ref('ObservationReceipt')),
+            '201': response('New observation committed.', ref('ObservationReceipt')),
+            '400': error('Missing, invalid JSON or invalid UTF-8 body.', ['invalid_json']),
+            ...writeErrors,
+            '404': error('The place is not registered.', ['place_not_found']),
+            '409': error('The observation ID already has different content.', ['observation_conflict']),
+            '413': error('The request body exceeds 8192 bytes.', ['payload_too_large']),
+            '415': error('Content-Type must be application/json and Content-Encoding must be absent.', ['content_type', 'content_encoding']),
+            '422': error('Observation validation failed.', ['invalid_observation', 'unknown_field', 'invalid_identity', 'invalid_time', 'invalid_parking', 'invalid_wait', 'invalid_kind', 'place_kind_mismatch']),
+          },
+        },
+      },
+      '/api/v1/observations/{id}': {
+        delete: {
+          operationId: 'cancelObservation', tags: ['Operator writes'], summary: 'Cancel a manual observation',
+          description: 'Idempotently sets status to cancelled and returns the stored record after the D1 write. Any holder of the shared operator secret can cancel any record. Cancelled records disappear from summary/history; repeating DELETE returns 200. Cancellation does not delete the record. To correct a record, cancel it and submit a fresh UUIDv4. The implemented route matches 36 lowercase hexadecimal/hyphen characters; IDs created by the examples use that form.',
+          security: [{ OperatorToken: [] }],
+          parameters: [{
+            name: 'id', in: 'path', required: true, description: 'Existing observation ID (normally a lowercase UUIDv4).',
+            schema: { type: 'string', minLength: 36, maxLength: 36, pattern: '^[0-9a-f-]{36}$' },
+          }],
+          responses: {
+            '200': response('Cancellation committed, including an already-cancelled record.', ref('ObservationReceipt')),
+            ...writeErrors,
+            '404': error('The observation does not exist.', ['observation_not_found']),
+          },
+        },
+      },
+    },
+    components: {
+      securitySchemes: {
+        OperatorToken: {
+          type: 'http', scheme: 'bearer',
+          description: 'Opaque shared operator secret, not a JWT. Enter only the token in Authorize; the client sends Authorization: Bearer <token>. No login, expiry, roles or per-user record ownership is implemented. When the secret is unconfigured, writes return 503.',
+        },
+      },
+      schemas: {
+        PlaceId: { type: 'string', pattern: '^[a-z0-9_-]{1,64}$', minLength: 1, maxLength: 64 },
+        Health: {
+          type: 'object', additionalProperties: false, required: ['status', 'ingestion'],
+          properties: { status: { type: 'string', const: 'ok' }, ingestion: { type: 'string', const: 'not_implemented' } },
+        },
+        Anchor: {
+          type: 'object', additionalProperties: false, required: ['x', 'y'],
+          properties: { x: { type: 'number', minimum: 0, maximum: 1 }, y: { type: 'number', minimum: 0, maximum: 1 } },
+        },
+        GisAnchor: {
+          type: 'object', additionalProperties: false, required: ['x', 'y', 'verified'],
+          properties: { x: { type: 'number', minimum: 0, maximum: 1 }, y: { type: 'number', minimum: 0, maximum: 1 }, verified: { type: 'boolean', const: true } },
+        },
+        Place: {
+          type: 'object', additionalProperties: false, required: ['id', 'name', 'kind', 'anchor', 'coverage'],
+          properties: {
+            id: ref('PlaceId'), name: { type: 'string' }, kind: { type: 'string', enum: ['activity', 'parking', 'elevator'] },
+            anchor: ref('Anchor'), gis_anchor: ref('GisAnchor'), coverage: { type: 'string', const: 'unconfigured' },
+          },
+        },
+        Places: {
+          type: 'object', additionalProperties: false, required: ['places'],
+          properties: { places: { type: 'array', items: ref('Place') } },
+        },
+        CreateParkingObservation: {
+          type: 'object', additionalProperties: false,
+          required: ['id', 'place_id', 'kind', 'observed_at', 'parking_min', 'parking_max'],
+          properties: { ...createBase, kind: { type: 'string', const: 'parking' }, parking_min: parkingValue, parking_max: parkingValue },
+          description: 'Manual parking range; parking_min must be <= parking_max. wait_seconds and all unknown fields are prohibited.',
+        },
+        CreateElevatorObservation: {
+          type: 'object', additionalProperties: false,
+          required: ['id', 'place_id', 'kind', 'observed_at', 'wait_seconds'],
+          properties: { ...createBase, kind: { type: 'string', const: 'elevator' }, wait_seconds: waitValue },
+          description: 'Measured elevator wait in seconds. Both parking fields and all unknown fields are prohibited.',
+        },
+        CreateObservation: {
+          oneOf: [ref('CreateParkingObservation'), ref('CreateElevatorObservation')],
+          discriminator: { propertyName: 'kind', mapping: { parking: '#/components/schemas/CreateParkingObservation', elevator: '#/components/schemas/CreateElevatorObservation' } },
+        },
+        Observation: {
+          type: 'object', additionalProperties: false,
+          required: ['id', 'place_id', 'kind', 'source', 'status', 'observed_at', 'valid_until', 'parking_min', 'parking_max', 'wait_seconds'],
+          properties: {
+            id: uuid, place_id: ref('PlaceId'), kind: { type: 'string', enum: ['parking', 'elevator'] },
+            source: { type: 'string', const: 'manual' }, status: { type: 'string', enum: ['active', 'cancelled'] },
+            observed_at: timestamp, valid_until: { ...timestamp, description: 'Exactly 15 minutes after observed_at.' },
+            parking_min: { ...parkingValue, type: ['integer', 'null'] },
+            parking_max: { ...parkingValue, type: ['integer', 'null'] },
+            wait_seconds: { ...waitValue, type: ['integer', 'null'] },
+          },
+          oneOf: [
+            { properties: { kind: { const: 'parking' }, parking_min: parkingValue, parking_max: parkingValue, wait_seconds: { type: 'null' } } },
+            { properties: { kind: { const: 'elevator' }, parking_min: { type: 'null' }, parking_max: { type: 'null' }, wait_seconds: waitValue } },
+          ],
+        },
+        ObservationReceipt: {
+          type: 'object', additionalProperties: false, required: ['observation', 'durability'],
+          properties: { observation: ref('Observation'), durability: { type: 'string', const: 'committed' } },
+        },
+        PlaceSummary: {
+          type: 'object', additionalProperties: false, required: ['place', 'sensor', 'latest_observation', 'freshness', 'as_of'],
+          properties: {
+            place: ref('Place'), sensor: { type: 'null', description: 'No sensor ingestion is implemented.' },
+            latest_observation: { oneOf: [ref('Observation'), { type: 'null' }] },
+            freshness: { type: 'string', enum: ['no_data', 'fresh', 'stale'] }, as_of: timestamp,
+          },
+        },
+        PlaceHistory: {
+          type: 'object', additionalProperties: false, required: ['place_id', 'observations', 'from', 'to', 'truncated'],
+          properties: {
+            place_id: ref('PlaceId'), observations: { type: 'array', maxItems: 200, items: ref('Observation') },
+            from: timestamp, to: timestamp, truncated: { type: 'boolean' },
+          },
+        },
+      },
+    },
+  };
+}

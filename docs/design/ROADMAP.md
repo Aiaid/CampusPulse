@@ -13,6 +13,10 @@ assignments; firmware and device acceptance remain pending.
 
 ## P0 — Deliver the core MVP
 
+- [ ] Publish same-origin interactive API documentation at `/docs` and a
+      machine-readable OpenAPI contract at `/openapi.json`; verify actual
+      operations, shared-operator authorization, errors and browser execution.
+
 - [ ] Confirm competition requirements, deadline, team capacity, and demo places.
 - [ ] Inventory both T-Energy-S3 boards, both AI Passports, and the Waveshare
       1.54-inch ePaper variant; confirm protected data and board-specific layouts.

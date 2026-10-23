@@ -4,6 +4,37 @@ Status: implemented first slice; local SQLite, build and browser checks recorded
 in [development notes](../notes/development.md).
 This is not the BLE ingestion v1 implementation. No firmware is included.
 
+## Interactive documentation
+
+`GET /docs` (also `/docs/`) serves Swagger UI; `GET /openapi.json` returns the
+OpenAPI 3.1 description of the six implemented operations. These routes are
+public and require no database access or operator credential. The specification
+uses the current origin, so the same routes work in local development and after
+deployment. Unsupported methods return 405; HEAD returns headers without a body.
+
+Use **Try it out** to execute a public read. For writes, choose **Authorize** and
+enter only the opaque operator token, without the `Bearer` prefix. Authorization
+is held in page memory and cleared by refresh; it is not written to browser
+storage or included in the published specification. The self-hosted UI sends
+requests only to this origin and does not contact an external schema validator.
+Executing POST or DELETE changes the current environment's real records.
+Generated request examples are synthetic; replace values with actual manual
+observations before submitting. Refresh the specification to get fresh example
+UUIDs/timestamps; retries must retain the exact original ID and content.
+
+This is shared-operator bearer authorization: all token holders can create and
+cancel any manual record. Account login, JWT sessions, personal ownership and
+role-based access control are not implemented. The existing same-origin write
+check and fail-closed behavior remain in effect.
+
+Local verification (2026-10-23): OpenAPI 3.1 standard validation, API/contract
+tests, production build, actionlint and Wrangler dry-run passed. Real Chromium
+executed Swagger UI reads, missing-token rejection, authorization, creation and
+cancellation in a separate local D1 store, then verified that refresh clears
+authorization. No external requests, credential persistence or page errors were
+observed. This test did not write production records. Hosted CI/deployment is a
+separate acceptance step.
+
 ## Public reads
 
 - `GET /api/v1/health`: runtime liveness, explicitly reports ingestion unavailable.

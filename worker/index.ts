@@ -1,4 +1,5 @@
 import type { CreateObservation, Env, Observation, Place, PlaceSummary } from './types';
+import { handleDocs } from './docs';
 
 const TTL_MS = 15 * 60_000;
 const MAX_BODY = 8192;
@@ -152,6 +153,6 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    return await handleApi(request, env) ?? (env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 }));
+    return handleDocs(request) ?? await handleApi(request, env) ?? (env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 }));
   },
 };
