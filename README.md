@@ -1,7 +1,7 @@
 # CampusPulse
 
 [简体中文](README.zh_CN.md) · [Documentation](docs/README.md) ·
-[Roadmap](docs/design/ROADMAP.md)
+[Roadmap](docs/design/ROADMAP.md) · [Hackathon plan (中文)](docs/design/hackathon-plan.md)
 
 CampusPulse explores how BLE observations can help describe activity across a
 campus. This public repository begins the hackathon implementation from a fresh
@@ -9,12 +9,14 @@ baseline.
 
 ## Starting point
 
-The initial commit contains project documentation and development rules only.
+The repository currently contains documentation, development rules, and a prior
+visual concept reference.
 Firmware, the receiver, and the user interface have not been implemented in this
 repository. There is no runnable demo yet.
 
-The intended first milestone is one observation node sending data to a receiver,
-with a simple view that distinguishes live observations from simulated data.
+The proposed MVP combines two fixed BLE observation nodes, manual parking and
+elevator-wait observations, a campus map, and an e-paper place display.
+The interface distinguishes sensor observations, manual reports, and simulations.
 BLE-visible identifiers must not be presented as exact people counts.
 
 ## Prior work
@@ -31,9 +33,10 @@ identified, attributed, and checked for license compatibility in the
 ## Development
 
 Start with the [roadmap](docs/design/ROADMAP.md) and [project rules](AGENTS.md).
-The planned hardware target is the FoloToy AI Passport ESP32-C3 with 8 MB Flash,
-no PSRAM, and ESP-IDF 5.5.3. Software architecture and data contracts remain to be
-decided during the hackathon.
+Available hardware: two AI Passports, two LILYGO T-Energy-S3 boards, and one
+Waveshare 1.54-inch ESP32-S3 ePaper board. The frontend, API, and database will all
+run on Cloudflare; the proposed stack is Workers Static Assets, Workers, and D1.
+Board revisions, data contracts, and acceptance criteria still need validation.
 
 Keep secrets and raw observations out of Git. Use `uv` for Python tasks, and
 report builds, automated tests, and physical device validation separately.

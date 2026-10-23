@@ -9,11 +9,18 @@
   `docs/notes/reuse.md` before committing it.
 - Treat the neighboring `aipassport` repositories as read-only references and
   preserve their local work.
-- Target the FoloToy AI Passport ESP32-C3, 8 MB Flash, no PSRAM, ESP-IDF 5.5.3.
+- Hardware inventory: FoloToy AI Passport x2 (ESP32-C3, 8 MB Flash, no PSRAM),
+  LILYGO T-Energy-S3 x2, and one Waveshare 1.54-inch ESP32-S3 ePaper board.
+  Verify each board revision before selecting drivers or partition layouts.
+  ESP-IDF 5.5.3 is the existing Passport reference toolchain; validate S3 targets
+  separately. See `docs/design/hackathon-plan.md` for the proposed roles.
+- Host the frontend, API, and database on Cloudflare. GitHub stores source only.
+  The proposed baseline is Workers Static Assets + Workers API + D1.
 - If board drivers are reused from `aipassport/ai-passport/components/bsp`, preserve
   their pin mapping, copyright, and license. Do not initialize unused audio.
-- Preserve the 3 MB application partition and `cardid` at 0x356000. Never erase
-  the entire Flash. Deliver separate bootloader, partition, and app images;
+- On the AI Passport, preserve the 3 MB application partition and `cardid` at
+  0x356000; do not apply that layout to other boards. Never erase the entire
+  Flash. Deliver separate bootloader, partition, and app images;
   do not flash a padded merged image across protected device data.
 - Keep BLE callbacks nonblocking. Storage and upload run in worker tasks.
 - Never claim radio completeness or device validation from a passing build.

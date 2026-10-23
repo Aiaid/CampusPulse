@@ -1,18 +1,18 @@
 # CampusPulse
 
 [English](README.md) · [文档索引](docs/README.md) ·
-[路线图](docs/design/ROADMAP.md)
+[路线图](docs/design/ROADMAP.md) · [黑客松方案](docs/design/hackathon-plan.md)
 
 CampusPulse 探索用 BLE 观测描述校园不同地点的活动变化。本公开仓库从新的基线
 开始黑客松实现。
 
 ## 起点
 
-首次提交只包含项目文档与开发约定。本仓库尚未实现固件、收集服务和用户界面，
+当前仓库包含项目文档、开发约定和赛前视觉概念参考。本仓库尚未实现固件、收集服务和用户界面，
 目前没有可运行的演示。
 
-首个计划里程碑是一台观测节点向收集服务发送数据，并通过简单界面展示，明确
-区分真实观测与模拟数据。BLE 可见标识数量不能作为精确人数。
+拟定 MVP 组合两个固定 BLE 观测节点、人工停车与候梯记录、校园地图和墨水屏
+地点卡，明确区分传感器观测、人工记录与模拟数据。BLE 可见标识数量不能作为精确人数。
 
 ## 之前的工作
 
@@ -24,9 +24,10 @@ CampusPulse 探索用 BLE 观测描述校园不同地点的活动变化。本公
 
 ## 开发
 
-先阅读[路线图](docs/design/ROADMAP.md)与[项目约定](AGENTS.md)。计划硬件为
-FoloToy AI Passport ESP32-C3，8 MB Flash、无 PSRAM，使用 ESP-IDF 5.5.3。
-软件架构与数据契约留待黑客松期间确定。
+先阅读[路线图](docs/design/ROADMAP.md)与[项目约定](AGENTS.md)。现有硬件为
+AI Passport ×2、LILYGO T-Energy-S3 ×2、微雪 1.54 英寸墨水屏 ESP32-S3 板 ×1。
+前端、API 和数据库全部放在 Cloudflare，拟采用 Workers Static Assets、Workers
+和 D1。板卡具体版本、数据契约与验收标准仍需核实。
 
 凭据与原始观测数据不进入 Git。Python 操作统一使用 `uv`，构建、自动测试和
 真机验证分别报告。
