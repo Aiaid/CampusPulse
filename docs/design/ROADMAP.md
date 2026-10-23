@@ -7,8 +7,8 @@ mandatory track requirements remain unknown.
 
 ## P0 — Deliver the core MVP
 
-- [ ] Verify hosted CI and Cloudflare deployment after repository Actions access
-      and CF credentials are available.
+- [ ] Verify production Cloudflare deployment after CF credentials and target
+      resource IDs are configured.
 
 
 - [ ] Confirm competition requirements, deadline, team capacity, and demo places.
@@ -82,7 +82,8 @@ mandatory track requirements remain unknown.
 
 - [x] Add GitHub Actions PR/main tests, builds, local Worker browser checks and
       conditional Workers/D1 deployment; validate workflow with actionlint and
-      generated config with Wrangler dry-run. Remote execution remains unverified.
+      generated config with Wrangler dry-run. First hosted CI run passed (39905700037);
+      production deployment correctly skipped without Cloudflare configuration.
 
 - [x] Build the first runnable React/Three.js frontend and Workers/D1 API slice:
       official CCNU GIS visible tiles, verified library image anchor, separate

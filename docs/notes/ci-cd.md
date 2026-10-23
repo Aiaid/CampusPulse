@@ -70,3 +70,10 @@ deployment have not been performed.
 Local verification: actionlint v1.7.7 passed; the generated deployment config
 passed Wrangler dry-run with synthetic IDs (no resource creation or uploads);
 the CI-style offline-GIS browser smoke passed.
+
+## First hosted run
+
+[Run 39905700037](https://github.com/Aiaid/CampusPulse/actions/runs/39905700037)
+on commit `6c5292c` passed all checks, including browser submission/cancellation and
+local D1 migration, in 59 seconds. The deployment job was skipped because target
+Cloudflare variables are not configured. This verifies CI, not a cloud deployment.
