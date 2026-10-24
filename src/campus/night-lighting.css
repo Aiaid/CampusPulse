@@ -9,3 +9,7 @@
 /* Composite the whole transparent GPU overlay against the unchanged GIS once. */
 .cp-pixi-light-host{position:absolute;inset:0;z-index:2;pointer-events:none;user-select:none;overflow:hidden;mix-blend-mode:screen}
 .cp-pixi-light-host>.cp-night-lighting{display:block;mix-blend-mode:normal}
+/* Campus chunks replace modeled receivers with normally composited material.
+   The legacy glow remains underneath as the transparent/failed-source fallback. */
+.cp-map--lighting-campus .cp-pixi-light-host,
+.cp-map--lighting-campus .cp-night-lighting { z-index: 0; }

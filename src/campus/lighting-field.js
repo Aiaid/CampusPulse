@@ -1,5 +1,7 @@
 import { buildings, routes, parkingAreas, roadRegions, lampPoints, pointInPolygon } from './spatial-scene.js';
 import { MAP_WIDTH, MAP_HEIGHT } from './scene-data.js';
+import { campusLightLamps, campusLightReceivers } from './campus-lighting-layout.js';
+import { libraryPlantingIslands as plantingIslands } from './ground-features.js';
 
 const clamp01 = value => Math.max(0, Math.min(1, value));
 const xy = point => Array.isArray(point) ? point : [point.x, point.y];
@@ -55,14 +57,7 @@ export const lightReceivingAprons = [
   { id: 'central-entry-light-apron', polygon: [[578,405],[590,397],[611,405],[619,409],[613,419],[605,420],[584,413]] },
 ].map(region => ({ ...region, provenance: { kind: 'manual-illustrative-light-receiver', basis: 'visible-paving-review', surveyed: false } }));
 
-// Small visible planting islands in the west plaza remain dark. They are soft
-// artistic exclusions and do not participate in actor collision or occlusion.
-const plantingIslands = [
-  [[559,260],[567,262],[571,266],[569,270],[561,267]],
-  [[577,270],[582,270],[585,274],[583,279],[578,277]],
-  [[596,277],[601,278],[605,282],[604,287],[599,286],[595,283]],
-];
-const receivingRegions = [...roadRegions, ...parkingAreas, ...lightReceivingAprons];
+const receivingRegions = [...roadRegions, ...parkingAreas, ...lightReceivingAprons, ...campusLightReceivers];
 
 function bounds(points, padding = 0) {
   return {
@@ -192,6 +187,14 @@ const sources = [
   }),
   ...entranceLightSources.map(source => compileSource({ ...source,
     lobes: [{ x: source.centerX, y: source.centerY, length: source.length, breadth: source.breadth, power: source.power * 1.1 }],
+  })),
+  ...campusLightLamps.map(lamp => compileSource({ ...lamp, warmth: .82,
+    // Overlapping broad lobes join the paving into a continuous warm corridor;
+    // the final receiver/building mask prevents these lobes from lighting roofs.
+    lobes: [
+      { x: lamp.x, y: lamp.y, length: 43, breadth: 10, power: .72 * lamp.strength },
+      { x: lamp.x, y: lamp.y, length: 11, breadth: 5, power: .28 * lamp.strength },
+    ],
   })),
 ];
 const sourceBuckets = new Map();

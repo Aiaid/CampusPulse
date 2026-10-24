@@ -10,7 +10,8 @@
     "test": "vitest run",
     "db:migrate": "wrangler d1 migrations apply campuspulse --local",
     "deploy": "npm run build && wrangler deploy",
-    "test:browser": "node scripts/browser-smoke.mjs"
+    "test:browser": "node scripts/browser-smoke.mjs",
+    "test:lighting": "node scripts/library-lighting-smoke.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

@@ -22,3 +22,11 @@
 @media(max-width:1200px){.data-mode-switch button{font-size:10px;padding:6px 7px}.data-mode-switch .status-dot{display:none}}
 @media(max-width:700px){.data-mode-switch{grid-column:2/4;grid-row:1;justify-self:end;padding:2px;gap:1px}.data-mode-switch button{font-size:10px;min-height:29px;padding:5px 7px}.campus-name{display:none}.live-mode-summary{padding:10px 0}.live-mode-summary>svg{display:none}.live-mode-summary>strong{font-size:13px}.live-mode-summary p{font-size:10px;margin:5px 0}.live-mode-summary>button{font-size:10px;min-height:28px}.scene-controls-bar{max-width:calc(100vw - 75px)}.scene-source{font-size:9px}.scene-settings-trigger>span{font-size:10px}}
 @media(max-width:359px){.data-mode-switch button{font-size:9px;padding:5px}.brand{font-size:17px}.topbar{column-gap:6px}.theme-switch button{font-size:10px;padding:8px 5px}.search-box input{font-size:10px}}
+
+/* Let the tall desktop scene show the roof, facade and approach together.
+   Keep the three metric rows and the existing phone/short-screen sheet. */
+@media (min-width: 701px) and (min-height: 950px) {
+  .detail-scene { flex-basis: 410px; max-height: 410px; }
+  .metric-row { min-height: 56px; }
+  .scene-caption { padding-block: 9px; }
+}

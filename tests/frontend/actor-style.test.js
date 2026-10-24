@@ -32,4 +32,49 @@ describe('scene actor proportions',()=>{
   expect(parked.height/riding.height).toBeGreaterThan(.6);
   expect(parked.height/riding.height).toBeLessThan(.85);
  });
+ test('explicit detail legibility reaches desktop and narrow-phone glyph sizes without changing physical height',()=>{
+  const frame={width:24,height:60};
+  const desktop=actorDimensions({kind:'walk'},frame,10.452/4.8,{readable:true,viewWidth:394});
+  const phone=actorDimensions({kind:'walk'},frame,6.708/4.8,{readable:true,viewWidth:350});
+  expect(desktop.height).toBeCloseTo(16,8);expect(phone.height).toBeCloseTo(13,8);
+  expect(desktop.physicalHeight).toBeCloseTo(10.452,8);expect(phone.physicalHeight).toBeCloseTo(6.708,8);
+  expect(desktop.width/desktop.height).toBeCloseTo(.4,8);expect(phone.width/phone.height).toBeCloseTo(.4,8);
+  expect(desktop.presentationScale).toBeGreaterThan(1);expect(phone.presentationScale).toBeLessThanOrEqual(2);
+ });
+ test('the same detail glyph factor preserves walker, rider and parked-vehicle proportions',()=>{
+  const options={readable:true,viewWidth:394},scale=2;
+  const walk=actorDimensions({kind:'walk'},{width:24,height:60},scale,options);
+  const ride=actorDimensions({kind:'ride'},{width:60,height:64},scale,options);
+  const parked=actorDimensions({kind:'ride',parked:true},{width:60,height:64},scale,options);
+  expect(walk.presentationScale).toBe(ride.presentationScale);expect(ride.presentationScale).toBe(parked.presentationScale);
+  expect(ride.height).toBe(walk.height);expect(parked.height/walk.height).toBeCloseTo(.75,8);
+  expect(ride.width/ride.height).toBeCloseTo(60/64,8);
+  expect(parked.physicalHeight/ride.physicalHeight).toBeCloseTo(.75,8);
+ });
+ test('ROI presentation feathers continuously while physical shadows retain the original world-size proxy',()=>{
+  const frame={width:24,height:60},scale=2;
+  const physical=actorDimensions({kind:'walk'},frame,scale);
+  for(const amount of [0,.01,.05,.25,.5,.75,1]){
+   const glyph=actorDimensions({kind:'walk'},frame,scale,{readable:true,viewWidth:394,amount});
+   expect(glyph.height).toBeCloseTo(physical.height+(16-physical.height)*amount,8);
+   expect(glyph.physicalHeight).toBe(physical.height);expect(glyph.physicalWidth).toBe(physical.width);
+   expect(glyph.presentationScale).toBeGreaterThanOrEqual(1);expect(glyph.presentationScale).toBeLessThanOrEqual(2);
+  }
+ });
+ test('presentation never shrinks, stays capped and leaves default world sizing exact',()=>{
+  const frame={width:24,height:60};
+  for(const scale of [.5,1.31,2.71,4,10]){
+   const normal=actorDimensions({kind:'walk'},frame,scale);
+   const disabled=actorDimensions({kind:'walk'},frame,scale,{readable:false,viewWidth:350});
+   expect(normal.height).toBe(4.8*scale);expect(normal.width).toBe(4.8*scale*24/60);
+   expect(disabled).toEqual(normal);
+   const detail=actorDimensions({kind:'walk'},frame,scale,{readable:true,viewWidth:394});
+   expect(detail.height).toBeGreaterThanOrEqual(normal.height);expect(detail.presentationScale).toBeLessThanOrEqual(2);
+   if(normal.height>=16)expect(detail).toEqual(normal);
+  }
+  const capped=actorDimensions({kind:'walk'},frame,.5,{readable:true,viewWidth:350});
+  expect(capped.presentationScale).toBe(2);expect(capped.height).toBe(4.8);
+  const invalid=actorDimensions({kind:'walk'},frame,NaN,{readable:true,viewWidth:350});
+  expect(invalid.height).toBe(0);expect(invalid.presentationScale).toBe(1);
+ });
 });

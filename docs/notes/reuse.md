@@ -1,5 +1,10 @@
 # Prior work and reuse
 
+Current boundary change: the runtime official-GIS source-material entry below
+supersedes the earlier blanket no-GIS-canvas-read design constraint. Historical
+checkpoint claims remain scoped to their dates/modules. The four generated
+assets still have no GIS input; live source processing is a separate path.
+
 ## Initial public baseline
 
 This baseline contains newly written project documentation and Git exclusions,
@@ -42,6 +47,239 @@ Before committing reused code, add an entry with:
 
 Reused board drivers must retain their upstream copyright and license. Record
 any permitted reuse transparently; do not relabel prior code as newly written.
+
+## 2026-10-23 — Library-entry surface-light experiment
+
+The new `library-lighting.js`, atlas/layer and baseline-mask modules are authored
+for this repository. They derive three wall registrations and pane emission from
+the already authorized `facade-surfaces.js`/`facade-atlas.js` baseline; no additional
+historical application, shader library, model or map raster was copied. Existing
+React/Pixi APIs and the generated actor sheets keep their recorded provenance.
+No dependency or third-party license was added. Proxy tree geometry, fixture
+positions and heights are manually authored illustration, not official GIS data.
+See [the experiment](../design/library-entry-lighting.md) for validation limits.
+
+### 2026-10-24 — Generated foliage and concept-fidelity continuation
+
+The transparent `public/assets/library-tree-canopy-v1.png` was newly generated
+with built-in imagegen using the already selected concept as style guidance.
+The [asset record](library-tree-generation.md) contains the full prompt, final
+fingerprint, metadata/privacy checks and illustrative-use limits. New shared
+foliage material preparation and adaptive official tile selection are authored
+in this repository; no new external code or school-map snapshots were copied.
+
+### 2026-10-24 — Common materials, room emitters and authored paving (historical)
+
+`surface-lighting.js`, `building-material.js`, `paving-material.js`,
+`room-lighting.js` and the shared `ground-features.js` planting masks are authored
+for this repository. The atlas/layer and actor-material adapters use the same
+linear-RGB decode, raw irradiance, exposure and tone map. Neutral glass
+reflectance is separate from additive warm interior emission; its generated
+RGB is normalized by mean linear luminance and masked off metal frames.
+`library-lighting.js` derives 19 cached area patches from 120 emitting panes in the
+same stable 37 bright/83 ordinary/95 dim/64 unlit pattern. No additional campus
+observations, routes, surveyed lights or source geometry are inferred.
+
+The new `public/assets/library-facade-material-v1.png` and
+`public/assets/library-paving-v1.png`, together with the crown and lamp prop,
+were produced with built-in imagegen. They were not copied from a texture
+package, school GIS image or pre-hackathon application. The
+[generation record](library-tree-generation.md) records final fingerprints,
+metadata stripping/rechecks, visual checks and original-output preservation.
+Generated appearance is illustrative; this entry asserts no blanket external
+license for school data or generated imagery. No new runtime dependency or
+third-party implementation/model was added.
+
+Authored paving uses existing registered receivers and excludes three shared
+planting islands with inward coverage. The wall material keeps279 actual pane
+quads and original64 unlit flags, preserving doors/sills outside window-band
+UV0..1. Roofs/canopy and other unmodified surfaces retain GIS appearance. No
+school raster pixels are read or bundled by these material modules.
+
+Validation for this local continuation: `npm run build` and
+`npx vitest run tests/frontend` passed 106 tests across 12 suites. Pass6 desktop
+and phone captures under `captures/library-material-20261024/` are local review
+evidence. Independent review did not accept pass6 fidelity; later entry-band
+refinements are outside this 106-test checkpoint. These checks are not fidelity
+acceptance, deployment, database
+testing/writes or hardware validation. Earlier validation records remain
+historical checkpoints.
+
+### 2026-10-24 — Responsive framing, contact AO and bounded reflection (pass11 historical)
+
+Final local checkpoint: build and123 frontend tests/14 suites passed after
+pass11. Desktop/phone/paired screenshots are ignored local review evidence,
+metadata checked. Denser walkers use the existing routes/IDs/phases/geometry;
+no historical route code, new map image or external dependency was added.
+The20:10 illustration has47 walk/5 riding/4 parked; real observations stay
+separate and field mode hides all synthetic actors. Night-fidelity acceptance
+remains open despite improved composition/material integration.
+
+`map-framing.js` and the App/CampusMap/style adaptations are authored display
+logic for fitting the existing library roof/facade/entry together. They alter
+camera framing and local label placement, not official geometry or observations.
+`actor-lighting.js` adds small foot/tyre contact AO independently of direct-light
+cast shadows. `surface-lighting.js` adds an optional bounded dielectric GGX lobe
+using the field's received-energy direction across its three source families.
+The conceptual reference is [Filament's material documentation](https://google.github.io/filament/main/filament.html#materialsystem)
+for GGX distribution, Smith masking, Schlick Fresnel and diffuse/specular
+separation. No Filament implementation, asset, package or dependency was copied.
+The code is an independently authored one-direction approximation with a 0.5
+specular-weight ceiling, not Filament integration or a full PBR renderer.
+
+Roughness values are foliage 0.5, paving 0.78, glass 0.3, frames 0.82 and actors 0.75.
+Generated bitmap bytes/hashes and their original-output preservation are
+unchanged; no new image was introduced. The library raster grade again uses
+the atmospheric matrix rather than the previous extra-dark variant. Source
+geometry, 279 panes, room-state pattern and 19 facade patches remain intact.
+
+The final local checkpoint passed build and123 frontend tests across14 suites.
+Pass11 desktop/detail/mobile/paired PNGs were metadata-stripped/rechecked and
+reviewed. One final desktop atlas compile was2203.4ms, cached across both maps.
+The earlier pass9 measured2224.7ms; the separate approximately42ms incremental
+shader benchmark for111509 pixels ran in Node, not a browser or physical phone.
+No database operations, deployment, new external license or fidelity acceptance
+is claimed. The 107-test pass7 and earlier records remain historical evidence.
+
+### 2026-10-24 — Runtime-only official GIS source materials (pass13 historical)
+
+`gis-material.js` is newly authored browser code for separate anonymous-CORS
+loading of the minimal official zoom2 tiles covering `LIBRARY_BOUNDS`. It
+assembles a 573x441 ROI and performs one bounded canvas pixel read, then applies
+approximate bounded linear-albedo normalization. The atlas uses those source
+colors/details for registered roof, canopy, door and solid-wall material under
+the existing normals/light field, replacing their earlier wash on those pixels.
+Ordinary map `<img>` loading, topology and generated material provenance remain
+separate. No third-party implementation or new runtime package was copied.
+
+The input is live official GIS, not a local pre-hackathon raster. Images and
+processed material stay in runtime memory; no source snapshot/derived bitmap is
+bundled, committed or exported to an application image store. This supersedes
+the old no-pixel-read rendering limit, not the prohibition on publishing the
+historical school snapshot. Generated crown/fixture/facade/paving bytes and
+their no-GIS-input generation records remain unchanged. Existing source-rights
+and license boundaries are not altered by this technical CORS check.
+
+The read-only 2026-10-24 probe of
+[the official zoom3 tile](https://gis.ccnu.edu.cn/mapdata/zoom3/14_8.jpg) returned
+GET 200/image JPEG and `Access-Control-Allow-Origin: *`; HEAD 404 was not evidence
+that the GET image was unavailable. The requested zoom2 subset has now loaded
+and been read successfully in the actual in-app browser. Its CORS design follows
+[MDN's image/canvas guidance](https://developer.mozilla.org/en-US/docs/Web/HTML/How_to/CORS_enabled_image);
+no proxy, credential or canvas security bypass is introduced.
+
+The implementation gates tree/building/paving/GIS ready-or-fallback before one
+shared atlas compile, exposes GIS status/source-material pixel counts and
+retains pass11's old material wash on request/CORS/read failure. With cache off
+and zoom2 requests blocked, both GIS loaders reached fallback/source-ready false
+while generated materials stayed ready and ordinary zoom3 tiles loaded. After
+restoring settings in `finally`, reload verified GIS ready in both views again.
+This is controlled request-failure coverage, not every possible failure mode.
+
+The wall-only `coolNeutralization: 0.6` source profile partially reduces eligible
+baked cyan/blue casts while preserving linear luminance/detail contrast and
+protecting warm, green and near-black features. Roof/canopy profiles are
+unchanged. This changes runtime processing only; generated image inputs/bytes
+and hashes remain intact. It is approximate cast correction, not recovered
+reflectance or complete sun-shadow removal.
+
+The build and 133 frontend tests across 15 suites passed. Actual browser status
+was ready/source-ready true in both maps, revision `1:1:1:1`, source pixels
+roof 29778/canopy 5644/wall 7327. One desktop atlas compile measured 2261.2ms and
+was cached across both views. Metadata-cleaned/viewed pass13 desktop/detail
+captures are local evidence; pass12 predates the source-cast fix. Phone/mode
+and fidelity review were pending at pass13; later checks are separately recorded
+below. The 123-test pass11
+evidence above remains historical. No database operations, deployment or
+fidelity acceptance are claimed.
+
+### 2026-10-24 — Discrete canopy fixtures and shared sky (pass15 historical)
+
+The new `libraryCanopyDownlights` positions are independently authored on the
+existing circular canopy's front arc at 30/90/150 degrees. There are three new
+sources,13 library fixtures total, with 9 receivers and 8 tree volumes unchanged.
+Each lens is at height 7.1, 0.4 below the 7.5 roof, using power 1.2/radius 26 and
+downward full response to 58 degrees, feathering to zero at 68 degrees. Direct
+reception and derived ground bounce share that cone; these sources add zero
+light to the canopy top. They are illustrative, not measured fixtures.
+
+`library-light-atlas.js` draws three small common-shaded casings/emissive lenses
+in cached normal `buildingFixtureMaterial`; it adds no ring/halo or external
+bitmap. Street-pole asset rendering excludes them and xray fades this building
+channel. No vendor source, dependency or new generated image was introduced;
+existing generated asset inputs/hashes and runtime-only GIS boundaries remain.
+
+Pass15 sets shared `SCENE_SKY_STRENGTH=0.65`, exposure 1.6 and library raster
+matrix diagonal .34/.38/.43, gamma 1.13. Existing lamp/room powers remain unchanged
+from pass14 and other appearance modes retain their treatment. The local A/B
+review selected 15 over 14 for stronger warm hierarchy while keeping roof ribs,
+foliage and blue activity marks visible. This is an improvement decision, not concept
+fidelity acceptance.
+
+Final build and 139 frontend tests/16 suites passed at 03:25:44 after sky 0.65
+calibration, with script syntax/diff checks passing. Pass14 phone/mode checks covered original/day
+restoration, field-zero actors/contacts and 390x844 without overflow, with all
+four material sources/three fixtures ready and official tiles loaded. Those
+captures were metadata-checked/viewed. Pass15 desktop/detail/mobile,
+`paired-pass15.png` and `paired-sky14-15.png` remain local evidence; the final
+mobile and source/current pair were metadata-cleared/viewed. Pass15 at 390x844
+reported scroll/client 390/390, both GIS sources ready, three fixtures and all
+official tiles loaded. Review found no layout/geometry regression and judged
+night cohesion acceptable as an experiment. The style goal remains incomplete:
+P1 actor readability concerns fine blue lines/dots at default desktop detail/
+phone scales; body/pose legibility is the next work. One shared cached desktop compile measured 2332.1ms, not phone
+performance. The source-failure/recovery check remains scoped to pass13's
+133-test phase. No database operations or deployment ran.
+
+### 2026-10-24 — Bounded detail actor presentation (pass16)
+
+New presentation/palette logic in `actor-style.js`, `ActivityLayer.jsx` and
+`actor-lighting.js` is authored for this repository. It uses the retained actor
+assets without editing their PNG/RGBA buffers, alpha or provenance. No vendor
+code, dependency, model or new image was copied/generated. The person baseline
+remains 4.8 illustration map units; foot/tyre anchors, 47 walkers/5 riders/4 parked
+bikes, routes, headings and shared clock stay intact.
+
+Only detail/demo/night/library ROI presentation with `selectedId === 'library'`
+is enlarged with feathering,
+cap 2 and no shrink of larger physical/high-zoom art. Walking/riding/parked types
+share one factor. At 1487x1058, overview physical/display stays 6.2925px; detail
+10.452px physical becomes 16px display (1.5308). At 390x844, overview stays 4.5375px;
+detail 6.7077px becomes 13px (1.9381). Cast shadows use physical dimensions while
+contact AO uses visible footprints. This is cartographic presentation, not
+measured stature or a change to source-world positions.
+
+The walk-only palette lifts green on eligible bright blue source pixels by at
+most 42, capped at 0.58B, before the same shared material shader. The source
+example 0/66/244 becomes 0/108/244; dark seams, warm/white detail and alpha remain.
+There is no new actor emission floor, private exposure, glow or post-filter.
+Vehicles and default/ineligible presentation keep their previous material path.
+Optional-profile cache keys remain separate under the existing bounded cache.
+
+Final production build and 148 frontend tests across 16 suites passed at 03:57:21
+after the selected-place scope guard. Metadata-cleaned/
+viewed pass16 desktop/detail/mobile captures show the default static frame;
+390x844 has scroll/client 390/390, no horizontal overflow and all tiles loaded.
+Independent static review resolved P1 readability and accepted bounded trial
+style/cohesion, without oversize/clipping/overlap regression. The independent
+final review also inspected `paired-pass16.png`, motion A/B, parking-pan and xray
+captures: no P1 prevents acceptance of this bounded local trial. The frames are
+representative rather than exhaustive motion coverage; full-campus extension
+remains separate.
+
+Both maps advanced 2084 frames during 86.328 seconds with matching scene clock
+125.776, stable 56 actors and unchanged four-slot parked signature. Raster/atlas
+matrices matched after local pan/zoom at scale 2.721893 while overview stayed
+1.3109375. Browser enhanced/original/day restored physical=display/readable 0/
+library hosts 0; field had 0 actors/contacts/readable. People/bikes/waits toggles
+and search/place switching were exercised, preserving their separate controls.
+An other-selected-place edge was fixed with `selectedId === 'library'`; full
+reload showed `teaching-8` physical/display 15.885/readable 0, then library 16px/
+readable 27 on return. The final 148-test result follows that fix. Parking anchor
+constancy is supported by runtime coordinates, not a single photograph.
+The motion/parking/xray and paired PNGs were metadata-cleaned/viewed. No database
+operations, deployment or commit ran for this pass. Earlier 139/pass15 and
+133/pass13 records retain their historical scopes.
 
 ## 2026-10-23 — Prior visual concept
 
@@ -219,3 +457,19 @@ code/bitmap/model was added. Canvas/Pixi enhanced paths now share these wall
 surfaces. Reuse-manifest hashes were refreshed for modified adapted modules.
 Build and28 frontend tests passed; no database tests/writes, commit or deployment
 were performed for this iteration. Screenshots remain local evidence only.
+## 2026-10-24 — Full-campus material extension
+
+The campus scene chart, spatial field, viewport chunk scheduler/material renderer
+and affine crown masks are newly authored in this repository. They generalize
+the accepted library chart and shader and retain the previously attributed
+frontend modules. They introduce no third-party source, dependency, model or
+license change. Existing generated material bytes and their provenance remain
+unchanged in [the asset record](library-tree-generation.md). The official GIS
+is loaded online and processed only in transient CORS-permitted browser memory;
+no historical or newly downloaded school raster is bundled or published.
+
+Native-canopy correction adds newly authored bounded runtime foliage inference
+and cached alpha/depth compositing. It reuses only CORS-permitted live source
+pixels in memory, retains native leaf texture, and adds no bundled raster or
+third-party implementation. The prior broad warm overlay is disabled in campus
+mode. Final local screenshots were metadata-stripped/rechecked before sharing.

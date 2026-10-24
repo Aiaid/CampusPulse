@@ -134,3 +134,101 @@ export const facadeSurfaces = [
     windowQuad: [[626.5, 391.2], [652, 401], [652, 413.5], [626.5, 403.7]],
     columns: 13, rows: 3, fillU: .52, fillV: .59, strength: .32, phase: 9 }),
 ];
+
+/** Additional visible walls reviewed against the same official fixed-view GIS.
+ * The source association identifies the building only. Room count, room pattern
+ * and lighting are all authored illustration; they are not official GIS data.
+ * Sparse floor bands preserve dark rooms and prevent a uniform luminous grid.
+ */
+function reviewedCampusSurface({ sourceId, litRows, ...config }) {
+  const result = surface(config);
+  if (litRows) {
+    for (const pane of result.windows) {
+      const row = Number(pane.id.split('-').at(-2));
+      pane.lit = pane.lit && litRows.includes(row);
+    }
+  }
+  return { ...result, sourceId,
+    provenance: { ...result.provenance, sourceId,
+      sourceAssociation: 'reviewed-official-building-silhouette',
+      roomLayout: 'manual-illustrative-visible-wall-bands' } };
+}
+
+facadeSurfaces.push(
+  // Foreign Languages: the taller rear classroom wings and the low courtyard
+  // front are separate receivers. Keep the tiled roofs and blue entry out.
+  reviewedCampusSurface({ id: 'foreign-languages-rear-west', buildingId: 'foreign-languages-source', sourceId: '10646',
+    polygon: [[436,219], [469,231.8], [469,244], [436,231.2]],
+    columns: 10, rows: 4, fillU: .61, fillV: .54, litRows: [0,2,3], phase: 4, strength: .34 }),
+  reviewedCampusSurface({ id: 'foreign-languages-rear-east', buildingId: 'foreign-languages-source', sourceId: '10646',
+    polygon: [[483,238.8], [519,252.8], [519,266.3], [483,252.3]],
+    columns: 11, rows: 4, fillU: .59, fillV: .55, litRows: [0,1,3], phase: 8, strength: .33 }),
+  reviewedCampusSurface({ id: 'foreign-languages-courtyard-front', buildingId: 'foreign-languages-source', sourceId: '10646',
+    polygon: [[438.5,249], [479.3,265.2], [479.3,273.4], [438.5,257.2]],
+    columns: 12, rows: 2, fillU: .54, fillV: .49, phase: 10, strength: .37 }),
+
+  // Museum: narrow vertical recesses below the stone cornice, not the square
+  // skylight or its pitched roof. The east end has its own projected axis.
+  reviewedCampusSurface({ id: 'museum-stone-front', buildingId: 'museum-source', sourceId: '10750',
+    polygon: [[445.2,94.2], [493.3,113.2], [493.3,125.3], [445.2,106.3]],
+    columns: 12, rows: 1, fillU: .35, fillV: .73, phase: 6, strength: .4, windowStrength: .73 }),
+  reviewedCampusSurface({ id: 'museum-east-recesses', buildingId: 'museum-source', sourceId: '10750',
+    polygon: [[496.4,114], [518,91.4], [518,101], [496.4,123.6]],
+    columns: 6, rows: 1, fillU: .34, fillV: .72, phase: 12, strength: .26, windowStrength: .68 }),
+
+  // The tall Humanities Research front is partly outside the north image edge.
+  // Its main wall and east return stop below the dark roof/parapet.
+  reviewedCampusSurface({ id: 'humanities-research-front', buildingId: 'humanities-research-source', sourceId: '11773',
+    polygon: [[484,6], [539,28.8], [539,77.3], [484,54.5]],
+    columns: 18, rows: 12, fillU: .54, fillV: .49, litRows: [0,2,3,5,7,8,10], phase: 2, strength: .31, windowStrength: .76 }),
+  reviewedCampusSurface({ id: 'humanities-research-east', buildingId: 'humanities-research-source', sourceId: '11773',
+    polygon: [[543,29.1], [581.6,1.2], [581.6,30.5], [543,71.5]],
+    strength: .23 }),
+
+  // Manjianghong's dark inset face rises to the right. Its white side strip and
+  // black roof are excluded; the room projection follows this different axis.
+  reviewedCampusSurface({ id: 'manjianghong-inset-front', buildingId: 'manjianghong-source', sourceId: '10687',
+    polygon: [[219.9,185], [251.2,174.8], [251.2,204.8], [219.9,215]],
+    columns: 10, rows: 7, fillU: .57, fillV: .5, litRows: [0,1,3,5,6], phase: 7, strength: .38 }),
+
+  // Teaching 9 has projecting white piers, so window bands are independent
+  // recesses. Never extend one grid through the towers or across the roof steps.
+  reviewedCampusSurface({ id: 'teaching-9-west-recess', buildingId: 'teaching-9-source', sourceId: '10680',
+    polygon: [[812,447.4], [828.2,454.2], [828.2,501], [812,494.2]],
+    columns: 5, rows: 11, fillU: .6, fillV: .49, litRows: [0,2,4,5,7,9,10], phase: 1, strength: .33 }),
+  reviewedCampusSurface({ id: 'teaching-9-central-recess', buildingId: 'teaching-9-source', sourceId: '10680',
+    polygon: [[838.2,458.2], [852,464], [852,509.9], [838.2,504.1]],
+    columns: 4, rows: 11, fillU: .59, fillV: .5, litRows: [0,1,3,5,7,8,10], phase: 5, strength: .35 }),
+  reviewedCampusSurface({ id: 'teaching-9-east-recess', buildingId: 'teaching-9-source', sourceId: '10680',
+    polygon: [[878.2,480.5], [894.8,487.6], [894.8,528.1], [878.2,521]],
+    columns: 5, rows: 10, fillU: .57, fillV: .49, litRows: [0,2,3,5,7,9], phase: 9, strength: .33 }),
+  reviewedCampusSurface({ id: 'teaching-9-east-return', buildingId: 'teaching-9-source', sourceId: '10680',
+    polygon: [[921.3,495.3], [926.5,490], [926.5,528.8], [921.3,534.1]],
+    columns: 2, rows: 9, fillU: .43, fillV: .48, litRows: [1,3,4,6,8], phase: 13, strength: .23 }),
+
+  // South Teaching 2: only two short floors below the long dark tiled eave.
+  reviewedCampusSurface({ id: 'teaching-2-south-long-wall', buildingId: 'teaching-2-south-source', sourceId: '10728',
+    polygon: [[402,373.2], [470.5,401.4], [470.5,409.1], [402,380.9]],
+    columns: 23, rows: 2, fillU: .48, fillV: .53, phase: 11, strength: .34 }),
+  reviewedCampusSurface({ id: 'teaching-2-south-end-wall', buildingId: 'teaching-2-south-source', sourceId: '10728',
+    polygon: [[473,399.6], [479,392.6], [479,399.4], [473,406.4]],
+    columns: 2, rows: 2, fillU: .45, fillV: .5, phase: 4, strength: .22 }),
+
+  // The gym has a broad opaque roof. Keep its light at the small south door
+  // openings, inside the reviewed gym silhouette rather than on roof ribs.
+  reviewedCampusSurface({ id: 'gym-south-door-band', buildingId: 'gym-source', sourceId: '10660',
+    polygon: [[101,590], [144.7,606.3], [144.7,609.8], [101,593.5]],
+    columns: 10, rows: 1, fillU: .64, fillV: .64, phase: 2, strength: .48, windowStrength: .72 }),
+
+  // Two separately reviewed faculty blocks retain their own source identities.
+  // These thin bands stay below the eaves and avoid the stepped overlap.
+  reviewedCampusSurface({ id: 'faculty-home-1-front-band', buildingId: 'faculty-home-1-source', sourceId: '11883',
+    polygon: [[341,103], [369,114], [369,121.1], [341,110.1]],
+    columns: 10, rows: 2, fillU: .51, fillV: .49, phase: 14, strength: .3, windowStrength: .73 }),
+  reviewedCampusSurface({ id: 'faculty-home-36-front-band', buildingId: 'faculty-home-36-source', sourceId: '11885',
+    polygon: [[343,76], [389,94], [389,101], [343,83]],
+    columns: 15, rows: 2, fillU: .49, fillV: .5, phase: 9, strength: .28, windowStrength: .72 }),
+  reviewedCampusSurface({ id: 'faculty-home-36-east-return', buildingId: 'faculty-home-36-source', sourceId: '11885',
+    polygon: [[396,98], [402,91.5], [402,100], [396,106.5]],
+    columns: 2, rows: 2, fillU: .45, fillV: .5, phase: 3, strength: .22, windowStrength: .66 }),
+);

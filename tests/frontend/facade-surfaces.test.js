@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { facadeSurfaces, facadeCell, pointOnFacade } from '../../src/campus/facade-surfaces.js';
-import { pointInPolygon } from '../../src/campus/spatial-scene.js';
+import { officialBuildings, pointInPolygon } from '../../src/campus/spatial-scene.js';
 
 const area = polygon => Math.abs(polygon.reduce((sum, point, i) => {
   const next = polygon[(i + 1) % polygon.length];
@@ -71,6 +71,29 @@ describe('registered visible facade light masks', () => {
     for (const { polygon } of surface.windows) {
       const edge = [polygon[1][0] - polygon[0][0], polygon[1][1] - polygon[0][1]];
       expect(Math.abs(axis[0] * edge[1] - axis[1] * edge[0])).toBeLessThan(1e-8);
+    }
+  });
+
+  test('expanded campus walls retain their reviewed official building association', () => {
+    const expanded = facadeSurfaces.filter(surface => surface.sourceId);
+    expect(new Set(expanded.map(surface => surface.buildingId)).size).toBeGreaterThanOrEqual(9);
+    for (const surface of expanded) {
+      const building = officialBuildings.find(candidate => candidate.sourceId === surface.sourceId);
+      expect(building?.id).toBe(surface.buildingId);
+      expect(surface.polygon.every(point => pointInPolygon(point, building.polygon))).toBe(true);
+      expect(surface.provenance.roomLayout).toBe('manual-illustrative-visible-wall-bands');
+    }
+    const panes = expanded.flatMap(surface => surface.windows);
+    expect(panes.filter(pane => !pane.lit).length / panes.length).toBeGreaterThan(.35);
+  });
+
+  test('expanded campus reception stays below representative roof and cornice samples', () => {
+    for (const point of [[480,76], [520,0], [455,213], [850,445], [140,555], [237,172], [370,76]]) {
+      expect(facadeSurfaces.some(surface => pointInPolygon(point, surface.polygon)), String(point)).toBe(false);
+    }
+    for (const point of [[450,228], [477,111], [520,48], [235,194], [845,482],
+      [438,390], [120,599], [350,110], [370,89]]) {
+      expect(facadeSurfaces.some(surface => pointInPolygon(point, surface.polygon)), String(point)).toBe(true);
     }
   });
 });

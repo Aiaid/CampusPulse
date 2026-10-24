@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { buildings, facadeLights, lampPoints, pointInPolygon } from './spatial-scene';
+import { campusLightLamps } from './campus-lighting-layout';
 import { groundLightAtlas } from './lighting-field';
 import { facadeArtwork } from './facade-atlas';
 import { MAP_WIDTH, MAP_HEIGHT } from './scene-data';
+import { withoutLibraryLight } from './library-baseline-mask';
 import './night-lighting.css';
 
 function traceBuilding(context, polygon, project) {
@@ -14,13 +16,15 @@ function traceBuilding(context, polygon, project) {
   context.closePath();
 }
 
-function drawSurfaceLighting(context, project, scale, viewWidth, viewHeight, xray, selectedId) {
+function drawSurfaceLighting(context, project, scale, viewWidth, viewHeight, xray, selectedId, suppressLibrary) {
   const origin = project(0, 0);
   context.save();
   context.globalCompositeOperation = 'screen';
-  context.drawImage(groundLightAtlas(), origin.left, origin.top, MAP_WIDTH * scale, MAP_HEIGHT * scale);
+  const ground = groundLightAtlas();
+  context.drawImage(suppressLibrary ? withoutLibraryLight(ground) : ground, origin.left, origin.top, MAP_WIDTH * scale, MAP_HEIGHT * scale);
   let windowCount = 0;
   for (const item of facadeArtwork().groups) {
+    if(suppressLibrary && item.buildingId==='library-main')continue;
     const building=buildings.find(b=>b.id===item.buildingId);
     const opacity=xray&&building?.placeId===selectedId ? .25 : 1;
     context.globalAlpha=opacity;
@@ -34,7 +38,7 @@ function drawSurfaceLighting(context, project, scale, viewWidth, viewHeight, xra
 
 /** Artistic lighting anchors, unrelated to the school's actual lighting state. */
 export default function NightLighting({ project, scale, viewWidth, viewHeight, isDark = false,
-  xray = false, selectedId = 'library', lighting = 'atmospheric', renderer = 'canvas-original',
+  xray = false, selectedId = 'library', lighting = 'atmospheric', renderer = 'canvas-original', suppressLibrary = false,
 }) {
   const canvasRef = useRef(null);
   const textureRef = useRef(null);
@@ -60,9 +64,9 @@ export default function NightLighting({ project, scale, viewWidth, viewHeight, i
     canvas.dataset.surfaceWidths = lighting === 'atmospheric' ? 'artistic-bounded-corridors' : 'unbounded-pools';
     if (!isDark || !project) return;
     if (lighting === 'atmospheric') {
-      const count=drawSurfaceLighting(context,project,scale,viewWidth,viewHeight,xray,selectedId);
+      const count=drawSurfaceLighting(context,project,scale,viewWidth,viewHeight,xray,selectedId,suppressLibrary);
       canvas.dataset.windowCount=String(count);
-      canvas.dataset.lampCount=String(lampPoints.filter(lamp=>{ const point=project(lamp.x,lamp.y); return point.left>=-70*scale&&point.left<=viewWidth+70*scale&&point.top>=-30*scale&&point.top<=viewHeight+30*scale; }).length);
+      canvas.dataset.lampCount=String([...lampPoints,...campusLightLamps].filter(lamp=>{ const point=project(lamp.x,lamp.y); return point.left>=-70*scale&&point.left<=viewWidth+70*scale&&point.top>=-30*scale&&point.top<=viewHeight+30*scale; }).length);
       return;
     }
     const texture = textureRef.current;
@@ -170,7 +174,7 @@ export default function NightLighting({ project, scale, viewWidth, viewHeight, i
   // Project is affine in CampusMap. Compare its transform, not its function
   // identity, so an unrelated clock/selection render cannot redraw static light.
   const origin = project?.(0, 0);
-  useEffect(invalidate, [origin?.left, origin?.top, scale, viewWidth, viewHeight, isDark, xray, selectedId, lighting]);
+  useEffect(invalidate, [origin?.left, origin?.top, scale, viewWidth, viewHeight, isDark, xray, selectedId, lighting, suppressLibrary]);
   return <canvas ref={canvasRef} className="cp-night-lighting" aria-hidden="true"
     data-lighting="illustrative" data-lighting-mode={lighting} data-renderer={renderer} style={{ width: viewWidth, height: viewHeight }} />;
 }

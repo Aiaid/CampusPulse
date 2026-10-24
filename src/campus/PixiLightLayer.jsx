@@ -2,10 +2,15 @@ import { useEffect, useRef } from 'react';
 import { Application, BlurFilter, CanvasSource, Container, Rectangle, Sprite, Texture } from 'pixi.js';
 import { AdvancedBloomFilter } from 'pixi-filters/advanced-bloom';
 import { buildings, lampPoints } from './spatial-scene';
+import { campusLightLamps } from './campus-lighting-layout';
 import { facadeArtwork } from './facade-atlas';
 import { groundLightAtlas, groundSurfaceMask, lampSurfaceFrame } from './lighting-field';
 import { MAP_HEIGHT, MAP_WIDTH } from './scene-data';
+import { libraryBlend } from './library-lighting';
+import { withoutLibraryLight } from './library-baseline-mask';
 import './night-lighting.css';
+
+const sceneLamps = [...lampPoints, ...campusLightLamps];
 
 function localTexture(canvas, resolution = 1) {
   // Each mounted map owns its GPU source. Shared CPU atlases remain reusable
@@ -48,12 +53,12 @@ function releaseTransientBindings(filters){
 
 /** Transparent, on-demand GPU light overlay. It never reads or fetches GIS pixels. */
 export default function PixiLightLayer({ project,scale,viewWidth,viewHeight,isDark=false,
-  xray=false,selectedId='library',lighting='atmospheric',onFailure,
+  xray=false,selectedId='library',lighting='atmospheric',onFailure,suppressLibrary=false,
 }){
   const hostRef=useRef(null);
   const runtimeRef=useRef(null);
   const current=useRef(null);
-  current.current={project,scale,viewWidth,viewHeight,isDark,xray,selectedId,lighting,onFailure};
+  current.current={project,scale,viewWidth,viewHeight,isDark,xray,selectedId,lighting,onFailure,suppressLibrary};
   const origin=project?.(0,0);
 
   useEffect(()=>{
@@ -129,10 +134,12 @@ export default function PixiLightLayer({ project,scale,viewWidth,viewHeight,isDa
         const world=new Container({eventMode:'none'});app.stage.addChild(world);
         const atlasTexture=localTexture(groundLightAtlas(),2);
         const maskTexture=localTexture(groundSurfaceMask(),2);
+        const localAtlasTexture=localTexture(withoutLibraryLight(groundLightAtlas()),2);
+        const localMaskTexture=localTexture(withoutLibraryLight(groundSurfaceMask()),2);
         const radialTexture=localTexture(radialCanvas());
         const artwork=facadeArtwork();
         const facadeTexture=localTexture(artwork.mask,2);
-        textures.push(atlasTexture,maskTexture,radialTexture,facadeTexture);
+        textures.push(atlasTexture,maskTexture,localAtlasTexture,localMaskTexture,radialTexture,facadeTexture);
         const groundClip=new Container({eventMode:'none'});
         // This CPU atlas is already surface-masked. Apply that alpha once;
         // only the new GPU emission needs an additional post-filter mask.
@@ -148,11 +155,14 @@ export default function PixiLightLayer({ project,scale,viewWidth,viewHeight,isDa
         const groundBlur=new BlurFilter({strength:.4,quality:2,resolution:1});
         const groundBloom=new AdvancedBloomFilter({threshold:.14,bloomScale:.42,brightness:1,blur:3,quality:3});
         groundBloom.resolution=1;filters.push(groundBlur,groundBloom);emission.filters=[groundBlur,groundBloom];
-        for(const lamp of lampPoints){
-          const strength=lamp.strength??.7,frame=lampSurfaceFrame(lamp);
-          emission.addChild(glow(radialTexture,lamp.x,lamp.y,frame.kind==='local'?9:24,frame.kind==='local'?5:7,.3*strength,0xffc27d,frame.angle));
-          emission.addChild(glow(radialTexture,lamp.x,lamp.y,3.5,2.2,.88*strength,0xffdba3,frame.angle));
-          emission.addChild(glow(radialTexture,lamp.x,lamp.y,1.1,.75,.94,0xffe1b0,frame.angle));
+        const lampGroups=[];
+        for(const lamp of sceneLamps){
+          const group=new Container({eventMode:'none'});emission.addChild(group);
+          lampGroups.push({lamp,group});
+          const strength=lamp.strength??.7,frame=Number.isFinite(lamp.angle)?{angle:lamp.angle,kind:'paving'}:lampSurfaceFrame(lamp);
+          group.addChild(glow(radialTexture,lamp.x,lamp.y,frame.kind==='local'?9:24,frame.kind==='local'?5:7,.3*strength,0xffc27d,frame.angle));
+          group.addChild(glow(radialTexture,lamp.x,lamp.y,3.5,2.2,.88*strength,0xffdba3,frame.angle));
+          group.addChild(glow(radialTexture,lamp.x,lamp.y,1.1,.75,.94,0xffe1b0,frame.angle));
         }
         const facadeClip=new Container({eventMode:'none'}),windowEmission=new Container({eventMode:'none'});
         effects.push(facadeClip,windowEmission);
@@ -189,6 +199,9 @@ export default function PixiLightLayer({ project,scale,viewWidth,viewHeight,isDa
             const point=props.project?.(0,0)??{left:0,top:0};
             world.position.set(point.left,point.top);world.scale.set(props.scale);
             world.visible=props.isDark&&props.lighting==='atmospheric';
+            diffuse.texture=props.suppressLibrary?localAtlasTexture:atlasTexture;
+            surfaceMask.texture=props.suppressLibrary?localMaskTexture:maskTexture;
+            for(const {lamp,group} of lampGroups)group.visible=!props.suppressLibrary||libraryBlend(lamp.x,lamp.y)===0;
             // Pixi filterArea is in viewport/screen coordinates, never scaled
             // world coordinates. It bounds intermediate render textures.
             const viewport=new Rectangle(0,0,width,height);
@@ -197,15 +210,17 @@ export default function PixiLightLayer({ project,scale,viewWidth,viewHeight,isDa
             groundBloom.blur=Math.min(4,Math.max(1.7,props.scale*1.1));
             windowBloom.blur=Math.min(3,Math.max(1.2,props.scale*.7));
             for(const {building,group,lightGroup} of windowGroups){
+              group.visible=lightGroup.visible=!(props.suppressLibrary&&building.id==='library-main');
               group.alpha=lightGroup.alpha=props.xray&&building.placeId===props.selectedId ? .25 : 1;
             }
             const visible=({x,y},padding)=>{const p=props.project(x,y);return p.left>=-padding&&p.left<=width+padding&&p.top>=-padding&&p.top<=height+padding;};
             canvas.dataset.lightingMode=props.lighting;
+            canvas.dataset.librarySuppressed=String(props.suppressLibrary);
             canvas.dataset.worldX=String(point.left);
             canvas.dataset.worldY=String(point.top);
             canvas.dataset.worldScale=String(props.scale);
-            canvas.dataset.lampCount=world.visible?String(lampPoints.filter(lamp=>visible(lamp,45*props.scale)).length):'0';
-            canvas.dataset.windowCount=world.visible?String(windowGroups.reduce((count,{lights})=>count+lights.filter(light=>visible(light,10*props.scale)).length,0)):'0';
+            canvas.dataset.lampCount=world.visible?String(lampGroups.filter(({lamp,group})=>group.visible&&visible(lamp,45*props.scale)).length):'0';
+            canvas.dataset.windowCount=world.visible?String(windowGroups.reduce((count,{lights,group})=>count+(group.visible?lights.filter(light=>visible(light,10*props.scale)).length:0),0)):'0';
             canvas.dataset.renderFrame=String(++renderFrame);
             canvas.dataset.tickerRunning=String(app.ticker.started);
             app.render();
@@ -224,6 +239,6 @@ export default function PixiLightLayer({ project,scale,viewWidth,viewHeight,isDa
     initialize();
     return()=>{cancelled=true;cancelAnimationFrame(frame);if(initialized)dispose();};
   },[]);
-  useEffect(()=>{runtimeRef.current?.invalidate();},[origin?.left,origin?.top,scale,viewWidth,viewHeight,isDark,xray,selectedId,lighting]);
+  useEffect(()=>{runtimeRef.current?.invalidate();},[origin?.left,origin?.top,scale,viewWidth,viewHeight,isDark,xray,selectedId,lighting,suppressLibrary]);
   return <div ref={hostRef} className="cp-pixi-light-host" aria-hidden="true" />;
 }

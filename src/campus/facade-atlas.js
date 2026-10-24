@@ -42,8 +42,8 @@ export function facadeArtwork() {
       diffuse.context.save();trace(diffuse.context,surface.polygon);diffuse.context.clip();
       const bounce=diffuse.context.createLinearGradient(0,minY,0,maxY);
       bounce.addColorStop(0,`rgba(203,181,143,${.08*strength})`);
-      bounce.addColorStop(.55,`rgba(245,185,101,${.32*strength})`);
-      bounce.addColorStop(1,`rgba(255,192,106,${.65*strength})`);
+      bounce.addColorStop(.55,`rgba(245,185,101,${.42*strength})`);
+      bounce.addColorStop(1,`rgba(255,192,106,${.82*strength})`);
       diffuse.context.fillStyle=bounce;diffuse.context.fillRect(left,top,width,height);
       emission.context.save();trace(emission.context,surface.polygon);emission.context.clip();
       for(const window of surface.windows??[]){
@@ -62,7 +62,15 @@ export function facadeArtwork() {
         halo.addColorStop(1,'rgba(255,176,77,0)');
         diffuse.context.fillStyle=halo;diffuse.context.fillRect(center[0]-radius,center[1]-radius,radius*2,radius*2);
         trace(emission.context,polygon);
-        emission.context.fillStyle=`rgba(255,210,145,${Math.min(.9,.14+.82*power)})`;
+        // Warm room depth stays inside the reviewed pane. A brighter center
+        // and lower amber edge read as a recess instead of a flat white dot.
+        const paneYs=polygon.map(point=>point[1]);
+        const paneRoom=emission.context.createLinearGradient(0,Math.min(...paneYs),0,Math.max(...paneYs));
+        const alpha=Math.min(.94,.16+.86*power);
+        paneRoom.addColorStop(0,`rgba(255,182,86,${alpha*.77})`);
+        paneRoom.addColorStop(.38,`rgba(255,225,151,${alpha})`);
+        paneRoom.addColorStop(1,`rgba(255,190,96,${alpha*.83})`);
+        emission.context.fillStyle=paneRoom;
         emission.context.fill();
         windows.push({x:center[0],y:center[1]});
       }

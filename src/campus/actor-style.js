@@ -25,11 +25,21 @@ export function alphaFrames({data,width,height}, threshold=32) {
   return frames;
 }
 
-export function actorDimensions(actor,frame,mapScale){
+/** Optional detail glyph sizing is cartographic presentation, not a change to
+ * world height. One factor preserves people/vehicle proportions and footprint
+ * anchors; the physical dimensions remain available to the light/shadow model.
+ */
+export function actorDimensions(actor,frame,mapScale,{readable=false,viewWidth,amount=1}={}){
   const kind=actor.kind==='walk'?'walk':actor.parked?'parked':'riding';
   const scale=Number.isFinite(mapScale)&&mapScale>0?mapScale:0;
-  const height=ACTOR_WORLD_HEIGHT[kind]*scale;
-  return {width:height*frame.width/frame.height,height};
+  const physicalHeight=ACTOR_WORLD_HEIGHT[kind]*scale;
+  const physicalWidth=physicalHeight*frame.width/frame.height;
+  const target=Number.isFinite(viewWidth)&&viewWidth<380?13:16;
+  const mix=Number.isFinite(amount)?Math.max(0,Math.min(1,amount)):0;
+  const fullScale=readable&&scale>0?Math.max(1,Math.min(2,target/(ACTOR_WORLD_HEIGHT.walk*scale))):1;
+  const presentationScale=1+(fullScale-1)*mix;
+  return {width:physicalWidth*presentationScale,height:physicalHeight*presentationScale,
+    physicalWidth,physicalHeight,presentationScale};
 }
 
 const frameCache=new Map();

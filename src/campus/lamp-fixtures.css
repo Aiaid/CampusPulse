@@ -1,0 +1,10 @@
+.cp-lamp-fixtures {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+  mix-blend-mode: normal;
+}
+.cp-lamp-fixtures[hidden] { display: none; }

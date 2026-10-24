@@ -5,20 +5,17 @@ import { buildings, pointInPolygon } from './spatial-scene';
 import ActivityLayer from './ActivityLayer';
 import NightLighting from './NightLighting';
 import MapRegions, { useBuildingMask } from './MapRegions';
+import { gisTileAvailability, selectTileLevel, visibleGisTiles } from './gis-tiles';
+import { fitMapFrame } from './map-framing';
 import './campus-map.css';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const DEFAULT_VIEW = { zoom: 1, x: 0, y: 0 };
 const TILE_ORIGIN = (import.meta.env.VITE_GIS_TILE_ORIGIN || 'https://gis.ccnu.edu.cn').replace(/\/$/, '');
-// 256px zoom-3 originals occupy 128px in this registered 1024x640 extent.
-const TILES = Array.from({ length: 40 }, (_, index) => ({
-  col: 10 + index % 8, row: 7 + Math.floor(index / 8),
-  x: (index % 8) * 128, y: Math.floor(index / 8) * 128,
-}));
 
 /** Independently pannable official remote tiles with registered mock activity. */
 export const CampusMap = forwardRef(function CampusMap({
-  selectedId = 'library', onSelect = () => {},
+  selectedId = 'library', onSelect = () => {}, compactSelected = false,
   layers = { people: true, bikes: true, waits: true }, minute = 1200, isDark = false, onZoomChange, maxZoom = 4, xray = false, moving = true, demo = true, lighting = 'atmospheric',
 }, ref) {
   const gradeId = useId().replace(/:/g, '');
@@ -29,6 +26,8 @@ export const CampusMap = forwardRef(function CampusMap({
   const [view, setView] = useState(DEFAULT_VIEW);
   const [dragging, setDragging] = useState(false);
   const [failedTiles, setFailedTiles] = useState(() => new Set());
+  const [loadedTiles, setLoadedTiles] = useState(() => new Set());
+  const [pixelRatio, setPixelRatio] = useState(() => window.devicePixelRatio || 1);
   const [tileAttempt, setTileAttempt] = useState(0);
   const viewRef = useRef(view);
   const sizeRef = useRef(size);
@@ -55,20 +54,30 @@ export const CampusMap = forwardRef(function CampusMap({
     setView(bounded({ zoom: safeZoom, x: (MAP_WIDTH / 2 - place.x - offset.x) * scale, y: (MAP_HEIGHT / 2 - place.y - offset.y) * scale }, dimensions));
   }, [bounded, maxZoom]);
 
+  const frameScene = useCallback((frame, dimensions = sizeRef.current) => {
+    const next = fitMapFrame(frame, dimensions, maxZoom);
+    if (!next) return;
+    focusedPlace.current = { frame };
+    setView(bounded(next, dimensions));
+  }, [bounded, maxZoom]);
+
   useLayoutEffect(() => {
     const element = container.current;
     const resize = () => {
       const dimensions = { width: Math.max(element.clientWidth, 1), height: Math.max(element.clientHeight, 1) };
       sizeRef.current = dimensions;
       setSize(dimensions);
-      if (focusedPlace.current) centerPlace(focusedPlace.current.id, viewRef.current.zoom, dimensions, focusedPlace.current.offset);
+      setPixelRatio(window.devicePixelRatio || 1);
+      if (focusedPlace.current?.frame) frameScene(focusedPlace.current.frame, dimensions);
+      else if (focusedPlace.current) centerPlace(focusedPlace.current.id, viewRef.current.zoom, dimensions, focusedPlace.current.offset);
       else setView((current) => bounded(current, dimensions));
     };
     resize();
     const observer = new ResizeObserver(resize);
     observer.observe(element);
-    return () => observer.disconnect();
-  }, [bounded, centerPlace]);
+    window.addEventListener('resize', resize);
+    return () => { observer.disconnect(); window.removeEventListener('resize', resize); };
+  }, [bounded, centerPlace, frameScene]);
 
   const changeZoom = useCallback((factor, screenX, screenY) => {
     focusedPlace.current = null;
@@ -87,7 +96,8 @@ export const CampusMap = forwardRef(function CampusMap({
     zoomOut: () => changeZoom(.8),
     reset: () => { focusedPlace.current = null; setView(DEFAULT_VIEW); },
     focusPlace: (id, zoom, offset) => centerPlace(id, zoom, sizeRef.current, offset),
-  }), [centerPlace, changeZoom]);
+    frameScene,
+  }), [centerPlace, changeZoom, frameScene]);
 
   useEffect(() => {
     const element = container.current;
@@ -135,6 +145,21 @@ export const CampusMap = forwardRef(function CampusMap({
   const scale = Math.max(size.width / MAP_WIDTH, size.height / MAP_HEIGHT) * view.zoom;
   const translateX = (size.width - MAP_WIDTH * scale) / 2 + view.x;
   const translateY = (size.height - MAP_HEIGHT * scale) / 2 + view.y;
+  const tileLevel = selectTileLevel(scale, pixelRatio);
+  const tileViewport = { width: size.width, height: size.height, scale, translateX, translateY };
+  // Keep the same base-image keys while detail levels change. Newly requested
+  // fine tiles paint over the already loaded official base without blanking it.
+  const baseTiles = visibleGisTiles({ ...tileViewport, level: 3 });
+  const detailTiles = tileLevel < 3 ? visibleGisTiles({ ...tileViewport, level: tileLevel }) : [];
+  const tileAvailability = gisTileAvailability(
+    visibleGisTiles({ ...tileViewport, level: 3, overscan: 0 }),
+    tileLevel < 3 ? visibleGisTiles({ ...tileViewport, level: tileLevel, overscan: 0 }) : [],
+    failedTiles, loadedTiles,
+  );
+  const recordTileLoad = key => {
+    setLoadedTiles(current => current.has(key) ? current : new Set(current).add(key));
+    setFailedTiles(current => { if (!current.has(key)) return current; const next = new Set(current); next.delete(key); return next; });
+  };
   const project = (x, y) => ({ left: x * scale + translateX, top: y * scale + translateY });
   const selectRegion = event => {
     if (suppressClick.current || event.target.closest('button')) return;
@@ -151,7 +176,34 @@ export const CampusMap = forwardRef(function CampusMap({
       onLostPointerCapture={() => { drag.current = null; setDragging(false); }} onKeyDown={keyboardPan}>
       <svg width="0" height="0" aria-hidden="true" style={{position:'absolute',pointerEvents:'none'}}>
         <defs><filter id={gradeId} colorInterpolationFilters="sRGB">
-          <feColorMatrix type="matrix" values=".42 .03 .02 0 .008 .02 .46 .05 0 .014 .03 .10 .48 0 .028 0 0 0 1 0" />
+          {(lighting === 'library' || lighting === 'campus') && <>
+            {/* Flatten only part of the raster's broad daylight exposure. The
+                positive floor keeps inverse gamma finite; high-frequency tile
+                detail and original alpha survive this compositor-only pass.
+                This is approximate illumination normalization, not recovered
+                albedo or a GIS pixel read. Original/enhanced stay unchanged. */}
+            <feColorMatrix in="SourceGraphic" type="saturate" values="0" result="dayLuminance" />
+            <feGaussianBlur in="dayLuminance" stdDeviation="4" edgeMode="duplicate" result="dayExposure" />
+            <feComponentTransfer in="dayExposure" result="exposureFloor">
+              <feFuncR type="linear" slope=".82" intercept=".18" />
+              <feFuncG type="linear" slope=".82" intercept=".18" />
+              <feFuncB type="linear" slope=".82" intercept=".18" />
+            </feComponentTransfer>
+            <feComponentTransfer in="exposureFloor" result="inverseExposure">
+              <feFuncR type="gamma" amplitude=".18" exponent="-1" offset="0" />
+              <feFuncG type="gamma" amplitude=".18" exponent="-1" offset="0" />
+              <feFuncB type="gamma" amplitude=".18" exponent="-1" offset="0" />
+              <feFuncA type="linear" slope="0" intercept="1" />
+            </feComponentTransfer>
+            <feComposite in="SourceGraphic" in2="inverseExposure" operator="arithmetic" k1="1" k2="0" k3="0" k4="0" result="normalizedDetail" />
+            <feColorMatrix in="normalizedDetail" type="matrix" values="4.5 0 0 0 0 0 4.5 0 0 0 0 0 4.5 0 0 0 0 0 1 0" result="normalizedExposure" />
+            <feComposite in="SourceGraphic" in2="normalizedExposure" operator="arithmetic" k1="0" k2=".72" k3=".28" k4="0" />
+          </>}
+          {/* Match the unlit raster background to the common material sky.
+              Lamp/room energy stays independent of this night-sky fill. */}
+          <feColorMatrix type="matrix" values={(lighting === 'library' || lighting === 'campus')
+            ? '.34 .03 .02 0 .008 .02 .38 .05 0 .014 .03 .10 .43 0 .028 0 0 0 1 0'
+            : '.42 .03 .02 0 .008 .02 .46 .05 0 .014 .03 .10 .48 0 .028 0 0 0 1 0'} />
           <feComponentTransfer>
             <feFuncR type="gamma" amplitude="1" exponent="1.13" offset="0" />
             <feFuncG type="gamma" amplitude="1" exponent="1.13" offset="0" />
@@ -159,18 +211,15 @@ export const CampusMap = forwardRef(function CampusMap({
           </feComponentTransfer>
         </filter></defs>
       </svg>
-      <div className="cp-map__raster" role="img" aria-label="华中师范大学公开校园 GIS 在线图块"
+      <div className="cp-map__raster" role="img" aria-label="华中师范大学公开校园 GIS 在线图块" data-tile-level={tileLevel} data-detail-fallbacks={tileAvailability.fallback}
         style={{ width: MAP_WIDTH, height: MAP_HEIGHT, transform: `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`, maskImage: buildingMask, WebkitMaskImage: buildingMask, maskSize: '100% 100%', WebkitMaskSize: '100% 100%' }}>
-        {TILES.filter(tile => (tile.x + 128) * scale + translateX >= -128 && tile.x * scale + translateX <= size.width + 128 && (tile.y + 128) * scale + translateY >= -128 && tile.y * scale + translateY <= size.height + 128).map(tile => {
-          const key = `${tile.col}_${tile.row}`;
-          return <img key={`${tileAttempt}-${key}`} className="cp-map__tile" src={`${TILE_ORIGIN}/mapdata/zoom3/${key}.jpg`} alt="" draggable={false}
-            onError={() => setFailedTiles(current => new Set(current).add(key))}
-            onLoad={() => setFailedTiles(current => { if (!current.has(key)) return current; const next = new Set(current); next.delete(key); return next; })}
-            style={{ left: tile.x, top: tile.y, visibility: failedTiles.has(key) ? 'hidden' : 'visible' }} />;
-        })}
+        {[...baseTiles, ...detailTiles].map(tile => <img key={`${tileAttempt}-${tile.key}`} className="cp-map__tile" src={`${TILE_ORIGIN}/mapdata/zoom${tile.key}.jpg`} alt="" draggable={false} data-tile-key={tile.key}
+          onError={() => { setFailedTiles(current => new Set(current).add(tile.key)); setLoadedTiles(current => { if (!current.has(tile.key)) return current; const next = new Set(current); next.delete(tile.key); return next; }); }}
+          onLoad={() => recordTileLoad(tile.key)}
+          style={{ left: tile.x, top: tile.y, width: tile.size, height: tile.size, visibility: failedTiles.has(tile.key) ? 'hidden' : 'visible' }} />)}
       </div>
       <div className="cp-map__atmosphere" aria-hidden="true" />
-      <ActivityLayer project={project} scale={scale} translateX={translateX} translateY={translateY} viewWidth={size.width} viewHeight={size.height} layers={layers} minute={minute} isDark={isDark} xray={xray} moving={moving} selectedId={selectedId} demo={demo} lighting={lighting} />
+      <ActivityLayer project={project} scale={scale} translateX={translateX} translateY={translateY} viewWidth={size.width} viewHeight={size.height} layers={layers} minute={minute} isDark={isDark} xray={xray} moving={moving} selectedId={selectedId} demo={demo} lighting={lighting} detailView={compactSelected} />
       <NightLighting project={project} scale={scale} viewWidth={size.width} viewHeight={size.height} isDark={isDark} xray={xray} selectedId={selectedId} lighting={lighting} />
       <MapRegions project={project} viewWidth={size.width} viewHeight={size.height} selectedId={selectedId} xray={xray} />
       <div className="cp-map__landmarks">
@@ -178,19 +227,20 @@ export const CampusMap = forwardRef(function CampusMap({
           const selected = selectedId === place.id;
           const metrics = getMetrics(place.id, minute);
           const screen = project(place.x, place.y);
-          const visible = screen.left >= 12 && screen.left <= size.width - 12 && screen.top >= 25 && screen.top <= size.height - 65;
+          const compact = compactSelected && selected;
+          const visible = compact || (screen.left >= 12 && screen.left <= size.width - 12 && screen.top >= 25 && screen.top <= size.height - 65);
           const labelShift = clamp(screen.left, 75, size.width - 75) - screen.left;
-          return <div className={`cp-map__anchor ${selected ? 'cp-map__anchor--selected' : ''}`} key={place.id} style={screen} data-source-id={place.sourceId} aria-hidden={!visible}>
-            {selected && <span className="cp-map__selection" aria-hidden="true"><MapPin size={31} weight="fill" /></span>}
-            <button className="cp-map__label" type="button" tabIndex={visible ? 0 : -1} style={{ left: visible ? labelShift : 0 }} onClick={() => onSelect(place.id)} aria-pressed={selected} aria-label={`${place.name}，查看区域活动${selected ? '，已选择' : ''}`}>
+          return <div className={`cp-map__anchor ${selected ? 'cp-map__anchor--selected' : ''} ${compact ? 'cp-map__anchor--compact' : ''}`} key={place.id} style={compact ? { left: size.width - 12, top: 12 } : screen} data-source-id={place.sourceId} aria-hidden={!visible}>
+            {selected && !compact && <span className="cp-map__selection" aria-hidden="true"><MapPin size={31} weight="fill" /></span>}
+            <button className="cp-map__label" type="button" tabIndex={visible ? 0 : -1} style={{ left: compact ? 0 : visible ? labelShift : 0 }} onClick={() => onSelect(place.id)} aria-pressed={selected} aria-label={`${place.name}，查看区域活动${selected ? '，已选择' : ''}`}>
               {selected && <span className="cp-map__label-dot" aria-hidden="true" />}{place.name}
             </button>
-            {demo && layers.waits && metrics.wait !== null && (selected || place.id === 'tianjiabing' || place.id === 'teaching-9') && <span className="cp-map__wait" title="候梯为合成示意，未核实楼栋是否有电梯"><Elevator size={14} aria-hidden="true" /> 候梯 约{metrics.wait}分钟 <small>模拟</small></span>}
+            {demo && !compactSelected && layers.waits && metrics.wait !== null && (selected || place.id === 'tianjiabing' || place.id === 'teaching-9') && <span className="cp-map__wait" title="候梯为合成示意，未核实楼栋是否有电梯"><Elevator size={14} aria-hidden="true" /> 候梯 约{metrics.wait}分钟 <small>模拟</small></span>}
           </div>;
         })}
       </div>
-      {failedTiles.size > 0 && <div className="cp-map__tile-notice" role="status">部分学校 GIS 图块暂不可用，地点与图层操作仍可使用。<button type="button" onClick={() => { setFailedTiles(new Set()); setTileAttempt(value => value + 1); }}>重试图块</button></div>}
-      <span className="cp-map__source" title={sceneAttribution.notice}>底图：华师校园 GIS 在线图块　/　{demo ? '活动合成示意' : '无实时活动数据'}</span>
+      {tileAvailability.unavailable > 0 && <div className="cp-map__tile-notice" role="status">部分学校 GIS 图块暂不可用，地点与图层操作仍可使用。<button type="button" onClick={() => { setFailedTiles(new Set()); setLoadedTiles(new Set()); setTileAttempt(value => value + 1); }}>重试图块</button></div>}
+      <span className="cp-map__source" title={`${sceneAttribution.notice}${tileAvailability.fallback ? ' 部分精细图块暂不可用，当前区域保留标准底图。' : ''}`}>底图：华师校园 GIS 在线图块{tileAvailability.fallback > 0 ? '（标准清晰度回退）' : ''}　/　{demo ? '活动合成示意' : '无实时活动数据'}</span>
     </div>
   );
 });

@@ -75,15 +75,12 @@ assignments; firmware and device acceptance remain pending.
 
 ## P2 — Refine the product and presentation
 
-- [ ] Improve full-campus lighting coverage and material response toward the
-      concept; current local shared illumination remains a partial visual match.
-
+- [ ] Further calibrate night materials and unmodeled facades toward the concept;
+      the full-campus chart is an approximate fixed-view 2.5D illustration,
+      without surveyed depth or physical photometric calibration.
 
 - [ ] Field-record browser write regression is deferred at the user's request
       (2026-10-23); resume only when that verification is requested.
-- [ ] Refine night lighting with a surface-aware 2.5D field: connected warm
-      pavement/entrance illumination, path-aligned falloff, restrained source
-      halos and cooler ambient depth; preserve the current map and interactions.
 - [ ] Evaluate registered depth/light masks or licensed baked night assets for
       greater fidelity beyond the fixed-raster warm-light treatment.
 - [ ] Confirm map-asset display/redistribution rights before reusing the old GIS
@@ -115,6 +112,68 @@ assignments; firmware and device acceptance remain pending.
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] Generalize the accepted library lighting to the full visible campus and
+      all eight places:103 roofs/29 walls/44 grounds,309 foliage proxies,94
+      point sources and77 pane-derived area emitters; share indexed light,
+      visibility, bounded ground/window bounce and actor reception. Add shared
+      viewport chunks with bounded64-entry caches and cooperative compilation,
+      runtime-only official CORS source material, all-place frames and ten
+      synthetic routes. Correct native GIS crown occlusion, remove duplicate broad
+      warm glow, and keep crown tops above path lights with strict incidence.
+      Preserve library calibration, fixed parking, comparison
+      modes and zero synthetic actors in field mode. Build and190 frontend
+      tests passed; desktop/390px and all-place runtime checks recorded in
+      [campus lighting](campus-lighting.md) and root visual QA. No deployment,
+      commit or database writes performed by this lighting task.
+
+- [x] Bring the bounded library-entry trial closer to the selected night concept:
+      unified building/ground/tree/actor lighting, textured foliage, crisp tiles,
+      source-preserving surfaces, focused warm entry and readable16/13px detail
+      figures. Retain actual GIS geometry, routes/counts/anchors, fixed parking,
+      independent layers and field isolation. Paired pass16 and representative
+      motion/phone/xray views independently accepted;86.328s/2084 advancing
+      frames preserve56 actors and four parking anchors. Final post-guard build
+      and148 frontend tests passed; current in-app mode/search/zoom checks passed.
+      This completes the requested local trial; full-campus extension remains
+      separate above. No deployment or DB/hardware acceptance is implied.
+
+- [x] Replace remaining library roof/canopy/door washes with runtime-only
+      CORS-permitted official source textures, bounded approximate linear
+      reflectance and shared normals/light/tone mapping. Preserve source seams,
+      ordinary map loading and tested network/CORS fallback; bundle no raster.
+      Add three discrete canopy downlights with shared downward cones and
+      select common sky strength.65 via matched A/B without changing lamp/room
+      power. Pass15 build and139 frontend tests passed; desktop/390x844 and source
+      failure/recovery checked. Night cohesion improved; actor readability keeps
+      the concept-fidelity goal open.
+
+- [x] Fit the library roof/facade/entry responsively, recover campus background
+      detail and declutter local labels; add bounded common dielectric reflection
+      and ground-only contact AO. Refine base contrast and existing canopy lamp;
+      denser synthetic pedestrians retain all existing paths/poses/parking.
+      Build and123 frontend tests passed; pass11 desktop/phone reviewed without
+      new static-frame regression. The broader night-fidelity goal remains open.
+
+- [x] Share linear wall/paving/foliage/actor shading, normalized additive room
+      emission and19 facade-area patches; add authored paving with planting-bed
+      exclusions and preserve actual door details under shared-energy reflection.
+      Build and107 frontend tests passed; pass7 desktop/390x844 inspected.
+      This completes the material foundation, not the open concept-fidelity goal.
+
+- [x] Add textured foliage/fixture assets with metadata/provenance records,
+      shared single-bounce/leaf reception, clustered room exposure,13 wider
+      campus paving masks/57 lights,32 facade planes/14 groups and adaptive
+      official tile LOD. Build and75 frontend tests passed; current desktop and
+      390x844 captures inspected. Concept-fidelity acceptance remains open.
+
+- [x] Prototype unified library-entry lighting with 8 surface receivers,
+      8 tree volumes and 8 shared illustrative fixtures; add normal/height/ray
+      response, actor capsule shading, tree clipping and ground shadows. Keep
+      entrance/enhanced/original comparison. Build, 48 frontend tests and
+      desktop/390x844 browser checks passed; no database tests or writes.
+      See [experiment and limits](library-entry-lighting.md). This is partial
+      fixed-view relighting, not full-campus 3D or concept-image parity.
 
 - [x] Deploy the ingestion server on Cloudflare from backend-only commit
       `6f7775a`; apply additive D1 migration, bind private APAC-hint R2, set an
