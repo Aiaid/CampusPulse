@@ -13,6 +13,10 @@ assignments; firmware and device acceptance remain pending.
 
 ## P0 — Deliver the core MVP
 
+- [ ] Verify administrator Passkey registration, login and reauthentication in
+      the production Safari/Touch ID workflow after the optional-extension fix;
+      controlled local browser acceptance is archived below.
+
 - [ ] Register individually verified physical nodes, capture policies and fixed
       placements in production, then validate firmware ACK/reclamation and actual
       retention timing. Cloud backend/demo acceptance is archived below.
@@ -112,6 +116,14 @@ assignments; firmware and device acceptance remain pending.
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] Accept omitted optional Passkey credential-property reports while rejecting
+      negative/malformed reports and retaining all core WebAuthn/session guards.
+      The exact release snapshot passes350 tests/34 suites (61 real-crypto
+      Passkey cases), build, fresh local migrations and real Worker/browser
+      registration with omitted extensions, signed login/reauth and management
+      regressions. Physical Safari acceptance remains a separate step. See
+      [browser compatibility](../notes/admin-browser-compatibility.md).
 
 - [x] Fix Safari administrator-page cosmetic-filter collisions by replacing
       generic `ad-` classes, custom properties and animations with `cp-admin-`.

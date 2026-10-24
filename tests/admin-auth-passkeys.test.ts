@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { isoCBOR } from '@simplewebauthn/server/helpers';
 import { ACCOUNT, NEW_PASSWORD, ORIGIN, Authenticator, Client, authState, authentication, json, register, type State } from './admin-auth-helpers';
 
 let state: State, client: Client;
@@ -36,7 +37,7 @@ describe('Passkey registration verification', () => {
 
   it.each([
     ['wrong origin', { origin: 'https://evil.example' }], ['wrong RP hash', { rp: 'evil.example' }],
-    ['missing UV', { uv: false }], ['nonresident key', { resident: false }],
+    ['missing UV', { uv: false }], ['explicitly reported non-discoverable key', { resident: false }],
     ['wrong challenge', { challenge: 'synthetic-wrong-challenge' }], ['wrong ceremony', { type: 'webauthn.get' }],
   ] as const)('rejects %s and consumes the failed registration challenge', async (_label, override) => {
     const key = new Authenticator();
@@ -44,6 +45,59 @@ describe('Passkey registration verification', () => {
     const invalid = key.register(challenge.optionsJSON, override);
     expect((await client.call('/passkeys/registration/verify', 'POST', { challenge_id: challenge.challenge_id, response: invalid })).status).toBe(400);
     expect((await client.call('/passkeys/registration/verify', 'POST', { challenge_id: challenge.challenge_id, response: key.register(challenge.optionsJSON) })).status).toBeGreaterThanOrEqual(400);
+    expect(state.db.prepare('SELECT COUNT(*) n FROM admin_passkeys').get()?.n).toBe(0);
+  });
+
+  it.each([
+    ['the entire extension result', undefined],
+    ['credProps', {}],
+    ['rk', { credProps: {} }],
+  ] as const)('accepts a real ES256 registration omitting %s', async (_label, extensions) => {
+    const key = new Authenticator();
+    const challenge = await json(await client.call('/passkeys/registration/options', 'POST', { name: 'Optional extension result' }));
+    const response: any = key.register(challenge.optionsJSON);
+    if (extensions === undefined) delete response.clientExtensionResults;
+    else response.clientExtensionResults = extensions;
+    const verified = await json(await client.call('/passkeys/registration/verify', 'POST', { challenge_id: challenge.challenge_id, response }), 201);
+    expect(verified.passkey).toMatchObject({ name: 'Optional extension result', device_type: 'singleDevice' });
+    expect(state.db.prepare('SELECT COUNT(*) n FROM admin_passkeys').get()?.n).toBe(1);
+  });
+
+  it.each([
+    ['null extension result', null], ['array extension result', []],
+    ['string extension result', 'invalid'], ['number extension result', 1], ['boolean extension result', true],
+    ['null credProps', { credProps: null }], ['array credProps', { credProps: [] }],
+    ['string credProps', { credProps: 'invalid' }], ['number credProps', { credProps: 1 }], ['boolean credProps', { credProps: true }],
+    ['explicitly reported non-discoverable key', { credProps: { rk: false } }],
+    ['null rk', { credProps: { rk: null } }], ['string rk', { credProps: { rk: 'true' } }],
+    ['number rk', { credProps: { rk: 1 } }], ['array rk', { credProps: { rk: [] } }], ['object rk', { credProps: { rk: {} } }],
+  ] as const)('rejects %s and consumes the registration challenge without storing a key', async (_label, extensions) => {
+    const key = new Authenticator();
+    const challenge = await json(await client.call('/passkeys/registration/options', 'POST', { name: 'Invalid extension result' }));
+    const response = { ...key.register(challenge.optionsJSON), clientExtensionResults: extensions };
+    expect((await client.call('/passkeys/registration/verify', 'POST', { challenge_id: challenge.challenge_id, response })).status).toBe(400);
+    expect((await client.call('/passkeys/registration/verify', 'POST', { challenge_id: challenge.challenge_id, response: key.register(challenge.optionsJSON) })).status).toBe(400);
+    expect(state.db.prepare('SELECT COUNT(*) n FROM admin_passkeys').get()?.n).toBe(0);
+  });
+
+  it.each([
+    ['wrong origin', { origin: 'https://evil.example' }], ['wrong RP hash', { rp: 'evil.example' }],
+    ['wrong challenge', { challenge: 'synthetic-wrong-challenge' }], ['wrong ceremony', { type: 'webauthn.get' }],
+    ['missing UV', { uv: false }], ['missing UP', {}],
+  ] as const)('still rejects %s when registration extensions are omitted', async (label, override) => {
+    const key = new Authenticator();
+    const challenge = await json(await client.call('/passkeys/registration/options', 'POST', { name: 'Omitted extensions with invalid authenticator' }));
+    const response: any = key.register(challenge.optionsJSON, override);
+    delete response.clientExtensionResults;
+    if (label === 'missing UP') {
+      const attestation = isoCBOR.decodeFirst<Map<string, any>>(Buffer.from(response.response.attestationObject, 'base64url'));
+      const authData = Buffer.from(attestation.get('authData'));
+      authData[32] &= ~0x01;
+      attestation.set('authData', authData);
+      response.response.attestationObject = Buffer.from(isoCBOR.encode(attestation)).toString('base64url');
+    }
+    expect((await client.call('/passkeys/registration/verify', 'POST', { challenge_id: challenge.challenge_id, response })).status).toBe(400);
+    expect((await client.call('/passkeys/registration/verify', 'POST', { challenge_id: challenge.challenge_id, response: key.register(challenge.optionsJSON) })).status).toBe(400);
     expect(state.db.prepare('SELECT COUNT(*) n FROM admin_passkeys').get()?.n).toBe(0);
   });
 
@@ -90,6 +144,28 @@ describe('Passkey registration verification', () => {
 });
 
 describe('signed Passkey authentication and challenge lifetime', () => {
+  it('uses an extension-omitting registered key for signed login and reauthentication, rejecting replays', async () => {
+    const authenticator = new Authenticator();
+    const registration = await json(await client.call('/passkeys/registration/options', 'POST', { name: 'Extension-omitting key' }));
+    const response: any = authenticator.register(registration.optionsJSON);
+    delete response.clientExtensionResults;
+    await json(await client.call('/passkeys/registration/verify', 'POST', { challenge_id: registration.challenge_id, response }), 201);
+
+    const anonymous = new Client(state, ORIGIN, '192.0.2.57');
+    const login = await authentication(anonymous, authenticator);
+    expect(login.challenge.optionsJSON.allowCredentials ?? []).toEqual([]);
+    expect(await json(await anonymous.call('/passkeys/authentication/verify', 'POST', login.body))).toMatchObject({ authenticated: true, account: { username: ACCOUNT.username } });
+    expect((await anonymous.call('/passkeys/authentication/verify', 'POST', login.body)).status).toBe(400);
+    expect((await anonymous.call('/devices')).status).toBe(200);
+
+    state.db.exec('UPDATE admin_sessions SET reauthenticated_at_ms=NULL');
+    expect((await anonymous.call('/account', 'PATCH', { username: ACCOUNT.username, display_name: 'Needs reauthentication' })).status).toBe(403);
+    const reauth = await authentication(anonymous, authenticator, 'reauth');
+    expect(await json(await anonymous.call('/passkeys/authentication/verify', 'POST', reauth.body))).toMatchObject({ reauthenticated: true });
+    expect((await anonymous.call('/passkeys/authentication/verify', 'POST', reauth.body)).status).toBe(400);
+    expect((await anonymous.call('/account', 'PATCH', { username: ACCOUNT.username, display_name: 'Verified with omitted extensions' })).status).toBe(200);
+  });
+
   it('logs in with a discoverable synced zero-counter key and rejects a replayed challenge', async () => {
     const { authenticator } = await register(client, new Authenticator(0, true));
     const anonymous = new Client(state, ORIGIN, '192.0.2.41');

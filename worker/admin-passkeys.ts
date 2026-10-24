@@ -109,6 +109,17 @@ function credentialResponse(value: unknown): RegistrationResponseJSON | Authenti
   return value as RegistrationResponseJSON | AuthenticationResponseJSON;
 }
 
+/** Optional client property reports may be omitted by browsers/authenticators. */
+function validateRegistrationExtensions(value: unknown): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidPasskey();
+  const properties = (value as Record<string, unknown>).credProps;
+  if (properties === undefined) return;
+  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) throw invalidPasskey();
+  const resident = (properties as Record<string, unknown>).rk;
+  if (resident !== undefined && resident !== true) throw invalidPasskey();
+}
+
 export async function handlePasskeys(request: Request, env: Env, secret: string, route: string): Promise<Response> {
   if (route === '/passkeys/authentication/options' && request.method === 'POST') {
     await authRateLimit(request, env, secret, 'passkey-options', 40, CHALLENGE_MS);
@@ -187,7 +198,7 @@ export async function handlePasskeys(request: Request, env: Env, secret: string,
     const rp = passkeyContext(request, env);
     const challenge = await claimChallenge(env, o.challenge_id, 'registration', rp, session, null);
     const response = credentialResponse(o.response) as RegistrationResponseJSON;
-    if (response.clientExtensionResults?.credProps?.rk !== true) throw invalidPasskey();
+    validateRegistrationExtensions(response.clientExtensionResults);
     let verification: Awaited<ReturnType<typeof verifyRegistrationResponse>>;
     try {
       verification = await verifyRegistrationResponse({ response, expectedChallenge: challenge.challenge, expectedOrigin: rp.origin,

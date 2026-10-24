@@ -16,7 +16,7 @@ validation records are not evidence for this implementation.
 
 | Document | Purpose | Status |
 | --- | --- | --- |
-| [Admin browser compatibility](notes/admin-browser-compatibility.md) | Safari cosmetic-filter diagnosis, dedicated CSS namespace and desktop/phone regression | Release snapshot: 324 tests, build and real-Worker browser checks passed; live Safari acceptance separate |
+| [Admin browser compatibility](notes/admin-browser-compatibility.md) | Safari cosmetic-filter diagnosis, dedicated CSS namespace and optional Passkey extension reports | Local 350-test release snapshot, real-Worker CTAP2 and desktop/phone regressions passed; physical Safari enrollment separate |
 | [Simulation scenarios](notes/simulation.md) | Teaching-day/weekend/rain profiles, full-day replay and separate parking intensity | Locally verified: 198 frontend tests, build, desktop/390px browser isolation; frontend-only synthetic data |
 | [Administrator account and Passkeys / 账号与安全](specs/admin-auth-v1.md) | First-use bootstrap, password login, profile/password changes, Passkey management, reauthentication and session revocation | Locally verified:60 auth/management tests, real CTAP2 browser/workerd, nine deploy-origin cases; production/physical acceptance separate |
 | [Admin v1 / 管理后台](specs/admin-v1.md) | Independent admin session, device health/credentials, deployments, editable capture drafts, runtime settings and audit | Locally verified: 14 admin integration tests, real workerd/browser workflows and phone layout; deployment/device activation separate |

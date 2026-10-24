@@ -108,10 +108,22 @@ try {
   await nav('账号与安全');
   await assertAdminViewVisible(page, '账号与安全', '账号资料');
   await reauth('password', password, true);
+  // Exercise optional-extension omission with a real CTAP2 credential. Only
+  // unsigned client extension reports change; the Worker verifies the original
+  // authenticator/client data and all later signatures normally.
+  let omittedRegistrationExtensions = 0;
+  await context.route(`${target.origin}/api/v1/admin/passkeys/registration/verify`, async route => {
+    const body = route.request().postDataJSON();
+    assert.equal(body.response.clientExtensionResults?.credProps?.rk, true, 'Virtual authenticator must create a resident credential');
+    delete body.response.clientExtensionResults;
+    omittedRegistrationExtensions++;
+    await route.continue({ postData: JSON.stringify(body) });
+  }, { times: 1 });
   await page.getByRole('button', { name: '登记 Passkey', exact: true }).click();
   let dialog = page.getByRole('dialog', { name: '登记新的 Passkey', exact: true });
   await dialog.getByLabel('Passkey 名称', { exact: true }).fill('Synthetic local CTAP2 key');
   const registered = await result(() => dialog.getByRole('button', { name: '登记 Passkey', exact: true }).click(), '/passkeys/registration/verify', 'POST', 201);
+  assert.equal(omittedRegistrationExtensions, 1, 'Registration must reach the real Worker with omitted extension reports');
   const keyID = registered.passkey.id;
   await page.getByRole('button', { name: '重命名 Passkey Synthetic local CTAP2 key', exact: true }).waitFor();
   // The virtual authenticator's credential count is inspected without exporting

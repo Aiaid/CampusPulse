@@ -91,6 +91,14 @@ domains does not move keys automatically. The browser/system credential manager
 retains the private key; the server stores its public credential and metadata.
 
 Registration requires a discoverable resident credential and user verification.
+The browser options set `residentKey: required` and `requireResidentKey: true`.
+The [credential-properties extension](https://www.w3.org/TR/webauthn-3/#sctn-credProps-extension)
+and its `rk` output are optional client reports. Omitted extension results,
+`credProps`, or `rk` continue through normal cryptographic verification; absence
+leaves discoverability unreported. Explicit `rk: false` and malformed values are
+rejected. The server does not synthesize `rk: true` or treat a client extension
+report as cryptographic proof of hardware storage.
+
 The server checks response type, origin, RP ID, challenge, presence/verification,
 account/user-handle binding, signature and supported counter behavior. Synced
 Passkeys reporting zero counters are supported; nonzero counter replays and
