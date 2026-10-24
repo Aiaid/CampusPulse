@@ -1,16 +1,29 @@
 import { MAP_WIDTH, MAP_HEIGHT } from './scene-data.js';
+import { GIS_SCENE_BOUNDS } from './gis-geometry.js';
 
-/** Keep the camera center on the map while allowing every edge to reach the
- * viewport center. This permits up to half a viewport of blank margin, so
- * landmarks near the raster boundary remain reachable at every zoom level.
+/** Reach the coarsest tile's native scale without zooming small panels in. */
+export function minimumMapZoom(dimensions) {
+  const base = Math.max(dimensions.width / MAP_WIDTH, dimensions.height / MAP_HEIGHT);
+  return base > 0 ? Math.min(1, 1 / base) : 1;
+}
+
+/** Clamp to the complete official raster grid, preserving scene coordinates.
+ * If a viewport axis exceeds the grid, center that axis instead of inventing
+ * more map data. Otherwise neither real grid edge can be dragged into blank.
  */
 export function boundedMapView(next, dimensions, maxZoom = 12) {
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-  const zoom = clamp(next.zoom, 1, maxZoom);
+  const zoom = clamp(next.zoom, minimumMapZoom(dimensions), maxZoom);
   const scale = Math.max(dimensions.width / MAP_WIDTH, dimensions.height / MAP_HEIGHT) * zoom;
-  const limitX = MAP_WIDTH * scale / 2;
-  const limitY = MAP_HEIGHT * scale / 2;
-  return { zoom, x: clamp(next.x, -limitX, limitX), y: clamp(next.y, -limitY, limitY) };
+  const boundAxis = (value, start, end, viewportSize, sceneSize) => {
+    const center = sceneSize / 2;
+    if ((end - start) * scale < viewportSize) return (center - (start + end) / 2) * scale;
+    return clamp(value, viewportSize / 2 + (center - end) * scale,
+      -viewportSize / 2 + (center - start) * scale);
+  };
+  return { zoom,
+    x: boundAxis(next.x, GIS_SCENE_BOUNDS.left, GIS_SCENE_BOUNDS.right, dimensions.width, MAP_WIDTH),
+    y: boundAxis(next.y, GIS_SCENE_BOUNDS.top, GIS_SCENE_BOUNDS.bottom, dimensions.height, MAP_HEIGHT) };
 }
 
 /** Authored display bounds in the existing GIS chart, not surveyed extents.

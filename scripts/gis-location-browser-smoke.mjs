@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium, expect } from '@playwright/test';
+import { GIS_SCENE_BOUNDS } from '../src/campus/gis-geometry.js';
 
 // UI/API-contract regression with an in-memory fixture. No Worker/database
 // writes, credentials, or production target. Official tiles remain remote.
@@ -22,6 +23,12 @@ const capture = async (page, name) => {
 };
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  if (process.env.GIS_SMOKE_TILES === 'fixture') {
+    await context.route('https://gis.ccnu.edu.cn/mapdata/**', route => route.fulfill({
+      contentType: 'image/svg+xml', headers: { 'Access-Control-Allow-Origin': '*' },
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#dce6da"/></svg>',
+    }));
+  }
   await context.route('**/api/v1/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (path === '/api/v1/places' && placesUnavailable) return route.fulfill({ status: 503, json: { error: 'fixture-unavailable' } });
@@ -88,16 +95,38 @@ try {
   await expect(page.getByLabel('记录地点', { exact: true })).toHaveValue('unlocated');
   await page.getByRole('button', { name: '关闭记录表单', exact: true }).click();
 
-  // A background settings change is picked up on refocus without reloading.
-  places = places.map(place => place.id === 'unlocated' ? { ...place, name: '重命名测试点' } : place);
+  // The official Nanhu campus focus is beyond the old crop on both axes.
+  // A moved/renamed place must stay linked and center on this wider image area.
+  places = places.map(place => place.id === 'unlocated' ? { ...place, name: '重命名测试点', gis_anchor: { x: 5608 / 24576, y: 17140 / 24576, verified: true } } : place);
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await page.getByRole('heading', { name: '重命名测试点', exact: true }).waitFor();
+  await expect.poll(() => page.locator('.overview-map .cp-map__anchor--selected').evaluate(element => {
+    const map = element.closest('.cp-map');
+    return Math.abs(parseFloat(element.style.left) - map.clientWidth / 2) < 1
+      && Math.abs(parseFloat(element.style.top) - map.clientHeight / 2) < 1;
+  })).toBe(true);
   await page.getByRole('button', { name: '模拟演示', exact: true }).click();
   assert.equal(await page.locator('.overview-map .cp-map__label').count(), 8, 'Demo keeps authored places separate');
+  await page.getByRole('button', { name: '浅色', exact: true }).click();
+  await page.getByRole('button', { name: '场景设置', exact: true }).click();
+  await page.getByRole('button', { name: /^建筑透视/ }).click();
+  const alpha = await page.locator('.detail-scene .cp-map__raster').evaluate(async raster => {
+    const mask = raster.style.maskImage || raster.style.webkitMaskImage;
+    const source = mask.startsWith('url("') ? mask.slice(5, -2) : mask.slice(4, -1);
+    const image = new Image(); image.src = source; await image.decode();
+    const canvas = document.createElement('canvas'); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+    const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+    const x = Math.floor(660.5089 - Number(raster.dataset.sceneLeft)), y = Math.floor(272.8973 - Number(raster.dataset.sceneTop));
+    return { building: ctx.getImageData(x, y, 1, 1).data[3], otherMap: ctx.getImageData(4, 4, 1, 1).data[3] };
+  });
+  assert.ok(alpha.building >= 38 && alpha.building <= 44 && alpha.otherMap === 255, 'Vector xray mask fades the registered building without hiding other map tiles');
+  await page.getByRole('button', { name: '关闭场景设置', exact: true }).click();
   await page.getByRole('button', { name: '现场观察', exact: true }).click();
   await page.getByRole('heading', { name: '重命名测试点', exact: true }).waitFor();
 
-  // All four corners must be centerable with keyboard panning at base zoom.
+  await page.getByRole('button', { name: '浅色', exact: true }).click();
+  // Pan through the former crop boundary into real tiles. At the actual grid
+  // edge the viewport remains covered, rather than exposing half blank space.
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
     await page.getByRole('button', { name: '收起局部详情', exact: true }).click();
@@ -106,15 +135,25 @@ try {
     for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
       await page.getByRole('button', { name: '回到全校视野', exact: true }).click();
       await map.focus();
-      for (let i = 0; i < 16; i++) await page.keyboard.press(sx > 0 ? 'ArrowLeft' : 'ArrowRight');
-      for (let i = 0; i < 16; i++) await page.keyboard.press(sy > 0 ? 'ArrowUp' : 'ArrowDown');
-      const result = await map.evaluate((element, { sx, sy }) => {
+      for (let i = 0; i < 40; i++) await page.keyboard.press(sx > 0 ? 'ArrowLeft' : 'ArrowRight');
+      for (let i = 0; i < 40; i++) await page.keyboard.press(sy > 0 ? 'ArrowUp' : 'ArrowDown');
+      const result = await map.evaluate((element, bounds) => {
         const raster = element.querySelector('.cp-map__raster');
         const transform = new DOMMatrixReadOnly(getComputedStyle(raster).transform);
-        return { x: transform.e + (sx > 0 ? 0 : 1024) * transform.a, y: transform.f + (sy > 0 ? 0 : 640) * transform.d, width: element.clientWidth, height: element.clientHeight };
-      }, { sx, sy });
-      assert.ok(Math.abs(result.x - result.width / 2) < .1 && Math.abs(result.y - result.height / 2) < .1, `Each corner reaches the viewport center: ${JSON.stringify({ viewport, sx, sy, ...result })}`);
+        const tx = transform.e - Number(raster.dataset.sceneLeft) * transform.a;
+        const ty = transform.f - Number(raster.dataset.sceneTop) * transform.d;
+        return { left: tx + bounds.left * transform.a, right: tx + bounds.right * transform.a,
+          top: ty + bounds.top * transform.d, bottom: ty + bounds.bottom * transform.d,
+          width: element.clientWidth, height: element.clientHeight,
+          tileKeys: [...raster.querySelectorAll('img')].map(image => image.dataset.tileKey) };
+      }, GIS_SCENE_BOUNDS);
+      assert.ok(Math.abs(sx > 0 ? result.left : result.right - result.width) < .1
+        && Math.abs(sy > 0 ? result.top : result.bottom - result.height) < .1,
+      `Camera stops at actual image grid edges: ${JSON.stringify({ viewport, sx, sy, ...result })}`);
+      assert.ok(result.tileKeys.some(key => { const [, col, row] = key.match(/\d+\/(\d+)_(\d+)/); return Number(col) < 10 || Number(col) > 17 || Number(row) < 7 || Number(row) > 11; }), 'Formerly cropped areas request actual map tiles');
     }
+    for (let i = 0; i < 15; i++) await page.getByRole('button', { name: '缩小地图', exact: true }).click();
+    assert.ok(await map.locator('.cp-map__tile[data-tile-key^="4/"]').count() > 0, 'Coarsest official fourth level is available');
     await page.locator('.reopen-detail').click();
   }
   // Remove the registered anchor and verify public refresh has no phantom pin.
@@ -150,7 +189,7 @@ try {
   assert.deepEqual(writes.at(-1).input.anchor, { x: .5, y: .5 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, 'Phone form has no document overflow');
   assert.deepEqual(errors, []);
-  console.log('GIS location UI fixture: edit/pick/verify/save, full-grid registration, field/deep-link/records/refresh, separate demo, and desktop/phone corner navigation passed. No database writes.');
+  console.log('GIS location UI fixture: pick/verify/save, Nanhu point beyond the old crop, field/deep-link/records/refresh, full-grid edge bounds and all four levels on desktop/phone passed. No database writes.');
 } finally {
   await browser.close();
 }

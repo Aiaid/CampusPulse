@@ -6,7 +6,7 @@ import ActivityLayer from './ActivityLayer';
 import NightLighting from './NightLighting';
 import MapRegions, { useBuildingMask } from './MapRegions';
 import { gisTileAvailability, selectTileLevel, visibleGisTiles } from './gis-tiles';
-import { boundedMapView, fitMapFrame } from './map-framing';
+import { boundedMapView, fitMapFrame, minimumMapZoom } from './map-framing';
 import { scenePointToGisAnchor } from './place-registry';
 import './campus-map.css';
 
@@ -34,7 +34,6 @@ export const CampusMap = forwardRef(function CampusMap({
   const viewRef = useRef(view);
   const sizeRef = useRef(size);
   const focusedPlace = useRef(null);
-  const buildingMask = useBuildingMask(xray, selectedId);
   viewRef.current = view;
   sizeRef.current = size;
   useEffect(() => { onZoomChange?.(view.zoom); }, [view.zoom, onZoomChange]);
@@ -46,7 +45,7 @@ export const CampusMap = forwardRef(function CampusMap({
   const centerPlace = useCallback((placeId, zoom = 1.7, dimensions = sizeRef.current, offset = { x: 0, y: 0 }) => {
     const place = mapPlaces.find((item) => item.id === placeId);
     if (!place) return;
-    const safeZoom = clamp(zoom, 1, maxZoom);
+    const safeZoom = clamp(zoom, minimumMapZoom(dimensions), maxZoom);
     const scale = Math.max(dimensions.width / MAP_WIDTH, dimensions.height / MAP_HEIGHT) * safeZoom;
     focusedPlace.current = { id: placeId, offset };
     setView(bounded({ zoom: safeZoom, x: (MAP_WIDTH / 2 - place.x - offset.x) * scale, y: (MAP_HEIGHT / 2 - place.y - offset.y) * scale }, dimensions));
@@ -81,7 +80,7 @@ export const CampusMap = forwardRef(function CampusMap({
     focusedPlace.current = null;
     setView((current) => {
       const { width, height } = sizeRef.current;
-      const zoom = clamp(current.zoom * factor, 1, maxZoom);
+      const zoom = clamp(current.zoom * factor, minimumMapZoom(sizeRef.current), maxZoom);
       const ratio = zoom / current.zoom;
       const dx = (screenX ?? width / 2) - width / 2;
       const dy = (screenY ?? height / 2) - height / 2;
@@ -153,14 +152,26 @@ export const CampusMap = forwardRef(function CampusMap({
   const translateY = (size.height - MAP_HEIGHT * scale) / 2 + view.y;
   const tileLevel = selectTileLevel(scale, pixelRatio);
   const tileViewport = { width: size.width, height: size.height, scale, translateX, translateY };
-  // Keep the same base-image keys while detail levels change. Newly requested
-  // fine tiles paint over the already loaded official base without blanking it.
-  const baseTiles = visibleGisTiles({ ...tileViewport, level: 3 });
-  const detailTiles = tileLevel < 3 ? visibleGisTiles({ ...tileViewport, level: tileLevel }) : [];
+  // Preserve a usable base while fine tiles load, including the school's
+  // coarsest fourth level when viewing the wider campus image.
+  const baseTiles = visibleGisTiles({ ...tileViewport, level: 4 });
+  const standardTiles = tileLevel < 3 ? visibleGisTiles({ ...tileViewport, level: 3 }) : [];
+  const detailTiles = tileLevel < 4 ? visibleGisTiles({ ...tileViewport, level: tileLevel }) : [];
+  const tiles = [...baseTiles, ...standardTiles, ...detailTiles];
+  // Size the graded/masked surface to visible tiles, not the full 24k source.
+  // This keeps high-zoom filter surfaces bounded in Safari and other browsers.
+  const rasterBounds = tiles.length ? {
+    left: Math.min(...tiles.map(tile => tile.x)), top: Math.min(...tiles.map(tile => tile.y)),
+    right: Math.max(...tiles.map(tile => tile.x + tile.size)), bottom: Math.max(...tiles.map(tile => tile.y + tile.size)),
+  } : { left: 0, top: 0, right: 1, bottom: 1 };
+  rasterBounds.width = rasterBounds.right - rasterBounds.left;
+  rasterBounds.height = rasterBounds.bottom - rasterBounds.top;
+  const buildingMask = useBuildingMask(xray, selectedId, rasterBounds);
   const tileAvailability = gisTileAvailability(
-    visibleGisTiles({ ...tileViewport, level: 3, overscan: 0 }),
-    tileLevel < 3 ? visibleGisTiles({ ...tileViewport, level: tileLevel, overscan: 0 }) : [],
-    failedTiles, loadedTiles,
+    visibleGisTiles({ ...tileViewport, level: 4, overscan: 0 }),
+    [...(tileLevel < 3 ? visibleGisTiles({ ...tileViewport, level: 3, overscan: 0 }) : []),
+      ...(tileLevel < 4 ? visibleGisTiles({ ...tileViewport, level: tileLevel, overscan: 0 }) : [])],
+    failedTiles, loadedTiles, tileViewport,
   );
   const recordTileLoad = key => {
     setLoadedTiles(current => current.has(key) ? current : new Set(current).add(key));
@@ -224,11 +235,12 @@ export const CampusMap = forwardRef(function CampusMap({
         </filter></defs>
       </svg>
       <div className="cp-map__raster" role="img" aria-label="华中师范大学公开校园 GIS 在线图块" data-tile-level={tileLevel} data-detail-fallbacks={tileAvailability.fallback}
-        style={{ width: MAP_WIDTH, height: MAP_HEIGHT, transform: `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`, maskImage: buildingMask, WebkitMaskImage: buildingMask, maskSize: '100% 100%', WebkitMaskSize: '100% 100%' }}>
-        {[...baseTiles, ...detailTiles].map(tile => <img key={`${tileAttempt}-${tile.key}`} className="cp-map__tile" src={`${TILE_ORIGIN}/mapdata/zoom${tile.key}.jpg`} alt="" draggable={false} data-tile-key={tile.key}
+        data-scene-left={rasterBounds.left} data-scene-top={rasterBounds.top}
+        style={{ width: rasterBounds.width, height: rasterBounds.height, transform: `translate3d(${translateX + rasterBounds.left * scale}px, ${translateY + rasterBounds.top * scale}px, 0) scale(${scale})`, maskImage: buildingMask, WebkitMaskImage: buildingMask, maskSize: '100% 100%', WebkitMaskSize: '100% 100%' }}>
+        {tiles.map(tile => <img key={`${tileAttempt}-${tile.key}`} className="cp-map__tile" src={`${TILE_ORIGIN}/mapdata/zoom${tile.key}.jpg`} alt="" draggable={false} data-tile-key={tile.key}
           onError={() => { setFailedTiles(current => new Set(current).add(tile.key)); setLoadedTiles(current => { if (!current.has(tile.key)) return current; const next = new Set(current); next.delete(tile.key); return next; }); }}
           onLoad={() => recordTileLoad(tile.key)}
-          style={{ left: tile.x, top: tile.y, width: tile.size, height: tile.size, visibility: failedTiles.has(tile.key) ? 'hidden' : 'visible' }} />)}
+          style={{ left: tile.x - rasterBounds.left, top: tile.y - rasterBounds.top, width: tile.size, height: tile.size, visibility: failedTiles.has(tile.key) ? 'hidden' : 'visible' }} />)}
       </div>
       <div className="cp-map__atmosphere" aria-hidden="true" />
       {renderScene && <><ActivityLayer project={project} scale={scale} translateX={translateX} translateY={translateY} viewWidth={size.width} viewHeight={size.height} layers={layers} minute={minute} scenarioId={scenarioId} isDark={isDark} xray={xray} moving={moving} selectedId={selectedId} demo={demo} lighting={lighting} detailView={compactSelected} />

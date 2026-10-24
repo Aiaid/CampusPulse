@@ -242,7 +242,12 @@ independent layers, directional moving riders/pedestrians, riderless parking,
 projected building occlusion, selected-building transparency and separate motion
 control. Phone layout keeps the detail sheet and persistent timeline/layers.
 
-Official remote zoom3 tiles replace the old bundled JPEG without changing its
+**2026-10-25 correction:** the original crop described below remains the overlay
+registration, not a map-navigation boundary. All four official tile levels now
+cover the complete image grid, with visible-only raster surfaces and registered
+vector transparency masks. See [GIS location settings](../notes/gis-location-settings.md).
+
+Official remote zoom3 tiles initially replaced the old bundled JPEG without changing its
 1024x640 coordinate registration (columns 10–17, rows 7–11; 256px tiles display at
 128px in reference coordinates). Only visible tiles plus overscan are requested.
 Failed tiles show an explicit retry message; the historical school snapshot is

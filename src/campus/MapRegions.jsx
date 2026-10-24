@@ -1,30 +1,24 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { buildings } from './spatial-scene';
-import { MAP_HEIGHT, MAP_WIDTH } from './scene-data';
+import { GIS_SCENE_BOUNDS } from './gis-geometry';
 
 // This alpha mask is generated from registered GIS polygons, not new map art.
 // It reveals no imagined ground/interior: faded pixels expose the map surface.
-export function useBuildingMask(xray, selectedId) {
+export function useBuildingMask(xray, selectedId, bounds = GIS_SCENE_BOUNDS) {
+  const { left, top, width, height } = bounds;
   return useMemo(() => {
     if (!xray) return undefined;
     const regions = buildings.filter(b => b.placeId === selectedId);
     if (!regions.length) return undefined;
-    const canvas = document.createElement('canvas');
-    canvas.width = MAP_WIDTH * 2; canvas.height = MAP_HEIGHT * 2;
-    const context = canvas.getContext('2d');
-    context.scale(2, 2);
-    context.fillStyle = '#fff'; context.fillRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
-    context.globalCompositeOperation = 'destination-out';
-    context.fillStyle = 'rgba(0,0,0,.84)';
-    // A single compound fill avoids multiplying opacity across overlapping parts.
-    context.beginPath();
-    for (const region of regions) {
-      region.polygon.forEach(([x, y], i) => i ? context.lineTo(x, y) : context.moveTo(x, y));
-      context.closePath();
-    }
-    context.fill();
-    return `url(${canvas.toDataURL('image/png')})`;
-  }, [xray, selectedId]);
+    // Match the visible raster surface without allocating a full-grid bitmap.
+    // A compound path keeps overlapping building surfaces at the same opacity.
+    const path = regions.map(region => region.polygon.map(([x, y], i) =>
+      `${i ? 'L' : 'M'}${x - left},${y - top}`).join(' ') + 'Z').join(' ');
+    // Use a luminance mask inside the SVG to subtract opacity (black RGB alone
+    // does not erase alpha in the CSS image mask).
+    const maskSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><defs><mask id="fade" maskUnits="userSpaceOnUse" x="0" y="0" width="${width}" height="${height}" style="mask-type:luminance"><rect width="100%" height="100%" fill="white"/><path d="${path}" fill="black" fill-opacity=".84"/></mask></defs><rect width="100%" height="100%" fill="white" mask="url(#fade)"/></svg>`;
+    return `url("data:image/svg+xml,${encodeURIComponent(maskSvg)}")`;
+  }, [xray, selectedId, left, top, width, height]);
 }
 
 export default function MapRegions({ project, viewWidth, viewHeight, selectedId, xray }) {

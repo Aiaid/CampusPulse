@@ -139,6 +139,15 @@ collection and durable upload. Final local software verification passed on
 
 ## Completed archive
 
+- [x] Correct GIS navigation to load actual official tiles across the complete
+      image grid with all four levels, preserving authored overlays and accepting
+      place coordinates beyond the old crop. Permit only the official image
+      origin in admin CSP. Build, 476 local tests, actual-HTTP-CSP browser checks,
+      desktop/390px flow and native Safari real-tile Nanhu editor/link checks
+      passed. The October 24 crop-only boundary/dev-server acceptance was
+      insufficient and is superseded by [this correction](../notes/gis-location-settings.md).
+      Production records and physical placement verification remain separate.
+
 - [x] Generate an original abstract campus-route C app icon and integrate the
       homepage brand, browser favicon, Apple touch icon and manifest variants.
       Final assets were metadata-stripped/rechecked; local build and desktop/

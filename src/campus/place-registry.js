@@ -1,22 +1,20 @@
-import { MAP_HEIGHT, MAP_WIDTH, sceneAttribution } from './scene-data.js';
+import { GIS_IMAGE_SIZE, GIS_SCENE_BOUNDS, originalToScenePoint, sceneToOriginalPoint } from './gis-geometry.js';
 
 // The API stores coordinates normalized against the complete official GIS
-// chart. The frontend displays only this chart's cropped campus extent.
-const GIS_SIZE = 24576;
-const { minX, minY, maxX, maxY } = sceneAttribution.extent;
+// chart. Keep the authored scene origin while accepting the complete grid.
 const finitePoint = point => point && Number.isFinite(point.x) && Number.isFinite(point.y);
 const inside = (value, min, max) => value >= min && value <= max;
 
 export function gisAnchorToScene(anchor) {
   if (!finitePoint(anchor) || !inside(anchor.x, 0, 1) || !inside(anchor.y, 0, 1)) return null;
-  const worldX = anchor.x * GIS_SIZE, worldY = anchor.y * GIS_SIZE;
-  if (!inside(worldX, minX, maxX) || !inside(worldY, minY, maxY)) return null;
-  return { x: (worldX - minX) / (maxX - minX) * MAP_WIDTH, y: (worldY - minY) / (maxY - minY) * MAP_HEIGHT };
+  return originalToScenePoint({ x: anchor.x * GIS_IMAGE_SIZE, y: anchor.y * GIS_IMAGE_SIZE });
 }
 
 export function scenePointToGisAnchor(point) {
-  if (!finitePoint(point) || !inside(point.x, 0, MAP_WIDTH) || !inside(point.y, 0, MAP_HEIGHT)) return null;
-  return { x: (minX + point.x / MAP_WIDTH * (maxX - minX)) / GIS_SIZE, y: (minY + point.y / MAP_HEIGHT * (maxY - minY)) / GIS_SIZE };
+  if (!finitePoint(point) || !inside(point.x, GIS_SCENE_BOUNDS.left, GIS_SCENE_BOUNDS.right)
+    || !inside(point.y, GIS_SCENE_BOUNDS.top, GIS_SCENE_BOUNDS.bottom)) return null;
+  const original = sceneToOriginalPoint(point);
+  return { x: original.x / GIS_IMAGE_SIZE, y: original.y / GIS_IMAGE_SIZE };
 }
 
 export const fieldPlaceKinds = { activity: '活动观察点', parking: '停车观察点', elevator: '候梯观察点' };
