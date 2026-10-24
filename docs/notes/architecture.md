@@ -8,6 +8,9 @@ deployment and verification evidence is in [CI/CD](ci-cd.md) and
 The stack below describes the current source. Earlier release verification does
 not validate or establish deployment of later frontend revisions; see the
 [frontend implementation notes](../design/frontend-lighting.md) for their scope.
+The additive [admin management slice](../specs/admin-v1.md) introduces independent
+administrator sessions, editable policy drafts, desired/device activation state,
+runtime settings and audit. Its local acceptance and deployment are separate.
 
 ## Stack and delivery boundary
 
@@ -18,6 +21,7 @@ not validate or establish deployment of later frontend revisions; see the
 | Illustrative overlays | Canvas 2D and CSS | Synthetic moving/parked actors, occlusion, optional building transparency and warm night lighting. Three.js is no longer a dependency. |
 | Hosting and API | Cloudflare Workers Static Assets and a TypeScript Worker | Implemented: frontend assets and same-origin `/api/*` routes. GitHub stores source and runs delivery checks. |
 | Persistence | Cloudflare D1, SQL migrations | Implemented: places/manual records, immutable capture/placement policy, sensor windows, status, durable receipts and range exclusion. |
+| Administration | Same-origin `/admin`, Worker API and additive D1 migrations | Device health/credentials, deployments, editable capture drafts and publication, settings/audit; managed administrator account, password/Passkeys and recent reauthentication for sensitive changes. |
 | Development and checks | Node 24, Wrangler, Vitest, Playwright | Configured: local Worker/D1 development, SQLite/API tests, build and browser smoke checks. Follow the linked guides for commands and recorded results. |
 | Device ingestion | HTTPS window/raw/status streams | Server implemented: scoped auth, strict validation, atomic sequence handling and independent stream acknowledgements. Firmware buffering remains planned. See [ingestion implementation](backend-ingestion.md). |
 | Research raw archive | Private R2 with D1 receipts | Implemented with conditional immutable R2 writes, D1 receipts, private research reads and bounded retention. Production D1/R2 is bound and the server passed isolated demo uploads; firmware and physical-node acceptance remain separate. |
@@ -47,15 +51,16 @@ The browser loads the built frontend from Workers Static Assets. Its
 manual-recording interface queries the same Worker's public place, summary and
 history routes. The Worker reads logical places and active manual observations
 from D1. Summaries expose the observation's
-source, observation time, validity deadline and freshness. Sensor data is `null`
-and coverage is `unconfigured`; missing observations mean no data.
+source, observation time, validity deadline and freshness. Sensor windows use a
+separate eligible field-only projection; coverage remains `unconfigured` pending
+physical acceptance. Missing observations mean no data.
 
 An operator submits a parking quantity range or measured elevator wait through
 the browser. The Worker authenticates and validates the request, writes to D1,
 and returns a committed confirmation. Identical retries are idempotent; changed
 content with the same ID conflicts. An operator can cancel a record and submit a
-new one to correct it. Manual observations expire 15 minutes after their
-observation time. See the [implemented API contract](../specs/web-api-v0.md) for
+new one to correct it. Manual observations expire according to the configured
+TTL at insertion (15 minutes by default), measured from observation time. See the [implemented API contract](../specs/web-api-v0.md) for
 the exact routes, limits and remaining operational gaps.
 
 GIS images are fetched directly from the external tile origin, separately from
@@ -65,10 +70,10 @@ field records. In the D1 seed, only the library has a verified GIS image anchor.
 Scene actors and lighting do not establish measured counts, current elevator
 predictions or radio completeness.
 
-The planned device path adds BLE observation windows and node status in D1, with
-research raw batches in private R2 and independent durable receipts. It is a
-separate implementation direction, not another input supported by today's manual
-observation API. The [hackathon plan](../design/hackathon-plan.md) explains the
+The implemented server device path stores BLE observation windows and node status
+in D1, with research raw batches in private R2 and independent durable receipts.
+It uses separate ingestion/authentication from manual observation writes.
+The [hackathon plan](../design/hackathon-plan.md) explains the
 intended product flow; [ingest v1](../specs/ingest-v1.md) defines the draft upload
 semantics.
 
@@ -77,6 +82,7 @@ semantics.
 | Path | Responsibility |
 | --- | --- |
 | [`src/App.tsx`](../../src/App.tsx), [`src/campus/`](../../src/campus/) | Entry wrapper and React/CSS interface. `CampusMap.jsx` loads remote GIS tiles; `ActivityLayer.jsx`, `MapRegions.jsx` and `NightLighting.jsx` render illustrative overlays; `Observations.jsx` handles API-backed records. |
+| [`src/admin/`](../../src/admin/), [`worker/admin.ts`](../../worker/admin.ts) | Separate management UI, shared-admin sessions, editable management workflow and audit. |
 | [`public/`](../../public/) | Selected generated visual assets with reuse provenance; excludes the historical school raster snapshot. |
 | [`worker/index.ts`](../../worker/index.ts), [`worker/types.ts`](../../worker/types.ts) | Worker routing, validation, D1 queries and shared web/API types. |
 | [`migrations/`](../../migrations/) | D1 schema and seed places. |

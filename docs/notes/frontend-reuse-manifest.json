@@ -7,7 +7,7 @@
       "source": "local-reference/pre-hackathon/gis-prototype/src/App.jsx",
       "destination": "src/campus/App.jsx",
       "source_sha256": "556ae726df80c65771012cee4f22871da5cd7ede20689c0b4557f483b9f5559e",
-      "destination_sha256": "11963968b6872284b68590f255d124318a07efa5919af2328a547657366170e2"
+      "destination_sha256": "297fd2e1146b60d7896a559a56e8fcb8a1dbefc7f57d770ed21850252ff6d62e"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/src/CampusMap.jsx",
@@ -91,7 +91,7 @@
       "source": "local-reference/pre-hackathon/gis-prototype/src/scene-controls.css",
       "destination": "src/campus/scene-controls.css",
       "source_sha256": "0a9f007d61c4778beca8d431c7d18390ca82f57c99d376dc14bab4b4c99638ec",
-      "destination_sha256": "73a4a28efb0b04c6cc36f827450904b9b1a83ddce204ac223f10b9b6aab702e0"
+      "destination_sha256": "89e98bee120e9b4ddc31799ab14616276108a2979995f6de7cdaafe23a568bc3"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/public/assets/person-directions.png",

@@ -174,3 +174,30 @@ was disabled afterward. This supersedes earlier no-ingestion/no-R2 statements
 above; their first-release cost table is historical. No subscription upgrade or
 measured usage-cost claim is made here. Exact tests, initial Worker version and
 limits are in [backend ingestion acceptance](backend-ingestion.md).
+
+## Administrator account / Passkey release boundary
+
+The additive `0004_admin_auth.sql` revokes earlier administrator sessions and
+introduces first-account initialization, password authentication and Passkeys.
+Before exposing `/admin`, set a dedicated random `ADMIN_TOKEN` Worker secret. It
+allows setup only while no account exists; it remains the private session signing
+secret after setup and cannot log in as an account. Do not put it in GitHub public
+variables, the tracked Wrangler file or frontend build variables. No production
+secret/account is created by local implementation or browser acceptance.
+
+Set `ADMIN_WEBAUTHN_ORIGIN` and `ADMIN_WEBAUTHN_RP_ID` as public deployment
+configuration values for the exact intended site. The config generator also
+accepts the explicitly trusted `DEPLOYMENT_URL` as an origin fallback; it does not
+trust a request Host to select production RP identity. RP ID must match that host.
+A new domain needs its own enrollment. Password login is independent of whether
+Passkey trust is configured. Verify native scrypt authentication under the actual
+Worker plan/CPU budget; local elapsed-time probes do not establish cloud CPU usage
+or free-plan readiness. See [auth design and acceptance](../specs/admin-auth-v1.md).
+
+CI creates a disposable bootstrap secret and separate initial/replacement account
+credentials in mode600 local state, runs the real Chromium CTAP2 enrollment/login/
+reauthentication test against local workerd, then reruns device/config/settings
+management using the replacement account. No virtual authenticator private keys
+or browser storage state are exported. This is protocol/browser validation, not
+physical Touch ID/Face ID/security-key, password-manager sync or production-domain
+acceptance. Existing manual-record browser acceptance retains its separate scope.

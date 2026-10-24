@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -26,8 +26,9 @@ describe('new-node provisioning', () => {
     expect(sql).not.toContain('OR REPLACE');
     const db = new DatabaseSync(':memory:');
     try {
-      db.exec(readFileSync(new URL('../migrations/0001_initial.sql', import.meta.url), 'utf8'));
-      db.exec(readFileSync(new URL('../migrations/0002_ingestion.sql', import.meta.url), 'utf8'));
+      for (const migration of readdirSync(new URL('../migrations/', import.meta.url)).filter(name => /^\d+.*\.sql$/.test(name)).sort()) {
+        db.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
+      }
       db.exec('PRAGMA foreign_keys = ON');
       db.exec(sql);
       const node = db.prepare('SELECT credential_sha256 FROM device_nodes WHERE id = ?').get(config.node_id) as { credential_sha256: string };

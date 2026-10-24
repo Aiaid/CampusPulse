@@ -473,3 +473,18 @@ and cached alpha/depth compositing. It reuses only CORS-permitted live source
 pixels in memory, retains native leaf texture, and adds no bundled raster or
 third-party implementation. The prior broad warm overlay is disabled in campus
 mode. Final local screenshots were metadata-stripped/rechecked before sharing.
+
+## 2026-10-24 administrator account and Passkey dependencies
+
+The account/session/password/D1 adapters and React account-security interface are
+newly authored in this repository. WebAuthn generation and verification use
+`@simplewebauthn/server`14.0.3 and browser ceremonies use
+`@simplewebauthn/browser`14.0.0, both MIT-licensed packages installed from npm and
+recorded in the lockfile. Their transitive package notices remain part of their
+packages; no library source or external example application was copied wholesale.
+Sources: [server documentation](https://simplewebauthn.dev/docs/packages/server),
+[browser documentation](https://simplewebauthn.dev/docs/packages/browser).
+Password derivation uses native `node:crypto` scrypt rather than third-party
+password implementation code. New auth screenshots show synthetic local QA only,
+contain no credential values and are not committed; final copies are metadata
+stripped/rechecked before any sharing.

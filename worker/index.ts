@@ -3,8 +3,8 @@ import { handleDocs } from './docs';
 import { handleIngestion } from './ingest';
 import { readPublicWindows } from './sensors';
 import { expireIngestion } from './retention';
+import { handleAdmin, readPublicSettings, readRuntimeSettings } from './admin';
 
-const TTL_MS = 15 * 60_000;
 const MAX_BODY = 8192;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const OBS_COLUMNS = 'id,place_id,kind,source,status,observed_at,valid_until,parking_min,parking_max,wait_seconds';
@@ -102,9 +102,12 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return null;
   try {
+    const admin = await handleAdmin(request, env);
+    if (admin) return admin;
     const ingestion = await handleIngestion(request, env);
     if (ingestion) return ingestion;
     if (url.pathname === '/api/v1/health' && request.method === 'GET') return json({ status: 'ok', ingestion: 'implemented', raw_storage: env.RAW_BUCKET ? 'configured' : 'unconfigured' });
+    if (url.pathname === '/api/v1/settings' && request.method === 'GET') return json(await readPublicSettings(env));
     if (url.pathname === '/api/v1/places' && request.method === 'GET') {
       const result = await env.DB.prepare('SELECT id,name,kind,anchor_x,anchor_y,gis_anchor_x,gis_anchor_y FROM places ORDER BY id').all<PlaceRow>();
       return json({ places: result.results.map(placeFromRow) });
@@ -133,7 +136,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
       const observation = validateObservation(await readJson(request));
       const place = await findPlace(env, observation.place_id);
       if (place.kind !== observation.kind) throw new ApiError(422, 'place_kind_mismatch', 'Observation kind must match the place.');
-      const validUntil = new Date(Date.parse(observation.observed_at) + TTL_MS).toISOString();
+      const settings = await readRuntimeSettings(env);
+      const validUntil = new Date(Date.parse(observation.observed_at) + settings.observation_ttl_minutes * 60_000).toISOString();
       const min = observation.parking_min ?? null;
       const max = observation.parking_max ?? null;
       const wait = observation.wait_seconds ?? null;

@@ -51,7 +51,7 @@ try {
   });
   await page.goto(`${origin}/docs?url=https://example.invalid/forbidden.json`);
   await page.locator('.opblock').nth(8).waitFor();
-  assert.equal(await page.locator('.opblock').count(), 9, 'Exactly the nine implemented operations');
+  assert.equal(await page.locator('.opblock').count(), 45, 'All implemented public, account/Passkey/admin, operator, device and research operations');
   assert.ok(!(await page.content()).includes(token), 'Credential absent from initial HTML');
   const op = (method, path) => page.locator(`.opblock-${method}`).filter({ has: page.locator(`.opblock-summary-path[data-path="${path}"]`) });
   const open = async operation => {

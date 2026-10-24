@@ -113,6 +113,31 @@ assignments; firmware and device acceptance remain pending.
 
 ## Completed archive
 
+- [x] Upgrade `/admin` authentication to restricted first-use bootstrap, a managed
+      account/password and up to20 WebAuthn Passkeys. Add native salted scrypt,
+      fresh password/Passkey reauthentication, profile/key management, password
+      change session/challenge revocation, explicit production RP trust, browser-
+      bound one-use challenges, bounded rate admission and transactional guards.
+      Local acceptance:326 tests/34 files (60 account/Passkey/management cases
+      plus9 deploy-origin checks), build, four-migration local workerd ingestion,
+      real Chromium CTAP2 registration/login/reauth/key/account changes and the
+      original management browser regression passed;45-operation Swagger and
+      desktop/390px security-page checks passed. No authentication commit/deploy,
+      physical biometric/key/sync or production CPU/domain acceptance is implied.
+
+- [x] Implement `/admin` with independent revocable administrator sessions,
+      device registration/metadata/rotation/enable state and health, places and
+      deployment history, editable capture drafts, validated version publication,
+      desired/reported/applied state, runtime settings and atomic redacted audit.
+      Preserve historical upload/configuration identity and reject inactive or
+      concurrently closed placements at publication. Local additive migrations,
+      261 tests/29 suites (including 14 admin integration/security tests), build,
+      real workerd ingestion regression and real Chromium management workflows
+      passed. Browser checks cover rejected/corrected login, rotation, disable/
+      enable, draft edit/clone/publish with original-policy preservation, synthetic
+      ACK UI, persistence, logout, readable phone tables and bounded scrolling.
+      No production deploy or firmware/physical activation acceptance is implied.
+
 - [x] Generalize the accepted library lighting to the full visible campus and
       all eight places:103 roofs/29 walls/44 grounds,309 foliage proxies,94
       point sources and77 pane-derived area emitters; share indexed light,

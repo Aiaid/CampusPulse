@@ -1,5 +1,8 @@
-/** Implemented public, operator, device and research API contract. */
+import { createAdminOpenApi } from './admin-openapi';
+
+/** Implemented public, operator, administrator, device and research API contract. */
 export function createOpenApiDocument(): Record<string, unknown> {
+  const admin = createAdminOpenApi();
   // Generate examples per document request so Try it out does not reuse a stale
   // timestamp or a shared observation ID. These are illustrative values only.
   const observedAt = new Date().toISOString();
@@ -85,18 +88,20 @@ export function createOpenApiDocument(): Record<string, unknown> {
   return {
     openapi: '3.1.0',
     info: {
-      title: 'CampusPulse API', version: '0.2.0',
-      description: 'Implemented public place reads, shared-operator manual observations, device ingestion/config reads and private research batch reads. Firmware and hardware field validation are pending; runtime provisioning and real-device onboarding must be verified separately in each environment. Synthetic examples illustrate the wire format; replace values and credentials before use. Try it out writes real data to this origin. Device uploads require X-Body-SHA256 of the exact UTF-8 JSON bytes sent; Swagger UI does not calculate it. API responses use Cache-Control: no-store.',
+      title: 'CampusPulse API', version: '0.3.0',
+      description: 'Implemented public settings/place reads, shared-operator manual observations, shared-administrator management sessions, device ingestion/configuration activation reports and private research batch reads. Firmware and hardware field validation are pending; runtime provisioning and real-device onboarding must be verified separately in each environment. Synthetic examples illustrate the wire format; replace values and credentials before use. Try it out writes real data to this origin. Device uploads require X-Body-SHA256 of the exact UTF-8 JSON bytes sent; Swagger UI does not calculate it. API responses use Cache-Control: no-store.',
     },
     servers: [{ url: '/' }],
     security: [],
     tags: [
+      ...admin.tags,
       { name: 'Public reads', description: 'No authentication required. No data must not be interpreted as zero people or vehicles.' },
       { name: 'Operator writes', description: 'A shared opaque operator bearer secret, not a JWT or user account. All holders can create and cancel any manual record; there is no per-user ownership. A supplied Origin must match the request origin; absent Origin is allowed. No operator secret is published in this document.' },
       { name: 'Device ingestion', description: 'A registered, enabled node credential grants only its node and capture policies. The token is distinct from operator and researcher access. Batch bytes, body hash, config, stream and dataset must agree.' },
       { name: 'Private research', description: 'Independent researcher bearer token. Raw batches contain observed addresses and advertisement bytes; never expose them through public reads or caches.' },
     ],
     paths: {
+      ...admin.paths,
       '/api/v1/health': {
         get: {
           operationId: 'getHealth', tags: ['Public reads'], summary: 'Check runtime liveness',
@@ -186,7 +191,7 @@ export function createOpenApiDocument(): Record<string, unknown> {
       '/api/v1/observations': {
         post: {
           operationId: 'createObservation', tags: ['Operator writes'], summary: 'Commit a manual observation',
-          description: 'Requires application/json (charset parameters are accepted), no Content-Encoding header, and a body no larger than 8192 bytes (8 KiB). Unknown fields, null numeric values, mixed parking/elevator fields and non-integer values are rejected. Parking minimum must not exceed maximum, and kind must match the registered place. valid_until is observed_at plus 15 minutes, not reception time; an accepted old observation may already be stale. New insertion returns 201; an identical ID/content retry returns 200, including the current cancelled status if already cancelled. Changed content for an existing ID returns 409. Relative timestamp validation is repeated on retries, so retries older than 24 hours are rejected. Confirmation follows the D1 write. Replace the synthetic examples with actual measurements: Try it out creates real records.',
+          description: 'Requires application/json (charset parameters are accepted), no Content-Encoding header, and a body no larger than 8192 bytes (8 KiB). Unknown fields, null numeric values, mixed parking/elevator fields and non-integer values are rejected. Parking minimum must not exceed maximum, and kind must match the registered place. valid_until is observed_at plus the configured observation TTL (15 minutes by default), not reception time; settings changes do not rewrite existing records; an accepted old observation may already be stale. New insertion returns 201; an identical ID/content retry returns 200, including the current cancelled status if already cancelled. Changed content for an existing ID returns 409. Relative timestamp validation is repeated on retries, so retries older than 24 hours are rejected. Confirmation follows the D1 write. Replace the synthetic examples with actual measurements: Try it out creates real records.',
           security: [{ OperatorToken: [] }],
           requestBody: {
             required: true,
@@ -231,14 +236,16 @@ export function createOpenApiDocument(): Record<string, unknown> {
     },
     components: {
       securitySchemes: {
+        ...admin.securitySchemes,
         OperatorToken: {
           type: 'http', scheme: 'bearer',
-          description: 'Opaque shared operator secret, not a JWT. Enter only the token in Authorize; the client sends Authorization: Bearer <token>. No login, expiry, roles or per-user record ownership is implemented. When the secret is unconfigured, writes return 503.',
+          description: 'Opaque shared operator secret, not a JWT. Enter only the token in Authorize; the client sends Authorization: Bearer <token>. This operator credential has no login, expiry or per-user record ownership; administrator sessions use a separate credential. When the secret is unconfigured, writes return 503.',
         },
         DeviceToken: { type: 'http', scheme: 'bearer', description: 'Registered node credential; enter token only. It is checked against the node registry and permits only its node and registered capture policy.' },
         ResearchToken: { type: 'http', scheme: 'bearer', description: 'Independent private research token; enter token only. It does not authorize device writes or operator observations.' },
       },
       schemas: {
+        ...admin.schemas,
         PlaceId: { type: 'string', pattern: '^[a-z0-9_-]{1,64}$', minLength: 1, maxLength: 64 },
         Health: {
           type: 'object', additionalProperties: false, required: ['status', 'ingestion', 'raw_storage'],
@@ -286,7 +293,7 @@ export function createOpenApiDocument(): Record<string, unknown> {
           properties: {
             id: uuid, place_id: ref('PlaceId'), kind: { type: 'string', enum: ['parking', 'elevator'] },
             source: { type: 'string', const: 'manual' }, status: { type: 'string', enum: ['active', 'cancelled'] },
-            observed_at: timestamp, valid_until: { ...timestamp, description: 'Exactly 15 minutes after observed_at.' },
+            observed_at: timestamp, valid_until: { ...timestamp, description: 'observed_at plus the site observation TTL at insertion; 15 minutes by default. Historical records keep their original deadline.' },
             parking_min: { ...parkingValue, type: ['integer', 'null'] },
             parking_max: { ...parkingValue, type: ['integer', 'null'] },
             wait_seconds: { ...waitValue, type: ['integer', 'null'] },

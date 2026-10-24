@@ -55,7 +55,7 @@ boundaries.
 
 ## Current progress
 
-As of 2026-10-23, this repository contains:
+As of 2026-10-24, this repository contains:
 
 | Area | Current status |
 | --- | --- |
@@ -66,6 +66,12 @@ As of 2026-10-23, this repository contains:
 | Web delivery | First release deployed, with automated checks, cloud delivery, and browser verification recorded |
 | BLE and hardware | Planned: all five devices collect, buffer and upload first; both AI Passports then add interaction, and ePaper adds a place card. Firmware and device acceptance remain pending |
 | Device API and research archive | Window/raw/status ingestion, per-node auth, D1 receipts, private R2 and research parsing implemented, deployed on Cloudflare and verified with isolated demo uploads; hardware acceptance pending |
+| Administration | `/admin` device/health, deployments, editable policy drafts/publication, settings and audit; first-use account setup, password/Passkey login and account/key management; local acceptance/deployment tracked separately |
+
+The [admin guide](docs/specs/admin-v1.md) describes the versioned editing model;
+[account and Passkey setup](docs/specs/admin-auth-v1.md) describes first login and
+account/key management. Management changes preserve historical uploads; firmware must
+separately implement and verify configuration application.
 
 Visit the [online prototype](https://pulse.anend.net) to explore the
 current flow. It opens in the explicitly labeled “模拟演示” mode with synthetic

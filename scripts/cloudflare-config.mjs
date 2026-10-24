@@ -17,6 +17,19 @@ config.r2_buckets = [{ binding: 'RAW_BUCKET', bucket_name: rawBucket }];
 config.account_id = accountId;
 config.main = resolve(config.main);
 config.assets.directory = resolve(config.assets.directory);
+// WebAuthn trusts deployment configuration, never an arbitrary request Host.
+// These are public identifiers; credential material remains in Worker secrets.
+const authOrigin = process.env.ADMIN_WEBAUTHN_ORIGIN || process.env.DEPLOYMENT_URL;
+if (authOrigin) {
+  const origin = new URL(authOrigin);
+  if (origin.protocol !== 'https:' || origin.username || origin.password || origin.search || origin.hash || !['', '/'].includes(origin.pathname))
+    throw new Error('Set ADMIN_WEBAUTHN_ORIGIN to the exact HTTPS site origin.');
+  const rpId = process.env.ADMIN_WEBAUTHN_RP_ID || origin.hostname;
+  if (rpId !== origin.hostname) throw new Error('The administrator Passkey RP ID must match the configured site host.');
+  config.vars = { ...config.vars, ADMIN_WEBAUTHN_ORIGIN: origin.origin, ADMIN_WEBAUTHN_RP_ID: rpId };
+} else if (process.env.ADMIN_WEBAUTHN_RP_ID) {
+  throw new Error('Set the administrator WebAuthn origin with its RP ID.');
+}
 for (const binding of config.d1_databases) {
   binding.database_id = databaseId;
   binding.migrations_dir = resolve(binding.migrations_dir);

@@ -1,17 +1,17 @@
 // Local workerd/D1/R2 verification with synthetic data and ephemeral storage.
 // Uses Wrangler's locked development dependencies; never deploys or uses secrets.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { build } from 'esbuild';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { buildProvisioningSql } from './provision-device.mjs';
 
-const source = await build({ entryPoints: ['worker/index.ts'], bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022' });
+const source = await build({ entryPoints: ['worker/index.ts'], bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022', external: ['node:*'] });
 const mf = new Miniflare(convertV4MiniflareOptions({
   workers: [{
   name: 'ingestion-smoke',
-  modules: true, script: source.outputFiles[0].text, compatibilityDate: '2026-10-23',
+  modules: true, script: source.outputFiles[0].text, compatibilityDate: '2026-10-23', compatibilityFlags: ['nodejs_compat'],
   d1Databases: ['DB'], r2Buckets: ['RAW_BUCKET'],
   bindings: { RESEARCH_TOKEN: 'synthetic-runtime-research-token', OPERATOR_TOKEN: 'synthetic-runtime-operator-token' },
   }],
@@ -20,7 +20,7 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const fixture = name => JSON.parse(readFileSync(`docs/specs/examples/${name}.json`, 'utf8'));
 try {
   const db = await mf.getD1Database('DB');
-  for (const name of ['0001_initial.sql', '0002_ingestion.sql']) {
+  for (const name of readdirSync('migrations').filter(name => name.endsWith('.sql')).sort()) {
     // D1.exec accepts SQL on one line, including complete trigger bodies.
     const sql = readFileSync(`migrations/${name}`, 'utf8').replace(/^--.*$/gm, '');
     await db.exec(sql.replace(/\n/g, ' '));

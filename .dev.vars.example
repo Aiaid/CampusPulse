@@ -1,5 +1,12 @@
 # Local development only. Copy to .dev.vars and choose a random token.
 OPERATOR_TOKEN=replace-with-a-long-random-local-token
+# Independent administrator bootstrap/session signing secret (32+ random chars).
+# Used for first-account setup only; token login stops after initialization.
+# ADMIN_TOKEN=replace-with-an-independent-random-admin-token
+# Passkeys bind to an exact origin and RP host. Loopback development can derive
+# these when omitted; if you set them, use your actual browser origin.
+# ADMIN_WEBAUTHN_ORIGIN=http://localhost:8787
+# ADMIN_WEBAUTHN_RP_ID=localhost
 # Independent private research reads; never use the operator or device token.
 # RESEARCH_TOKEN=replace-with-an-independent-random-local-token
 # Device tokens are provisioned as SHA-256 digests in D1, not Worker secrets.

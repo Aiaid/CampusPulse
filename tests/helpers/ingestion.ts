@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import type { Env } from '../../worker/types';
 import { sha256 } from '../../worker/ingest';
@@ -54,7 +54,7 @@ export function memoryR2() {
 export async function setup() {
   const db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');
-  for (const migration of ['0001_initial.sql', '0002_ingestion.sql']) db.exec(readFileSync(new URL(`../../migrations/${migration}`, import.meta.url), 'utf8'));
+  for (const migration of readdirSync(new URL('../../migrations/', import.meta.url)).filter(name => /^\d+.*\.sql$/.test(name)).sort()) db.exec(readFileSync(new URL(`../../migrations/${migration}`, import.meta.url), 'utf8'));
   const config = fixture('capture-config.fixture') as CaptureConfig;
   config.accept_until = new Date(Date.now() + 86_400_000).toISOString();
   db.prepare('INSERT INTO device_nodes(id,credential_sha256) VALUES (?,?)').run(config.node_id, await sha256(new TextEncoder().encode(DEVICE_TOKEN)));

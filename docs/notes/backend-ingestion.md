@@ -21,9 +21,13 @@ rotation independent of the operator and researcher secrets. Use random tokens
 with at least 128 bits of entropy; accepted wire syntax is 16–256 printable ASCII
 characters. Tokens cannot provision nodes, select another dataset, or enable MAC
 capture. Registry rows define immutable node/placement/dataset/config scope.
-`GET /device/config` without an ID chooses greatest `accept_until_ms`, then ID;
-queued batches should request their exact ID. There is no remote configuration
-activation handshake yet.
+With Admin v1, `GET /device/config` without an ID selects the explicitly assigned
+desired version. Legacy nodes without an assignment still choose greatest
+`accept_until_ms`, then ID; queued batches should request their exact ID.
+The additive `POST /device/config/ack` records an authenticated device application
+report. Firmware polling/application and physical validation remain pending;
+see [Admin v1](../specs/admin-v1.md). This supersedes the original no-handshake
+limitation; earlier deployment evidence below does not cover the new endpoints.
 
 Upload bytes are limited to 64 KiB/128 items and any smaller registered limits.
 Status batches contain exactly one item. Duplicate decoded JSON keys, invalid
@@ -119,7 +123,10 @@ new-node provisioning, not credential rotation or an idempotent rerun command.
 It has no explicit BEGIN/COMMIT (unsupported by D1); when using a D1 binding,
 `buildProvisioningStatements` can be executed with `DB.batch` atomically.
 A failed CLI import must be reconciled against registry rows before another run;
-do not blindly replace immutable policy. No admin enrollment endpoint is exposed.
+do not blindly replace published historical policy. The separate authenticated
+[Admin v1](../specs/admin-v1.md) now supports enrollment, credential rotation,
+editable capture drafts and publication without manual SQL imports. The original
+script remains available for controlled provisioning.
 
 Production needs reviewed D1 migrations, provisioned device registries, a private
 R2 bucket with public access disabled, its `CLOUDFLARE_R2_RAW_BUCKET` Actions

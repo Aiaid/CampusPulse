@@ -9,8 +9,9 @@ and [ingest v1](ingest-v1.md). No firmware is included.
 ## Interactive documentation
 
 `GET /docs` (also `/docs/`) serves Swagger UI; `GET /openapi.json` returns the
-OpenAPI 3.1 description of nine implemented operations (six web/manual plus three
-device/research operations). These routes are
+OpenAPI 3.1 description of implemented public, operator, administrator,
+device and research operations. The additional management contract is documented
+in [Admin v1](admin-v1.md). These routes are
 public and require no database access or operator credential. The specification
 uses the current origin, so the same routes work in local development and after
 deployment. Unsupported methods return 405; HEAD returns headers without a body.
@@ -26,8 +27,11 @@ observations before submitting. Refresh the specification to get fresh example
 UUIDs/timestamps; retries must retain the exact original ID and content.
 
 This is shared-operator bearer authorization: all token holders can create and
-cancel any manual record. Account login, JWT sessions, personal ownership and
-role-based access control are not implemented. The existing same-origin write
+cancel any manual record. Individual accounts, operator JWT sessions and
+per-user operator record ownership are not implemented. A separate administrator
+account with password/Passkey sessions now protects `/admin` management; see
+[authentication](admin-auth-v1.md). It does not grant operator or researcher access.
+The existing same-origin write
 check and fail-closed behavior remain in effect.
 
 Local verification (2026-10-23): OpenAPI 3.1 standard validation, API/contract
@@ -41,6 +45,8 @@ separate acceptance step.
 ## Public reads
 
 - `GET /api/v1/health`: runtime liveness, reports ingestion implemented and whether raw storage is bound; it does not probe dependencies.
+- `GET /api/v1/settings`: public site name and initial demo/field mode only;
+  no administrator settings, credentials or device information.
 - `GET /api/v1/places`: registered logical places, kind, provisional normalized
   schematic anchors, an optional verified GIS image anchor (library only), and
   unconfigured sensor coverage.
@@ -76,7 +82,9 @@ Use a fresh UUIDv4 and actual UTC observation time. Elevator records instead hav
 `kind: "elevator"` and integer `wait_seconds` (0–7200), without parking fields.
 Parking bounds are integers 0–10000 with min ≤ max. Place kind must match.
 Only observations within the past 24 hours (up to 30 seconds clock skew ahead)
-are accepted. Validity expires 15 minutes after observation, not reception.
+are accepted. Validity expires after the configured observation TTL (15 minutes
+by default), measured from observation, not reception. Settings affect new records;
+existing records and identical retries keep their original expiry.
 
 Insertion returns 201; an identical ID/body retry returns 200; a changed body for
 an existing ID returns 409. Response confirmation follows the D1 write. Cancellation

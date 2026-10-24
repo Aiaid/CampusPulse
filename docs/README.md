@@ -16,6 +16,8 @@ validation records are not evidence for this implementation.
 
 | Document | Purpose | Status |
 | --- | --- | --- |
+| [Administrator account and Passkeys / 账号与安全](specs/admin-auth-v1.md) | First-use bootstrap, password login, profile/password changes, Passkey management, reauthentication and session revocation | Locally verified:60 auth/management tests, real CTAP2 browser/workerd, nine deploy-origin cases; production/physical acceptance separate |
+| [Admin v1 / 管理后台](specs/admin-v1.md) | Independent admin session, device health/credentials, deployments, editable capture drafts, runtime settings and audit | Locally verified: 14 admin integration tests, real workerd/browser workflows and phone layout; deployment/device activation separate |
 | [Architecture overview](notes/architecture.md) | Stack, current data flow, source layout and planned hardware roles | Current frontend/API; ingestion server cloud-demo verified, firmware planned |
 | [Frontend migration and lighting](design/frontend-lighting.md) | Shared materials, responsive framing and selected-library detail presentation | Library trial history plus full-campus extension link; current campus build/190 tests and browser checks; no DB/deploy |
 | [Full-campus material lighting](design/campus-lighting.md) | Data-driven campus geometry, indexed shared light field and bounded viewport chunks | Implemented locally; all eight places, source-preserving materials and legacy comparisons; integration acceptance recorded in visual QA |

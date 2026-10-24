@@ -20,6 +20,40 @@ field views start empty. The frontend defaults to a visibly labelled simulation;
 switch to 现场观察 for the separate field-record flow.
 Manual entry needs the local operator token and a parking or elevator place.
 
+## Administration
+
+Apply all current migrations and configure an independent random `ADMIN_TOKEN`
+in ignored `.dev.vars`, then open `/admin` on the same local origin. Do not reuse
+the operator/device/research token. The secret grants restricted setup only before
+the first account exists; create a username/password, then use password or enrolled
+Passkeys. See [account initialization and security](../specs/admin-auth-v1.md).
+Login creates an expiring, revocable HttpOnly session; passwords and the server
+secret are not saved in browser storage. See
+[Admin v1](../specs/admin-v1.md) for management workflows and evidence boundaries.
+Runtime settings control the initial map mode/name and TTL of new manual records;
+the seeded defaults retain demo mode and a 15-minute TTL.
+
+For isolated management acceptance, use a separately migrated local Worker/state
+directory and a private disposable env file. For account/Passkey acceptance the
+database must be uninitialized and the mode600 file must contain `ADMIN_TOKEN`,
+synthetic `ADMIN_SMOKE_USERNAME` / `ADMIN_SMOKE_PASSWORD`, and different replacement
+`ADMIN_SMOKE_NEW_USERNAME` / `ADMIN_SMOKE_NEW_PASSWORD`. Use independently generated
+random passwords; never reuse actual administrator credentials. Run authentication
+first, then management against the same local state:
+
+```sh
+ADMIN_SMOKE_URL=http://localhost:8796 \
+ADMIN_SMOKE_ENV_FILE=.dev.vars.admin-auth-qa node scripts/admin-auth-browser-smoke.mjs
+ADMIN_SMOKE_URL=http://localhost:8796 \
+ADMIN_SMOKE_ENV_FILE=.dev.vars.admin-auth-qa node scripts/admin-browser-smoke.mjs
+```
+
+The script permits loopback targets only. It creates synthetic management records
+in that local database; it does not write to production or configure hardware.
+The auth script uses Chromium's virtual CTAP2 authenticator and ends with the
+replacement username/password active. Local Passkeys use `localhost`, so open
+the Worker directly rather than mixing the `127.0.0.1` and `localhost` origins.
+
 ## Verification
 
 ```sh
