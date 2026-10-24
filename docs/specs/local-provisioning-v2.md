@@ -1,7 +1,8 @@
 # Local provisioning: short PIN and physical USB
 
-Status: implemented and locally verified, 2026-10-25; physical USB/enrollment
-acceptance remains separate. This replaces manual entry of the
+Status: implemented and locally verified, 2026-10-25; one Passport's startup and
+native USB setup exchange are physically verified. Real BLE, phone hotspot and
+Wi-Fi/cloud enrollment acceptance remain separate. This replaces manual entry of the
 32-hex setup proof in the normal local onboarding flow. Cloud ingestion remains
 `campuspulse/2`; this document changes local transport/authentication only.
 

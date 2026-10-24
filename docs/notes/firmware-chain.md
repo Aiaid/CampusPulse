@@ -1,8 +1,8 @@
 # Passport provisioning, policy and durable upload chain
 
 > Hardware update, 2026-10-25: one connected Passport now passes application-only
-> flashing, protected-region verification and a 60-second BLE-setup startup test
-> after the supervisor stack fix. See the final hardware section below. Earlier
+> flashing, protected-region verification, a 60-second setup startup test and
+> native USB provisioning exchange. See the final hardware sections below. Earlier
 > software-only evidence remains historical; Wi-Fi/enrollment/field-radio
 > acceptance is still separate.
 
@@ -485,3 +485,49 @@ any subsequent physical USB/startup results require their own record. No device
 has been updated to this revision at this checkpoint. Physical BLE, browser USB
 chooser, target-phone hotspot, real Wi-Fi/cloud enrollment and sustained capture/
 upload acceptance remain separate.
+
+## Short PIN / USB revision — one-Passport update and native USB acceptance
+
+Code commit `3fc2ec917f526471590306782876f7a1b167d889` was pushed and its hosted
+check/deploy run [40123449700](https://github.com/Aiaid/CampusPulse/actions/runs/40123449700)
+succeeded. The published administrator JS bytes match the locally tested bundle
+and contain the USB route. Public health returned 200 and unauthenticated v2
+configuration remained 401. No production node or observation was created by
+this acceptance.
+
+The committed-version normal image is `cp-3fc2ec917f52`, 1,476,416 bytes, SHA-256
+`70f7692db78062e9b77a168d858e258751269785ed3f3491f93da33c1af3f50c`.
+All 227 manifest paths match the committed source. This image supersedes the
+intermediate pre-commit normal image for the actual update; other variants have
+build acceptance only. The separate local image/license package remains at
+`firmware/build/shortpin-usb-20261025/`.
+
+Before writing, the connected chip's identity matched the original target. Its
+8 MiB current Flash was newly backed up and compared successfully with the
+whole device. Bootloader/table and `cardid` matched the original protected
+backup; actual factory/cardid/legacy queue locations were rechecked. Only the
+application was written at `0x10000`, covering erase sectors through `0x179000`.
+The app digest and then the complete device digest matched a private expected
+copy containing only that app-sector replacement. The expected copy was used
+only for comparison, never flashed. NVS, `cardid`, queue and all other regions
+were retained; no queue or whole-chip erase occurred during this update.
+
+A real 60-second startup capture showed one ROM boot marker, the committed
+version, journal ready, display/input/battery ready, NimBLE startup and an
+advertising request, with zero panic/abort indications. Initial setup-scene
+minimum free stack samples were 5028 bytes for the supervisor and 5644 bytes for
+the USB worker. They do not bound SRP, candidate validation or collection load.
+
+The physical USB smoke then passed explicit `begin`, ready factory identity and
+nonce retrieval, status reads and recovery after malformed/oversized console
+frames. It sent no Wi-Fi password or cloud device credential and performed no
+settings/Flash erase. It exercised real BLE-setup teardown into USB mode on this
+Passport; the browser chooser/Web Serial path remains covered by the separate
+mock-browser cohort. The device is returned to its ordinary setup boot after
+the test so the short code can be used locally.
+
+Original/current backups and raw serial logs stay private and ignored under
+`captures/passport-*`; they are not published with these records. Real BLE PIN
+transactions, physical browser USB chooser, target-phone hotspot, real WPA2 /
+cloud enrollment, applied policy capture and sustained upload/reclamation still
+require separate physical acceptance.

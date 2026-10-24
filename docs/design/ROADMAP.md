@@ -15,18 +15,6 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
-- [ ] Simplify local provisioning: use an expiring eight-digit numeric code with
-      Security 2 authentication on display-equipped nodes, and a physical USB
-      provisioning path for headless nodes. Preserve internal device secrets,
-      bounded attempts, prior enrollment on failure and protected Flash data;
-      verify SDK interoperability, browser flows and actual Passport startup/USB.
-
-- [ ] Deliver the authorized firmware integration commit/push and Passport
-      flash: replace inherited proprietary raster fonts with reproducible open
-      fonts, rebuild/verify the release images, inspect and back up the connected
-      board's actual partitions, then flash separate images preserving `cardid`.
-      Record observed boot behavior separately from network/radio acceptance.
-
 - [ ] Verify administrator Passkey registration, login and reauthentication in
       the production Safari/Touch ID workflow after the optional-extension fix;
       controlled local browser acceptance is archived below.
@@ -35,7 +23,7 @@ collection and durable upload. Final local software verification passed on
       design: real-browser BLE, iPhone device-hosted SoftAP, wrong proof, interrupted
       candidate validation/save, and failed transport teardown. Verify the board
       profile and keep registration, network contact and applied config distinct.
-      USB recovery and other-board drivers remain planned.
+      Native USB exchange is verified on one Passport; other-board drivers remain planned.
 
 - [ ] Validate implemented factory identity and v2 policy/activation on hardware:
       same-boot leases, auth rejection, stale retries, reboot reapplication,
@@ -144,6 +132,19 @@ collection and durable upload. Final local software verification passed on
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] Publish the selected firmware integration with redistributable OFL fonts,
+      inspect/back up the original 8 MiB Passport and preserve its protected
+      layout while updating only the app. The original legacy queue reset was
+      separately authorized; the short-PIN update erased no queue/settings data.
+      Record the real supervisor fix, startup and private backup boundaries in
+      [firmware acceptance](../notes/firmware-chain.md).
+
+- [x] Implement expiring eight-digit PIN / Security 2 and physical USB setup for
+      headless profiles. Verify native/SDK/browser software, four C3 builds and
+      one Passport's actual USB begin/identity/status/framing recovery plus
+      60-second startup. Publish code `3fc2ec9`; real BLE/phone/Wi-Fi/cloud
+      enrollment and sustained collection remain the separate gates above.
 
 - [x] Apply the selected app icon to the administrator login, initialization
       and workspace sidebar. Local mocked-session browser checks passed at
