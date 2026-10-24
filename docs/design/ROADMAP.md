@@ -117,6 +117,14 @@ assignments; firmware and device acceptance remain pending.
 
 ## Completed archive
 
+- [x] Connect administrator location editing to the shared official GIS picker,
+      public field maps/search/details and record place IDs. Preserve full-image
+      coordinate registration and separate demo places; allow all map corners
+      to reach the viewport center. Build, 226 frontend tests and fixture-based
+      desktop/390px browser regression passed, including refresh, service failure
+      and phone edits/removal. See [scope and limits](../notes/gis-location-settings.md).
+      No production registry writes, deployment or physical-location acceptance.
+
 - [x] Accept omitted optional Passkey credential-property reports while rejecting
       negative/malformed reports and retaining all core WebAuthn/session guards.
       The exact release snapshot passes350 tests/34 suites (61 real-crypto

@@ -6,7 +6,8 @@ import ActivityLayer from './ActivityLayer';
 import NightLighting from './NightLighting';
 import MapRegions, { useBuildingMask } from './MapRegions';
 import { gisTileAvailability, selectTileLevel, visibleGisTiles } from './gis-tiles';
-import { fitMapFrame } from './map-framing';
+import { boundedMapView, fitMapFrame } from './map-framing';
+import { scenePointToGisAnchor } from './place-registry';
 import './campus-map.css';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -16,6 +17,7 @@ const TILE_ORIGIN = (import.meta.env.VITE_GIS_TILE_ORIGIN || 'https://gis.ccnu.e
 /** Independently pannable official remote tiles with registered mock activity. */
 export const CampusMap = forwardRef(function CampusMap({
   selectedId = 'library', onSelect = () => {}, compactSelected = false,
+  mapPlaces = places, renderScene = true, onPickGisAnchor,
   layers = { people: true, bikes: true, waits: true }, minute = 1200, scenarioId = 'weekday', isDark = false, onZoomChange, maxZoom = 4, xray = false, moving = true, demo = true, lighting = 'atmospheric',
 }, ref) {
   const gradeId = useId().replace(/:/g, '');
@@ -38,21 +40,17 @@ export const CampusMap = forwardRef(function CampusMap({
   useEffect(() => { onZoomChange?.(view.zoom); }, [view.zoom, onZoomChange]);
 
   const bounded = useCallback((next, dimensions = sizeRef.current) => {
-    const zoom = clamp(next.zoom, 1, maxZoom);
-    const base = Math.max(dimensions.width / MAP_WIDTH, dimensions.height / MAP_HEIGHT);
-    const limitX = Math.max(0, (MAP_WIDTH * base * zoom - dimensions.width) / 2);
-    const limitY = Math.max(0, (MAP_HEIGHT * base * zoom - dimensions.height) / 2);
-    return { zoom, x: clamp(next.x, -limitX, limitX), y: clamp(next.y, -limitY, limitY) };
+    return boundedMapView(next, dimensions, maxZoom);
   }, [maxZoom]);
 
   const centerPlace = useCallback((placeId, zoom = 1.7, dimensions = sizeRef.current, offset = { x: 0, y: 0 }) => {
-    const place = places.find((item) => item.id === placeId);
+    const place = mapPlaces.find((item) => item.id === placeId);
     if (!place) return;
     const safeZoom = clamp(zoom, 1, maxZoom);
     const scale = Math.max(dimensions.width / MAP_WIDTH, dimensions.height / MAP_HEIGHT) * safeZoom;
     focusedPlace.current = { id: placeId, offset };
     setView(bounded({ zoom: safeZoom, x: (MAP_WIDTH / 2 - place.x - offset.x) * scale, y: (MAP_HEIGHT / 2 - place.y - offset.y) * scale }, dimensions));
-  }, [bounded, maxZoom]);
+  }, [bounded, maxZoom, mapPlaces]);
 
   const frameScene = useCallback((frame, dimensions = sizeRef.current) => {
     const next = fitMapFrame(frame, dimensions, maxZoom);
@@ -140,6 +138,14 @@ export const CampusMap = forwardRef(function CampusMap({
     } else if (event.key === '+' || event.key === '=') { event.preventDefault(); changeZoom(1.25); }
     else if (event.key === '-') { event.preventDefault(); changeZoom(.8); }
     else if (event.key === 'Home') { event.preventDefault(); focusedPlace.current = null; setView(DEFAULT_VIEW); }
+    else if (event.key === 'Enter' && onPickGisAnchor) {
+      event.preventDefault();
+      const { width, height } = sizeRef.current;
+      const current = viewRef.current;
+      const scale = Math.max(width / MAP_WIDTH, height / MAP_HEIGHT) * current.zoom;
+      const point = scenePointToGisAnchor({ x: MAP_WIDTH / 2 - current.x / scale, y: MAP_HEIGHT / 2 - current.y / scale });
+      if (point) onPickGisAnchor(point);
+    }
   };
 
   const scale = Math.max(size.width / MAP_WIDTH, size.height / MAP_HEIGHT) * view.zoom;
@@ -165,13 +171,19 @@ export const CampusMap = forwardRef(function CampusMap({
     if (suppressClick.current || event.target.closest('button')) return;
     const box = container.current.getBoundingClientRect();
     const point = [(event.clientX - box.left - translateX) / scale, (event.clientY - box.top - translateY) / scale];
+    if (onPickGisAnchor) {
+      const anchor = scenePointToGisAnchor({ x: point[0], y: point[1] });
+      if (anchor) onPickGisAnchor(anchor);
+      return;
+    }
+    if (!renderScene || !demo) return;
     const hit = buildings.find(b => b.placeId && pointInPolygon(point, b.polygon));
-    if (hit && places.some(p => p.id === hit.placeId)) onSelect(hit.placeId);
+    if (hit && mapPlaces.some(p => p.id === hit.placeId)) onSelect(hit.placeId);
   };
 
   return (
     <div ref={container} className={`cp-map ${isDark ? 'cp-map--night' : 'cp-map--day'} ${dragging ? 'cp-map--dragging' : ''} cp-map--lighting-${lighting}`} style={{ '--cp-night-grade': `url(#${gradeId})` }} data-lighting-mode={lighting} data-demo={demo ? 'true' : 'false'}
-      tabIndex={0} role="region" aria-label="华中师范大学校园活动示意地图，可拖动或用方向键平移，加减键缩放"
+      tabIndex={0} role="region" aria-label={onPickGisAnchor ? 'GIS 位置选点地图，点击选点，方向键平移，Enter 选择中心，加减键缩放' : '华中师范大学校园活动示意地图，可拖动或用方向键平移，加减键缩放'}
       onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} onClick={selectRegion}
       onLostPointerCapture={() => { drag.current = null; setDragging(false); }} onKeyDown={keyboardPan}>
       <svg width="0" height="0" aria-hidden="true" style={{position:'absolute',pointerEvents:'none'}}>
@@ -219,11 +231,11 @@ export const CampusMap = forwardRef(function CampusMap({
           style={{ left: tile.x, top: tile.y, width: tile.size, height: tile.size, visibility: failedTiles.has(tile.key) ? 'hidden' : 'visible' }} />)}
       </div>
       <div className="cp-map__atmosphere" aria-hidden="true" />
-      <ActivityLayer project={project} scale={scale} translateX={translateX} translateY={translateY} viewWidth={size.width} viewHeight={size.height} layers={layers} minute={minute} scenarioId={scenarioId} isDark={isDark} xray={xray} moving={moving} selectedId={selectedId} demo={demo} lighting={lighting} detailView={compactSelected} />
+      {renderScene && <><ActivityLayer project={project} scale={scale} translateX={translateX} translateY={translateY} viewWidth={size.width} viewHeight={size.height} layers={layers} minute={minute} scenarioId={scenarioId} isDark={isDark} xray={xray} moving={moving} selectedId={selectedId} demo={demo} lighting={lighting} detailView={compactSelected} />
       <NightLighting project={project} scale={scale} viewWidth={size.width} viewHeight={size.height} isDark={isDark} xray={xray} selectedId={selectedId} lighting={lighting} />
-      <MapRegions project={project} viewWidth={size.width} viewHeight={size.height} selectedId={selectedId} xray={xray} />
+      {demo && <MapRegions project={project} viewWidth={size.width} viewHeight={size.height} selectedId={selectedId} xray={xray} />}</>}
       <div className="cp-map__landmarks">
-        {places.map((place) => {
+        {mapPlaces.map((place) => {
           const selected = selectedId === place.id;
           const metrics = demo ? getMetrics(place.id, minute, scenarioId) : null;
           const screen = project(place.x, place.y);

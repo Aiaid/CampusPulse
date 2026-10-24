@@ -17,7 +17,7 @@ runtime settings and audit. Its local acceptance and deployment are separate.
 | Layer | Technology | Current scope |
 | --- | --- | --- |
 | Web application | React 19, JavaScript/JSX, CSS, Vite; Phosphor icons | Overview/local maps, search, timeline and independent layers. Manual records use a separate API-backed panel. |
-| Campus map | External CCNU GIS raster tiles, DOM/CSS positioning | Official zoom-3 tiles in a registered 1024×640 scene extent. The raster is not a 3D campus model or evidence of sensor coverage. |
+| Campus map | External CCNU GIS raster tiles, DOM/CSS positioning | Visible official zoom-1–3 tiles in a registered 1024×640 scene extent; shared administrator picking and API-backed field places. The raster is not a 3D campus model or evidence of sensor coverage. |
 | Illustrative overlays | Canvas 2D and CSS | Synthetic moving/parked actors, occlusion, optional building transparency and warm night lighting. Three.js is no longer a dependency. |
 | Hosting and API | Cloudflare Workers Static Assets and a TypeScript Worker | Implemented: frontend assets and same-origin `/api/*` routes. GitHub stores source and runs delivery checks. |
 | Persistence | Cloudflare D1, SQL migrations | Implemented: places/manual records, immutable capture/placement policy, sensor windows, status, durable receipts and range exclusion. |
@@ -37,9 +37,11 @@ occlusion and optional building transparency, and adds illustrative warm night
 lighting. A future 3D/GLTF approach is not implemented.
 
 The migration loads official zoom-3 GIS tiles into a registered 1024×640 scene
-extent rather than bundling the historical school raster. API-backed records use
-a separate panel; map places are not yet fully registered to the API's record
-places. Synthetic activity, waits and replay are hidden in field mode, and
+extent rather than bundling the historical school raster. Field maps/search read
+verified in-scene GIS anchors from the API place registry; administrator GIS
+editing and the separate record panel share those place IDs. Missing or
+outside-scene positions are reported. See [location settings](gis-location-settings.md).
+Synthetic activity, waits and replay are hidden in field mode, and
 lighting remains a visual effect. Migrated source lives under
 [`src/campus/`](../../src/campus/), generated visuals under [`public/`](../../public/),
 and frontend tests under [`tests/frontend/`](../../tests/frontend/), with

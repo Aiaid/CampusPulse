@@ -14,7 +14,7 @@ async function request(path, init) {
 }
 const recordText = record => record.kind === 'parking' ? `${record.parking_min}–${record.parking_max} 辆` : `${record.wait_seconds} 秒`;
 
-export default function Observations({ open, onClose }) {
+export default function Observations({ open, onClose, initialPlaceId }) {
   const [places, setPlaces] = useState([]), [placeId, setPlaceId] = useState('');
   const [summary, setSummary] = useState(null), [history, setHistory] = useState([]), [minutes, setMinutes] = useState(15);
   const [revision, setRevision] = useState(0), [loading, setLoading] = useState(false), [error, setError] = useState('');
@@ -23,6 +23,12 @@ export default function Observations({ open, onClose }) {
   const pendingWrite = useRef(null), dialog = useRef(null);
   const place = places.find(item => item.id === placeId), latest = summary?.latest_observation;
   const canRecord = place && place.kind !== 'activity';
+
+  useEffect(() => {
+    // Capture the map selection on opening. A later background map refresh
+    // must not overwrite a location the operator has chosen in this dialog.
+    if (open && initialPlaceId) setPlaceId(initialPlaceId);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -99,8 +105,8 @@ export default function Observations({ open, onClose }) {
   return <div className="modal-backdrop observation-backdrop">
     <section className="observation-dialog" ref={dialog} role="dialog" aria-modal="true" aria-labelledby="observations-title">
       <div className="observation-title"><div><span className="observation-eyebrow"><Radio size={12} />现场数据 · 独立记录流</span><h2 id="observations-title">现场观察与记录</h2></div><button className="icon-button" aria-label="关闭记录表单" onClick={onClose}><X size={21} /></button></div>
-      <p className="observation-boundary"><Info size={15} /><span>记录地点与地图建筑独立管理，尚未逐项核准地图锚点。人工记录不代表传感器覆盖，BLE 可见标识不等于人数。</span></p>
-      <label className="observation-field">记录地点<select value={placeId} onChange={event => { setPlaceId(event.target.value); setNotice(''); }} disabled={saving || !places.length}>{!places.length && <option value="">等待现场服务</option>}{places.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <p className="observation-boundary"><Info size={15} /><span>此目录包含全部现场地点；地图仅显示已核验且位于当前视图范围内的 GIS 锚点。人工记录不代表传感器覆盖，BLE 可见标识不等于人数。</span></p>
+      <label className="observation-field">记录地点<select aria-label="记录地点" value={placeId} onChange={event => { setPlaceId(event.target.value); setNotice(''); }} disabled={saving || !places.length}>{!places.length && <option value="">等待现场服务</option>}{places.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <div className="observation-section-heading"><h3>{place?.name || '现场观察'}</h3><button className="observation-refresh" onClick={() => setRevision(value => value + 1)} disabled={loading || saving} aria-label="刷新现场观察"><ArrowClockwise size={14} />刷新</button></div>
       {error && <p className="observation-error" role="status">{error}</p>}
       <div className="observation-summary" aria-live="polite">

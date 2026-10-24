@@ -244,10 +244,12 @@ not packaged or uploaded. Geometric sprite clipping itself remains independent
 of remote pixel reads. The separate local source-material loader above now uses
 CORS-approved canvas access; it adds no bundled foreground image.
 
-The default is explicitly labelled synthetic demonstration. Field mode suppresses
-all synthetic actors, waits, metrics and replay; the independent field-record
-panel reads the current API. It requires selecting an API placement and does not
-invent matches between every API placement and historical map landmarks.
+The initial mode follows public site settings; synthetic demonstration is
+explicitly labelled. Field mode suppresses synthetic actors, waits, metrics and
+replay. As of the [GIS location integration](../notes/gis-location-settings.md),
+field maps and the record panel share API place IDs, with only verified,
+in-scene GIS anchors shown on the map. Missing locations are reported rather
+than matched to historical demo landmarks.
 
 ## Retained enhanced light comparison
 

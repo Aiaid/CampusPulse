@@ -16,6 +16,7 @@ validation records are not evidence for this implementation.
 
 | Document | Purpose | Status |
 | --- | --- | --- |
+| [GIS location settings](notes/gis-location-settings.md) | Official-map location picker, shared field registry, full-image coordinate conversion and reachable map corners | Locally implemented; frontend tests and fixture-based desktop/phone browser regression; no deployment or production writes |
 | [Admin browser compatibility](notes/admin-browser-compatibility.md) | Safari cosmetic-filter diagnosis, dedicated CSS namespace and optional Passkey extension reports | Local 350-test release snapshot, real-Worker CTAP2 and desktop/phone regressions passed; physical Safari enrollment separate |
 | [Simulation scenarios](notes/simulation.md) | Teaching-day/weekend/rain profiles, full-day replay and separate parking intensity | Locally verified: 198 frontend tests, build, desktop/390px browser isolation; frontend-only synthetic data |
 | [Administrator account and Passkeys / 账号与安全](specs/admin-auth-v1.md) | First-use bootstrap, password login, profile/password changes, Passkey management, reauthentication and session revocation | Locally verified:60 auth/management tests, real CTAP2 browser/workerd, nine deploy-origin cases; production/physical acceptance separate |

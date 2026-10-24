@@ -1,5 +1,18 @@
 import { MAP_WIDTH, MAP_HEIGHT } from './scene-data.js';
 
+/** Keep the camera center on the map while allowing every edge to reach the
+ * viewport center. This permits up to half a viewport of blank margin, so
+ * landmarks near the raster boundary remain reachable at every zoom level.
+ */
+export function boundedMapView(next, dimensions, maxZoom = 12) {
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+  const zoom = clamp(next.zoom, 1, maxZoom);
+  const scale = Math.max(dimensions.width / MAP_WIDTH, dimensions.height / MAP_HEIGHT) * zoom;
+  const limitX = MAP_WIDTH * scale / 2;
+  const limitY = MAP_HEIGHT * scale / 2;
+  return { zoom, x: clamp(next.x, -limitX, limitX), y: clamp(next.y, -limitY, limitY) };
+}
+
 /** Authored display bounds in the existing GIS chart, not surveyed extents.
  * A tall panel shows the roof, facade and forecourt together. A wide phone
  * strip keeps the entrance legible rather than shrinking the whole campus.

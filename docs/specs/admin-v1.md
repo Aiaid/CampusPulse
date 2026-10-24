@@ -92,6 +92,17 @@ field-mode fallback and displays a notice. New manual records use the TTL at
 insertion; changing it does not rewrite existing records. New drafts inherit
 retention defaults; published policies retain their own retention values.
 
+## GIS location editing
+
+The place editor now uses the same official GIS raster/camera as the public map.
+Picking a point converts it to the existing complete-image normalized
+`gis_anchor`; the separate schematic `anchor` is preserved. Coordinate changes
+require explicit operator verification before saving. Verified, in-scene places
+appear in public field maps/search/details, with direct place links and record
+selection using the same ID. Missing/outside-scene positions are reported rather
+than substituted. See [location settings](../notes/gis-location-settings.md) for
+the coordinate transform, refresh behavior and local verification boundaries.
+
 ## Contact, health and device application
 
 Recent contact is computed from server receipt timestamps, not a device's UTC or

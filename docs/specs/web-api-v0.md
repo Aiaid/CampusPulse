@@ -48,7 +48,8 @@ separate acceptance step.
 - `GET /api/v1/settings`: public site name and initial demo/field mode only;
   no administrator settings, credentials or device information.
 - `GET /api/v1/places`: registered logical places, kind, provisional normalized
-  schematic anchors, an optional verified GIS image anchor (library only), and
+  schematic anchors, an optional verified GIS image anchor (library only in the
+  initial seed; editable through the administrator registry), and
   unconfigured sensor coverage.
 - `GET /api/v1/places/:id/summary`: latest active manual observation, source,
   observation time, validity deadline and freshness; an independently sourced eligible field sensor window may also be present.
