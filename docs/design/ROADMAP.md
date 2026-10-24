@@ -139,6 +139,10 @@ collection and durable upload. Final local software verification passed on
 
 ## Completed archive
 
+- [x] Apply the selected app icon to the administrator login, initialization
+      and workspace sidebar. Local mocked-session browser checks passed at
+      desktop/mobile sizes for all three screens, along with the production build.
+
 - [x] Correct GIS navigation to load actual official tiles across the complete
       image grid with all four levels, preserving authored overlays and accepting
       place coordinates beyond the old crop. Permit only the official image

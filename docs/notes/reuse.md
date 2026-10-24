@@ -573,7 +573,8 @@ upstream open-source license. Existing third-party notices are unchanged.
 `public/icons/campuspulse-1024.png` is the metadata-stripped selected master.
 The 512/192 px manifest icons, 180 px Apple touch icon, 32 px favicon and
 16/32/48 px ICO are Lanczos-resized derivatives. The homepage brand uses the
-192 px variant. These files add no service worker or offline functionality.
+192 px variant, as do the administrator sidebar, login and account-initialization
+screens. These files add no service worker or offline functionality.
 Original generation output is retained outside the repository. Final served PNG
 and ICO files were inspected with ExifTool after conversion: no EXIF, GPS, XMP,
 IPTC, MakerNotes, comments, embedded thumbnails, or identity/contact/path metadata

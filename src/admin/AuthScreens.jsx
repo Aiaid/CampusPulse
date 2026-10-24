@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowUpRight, CircleNotch, Fingerprint, Pulse, ShieldCheck, SignOut } from '@phosphor-icons/react';
+import { ArrowUpRight, CircleNotch, Fingerprint, ShieldCheck, SignOut } from '@phosphor-icons/react';
 import { Dialog, ErrorNotice, Field, FormActions, Notice, useMutation } from './shared.jsx';
 import { authenticatePasskey, passkeySupport } from './passkeys.js';
 
@@ -10,7 +10,7 @@ export function validateNewPassword(password, confirmation) {
 }
 
 function AuthFrame({ children, title, description }) {
-  return <main className="cp-admin-auth"><div className="cp-admin-login-decoration" aria-hidden="true"><Pulse size={54} /><span>校园 / 运行管理</span></div><div className="cp-admin-login-card"><div className="cp-admin-eyebrow">CampusPulse 管理工作台</div><h1>{title}</h1><p>{description}</p>{children}<div className="cp-admin-login-foot"><ShieldCheck size={17} />HttpOnly Cookie 保护会话<a href="/">返回地图</a></div></div></main>;
+  return <main className="cp-admin-auth"><div className="cp-admin-login-decoration" aria-hidden="true"><img src="/icons/campuspulse-192.png" width="54" height="54" alt="" /><span>校园 / 运行管理</span></div><div className="cp-admin-login-card"><div className="cp-admin-eyebrow">CampusPulse 管理工作台</div><h1>{title}</h1><p>{description}</p>{children}<div className="cp-admin-login-foot"><ShieldCheck size={17} />HttpOnly Cookie 保护会话<a href="/">返回地图</a></div></div></main>;
 }
 
 export function Login({ api, status, error, info, onSession, onRetry }) {
