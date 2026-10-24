@@ -245,7 +245,9 @@ later observation needs BLE. Verify stop/restart/deinit against the pinned IDF;
 do not infer concurrent performance from separate passing builds.
 
 Local SoftAP web setup is implemented into the shared settings validation/storage
-path; the USB recovery tool remains planned. SoftAP uses a bounded session and a per-device
+path. The [short PIN and USB revision](../specs/local-provisioning-v2.md) adds
+physical USB setup for headless nodes and replaces the original displayed long
+proof; its software and hardware acceptance are recorded separately. SoftAP uses a bounded session and a per-device
 secret. Its local page is served by the device; do not weaken the cloud admin
 CSP or try to fetch arbitrary HTTP LAN endpoints from the HTTPS admin page.
 The embedded page has a WebKit fixture pass; target-phone and board hotspot

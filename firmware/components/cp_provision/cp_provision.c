@@ -2,7 +2,7 @@
 #include "cp_provision_guard.h"
 #include "protocomm.h"
 #include "protocomm_ble.h"
-#include "protocomm_security1.h"
+#include "cp_provision_security2.h"
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_netif.h"
@@ -10,19 +10,24 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_bt.h"
+#include "esp_app_desc.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
 
 #define REQUEST_MAX 1024
-#define SESSION_US (10LL * 60 * 1000000)
+#define SESSION_US (5LL * 60 * 1000000)
+#define MAX_FAILURES 5
 static cp_provision_snapshot_t state;
 static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 static protocomm_t *pc;
-static protocomm_security1_params_t pop;
+static protocomm_security2_params_t srp;
+static SemaphoreHandle_t session_mutex;
+static bool security_fatal;
 static httpd_handle_t http;
 static esp_netif_t *ap_netif;
 static bool wifi_initialized;
@@ -44,7 +49,35 @@ static bool same(const char *a, const char *b) {
     unsigned diff = 0; for (size_t i = 0; a[i]; i++) diff |= (unsigned char)a[i] ^ (unsigned char)b[i]; return diff == 0;
 }
 static void wipe(void *p, size_t n) { volatile unsigned char *v = p; while (n--) *v++ = 0; }
-void cp_provision_snapshot(cp_provision_snapshot_t *out) { if (!out) return; portENTER_CRITICAL(&lock); *out = state; portEXIT_CRITICAL(&lock); }
+static bool take_session(void) {
+    SemaphoreHandle_t mutex=__atomic_load_n(&session_mutex,__ATOMIC_ACQUIRE);
+    if(!mutex) {
+        SemaphoreHandle_t created=xSemaphoreCreateMutex();if(!created)return false;
+        SemaphoreHandle_t expected=NULL;
+        if(!__atomic_compare_exchange_n(&session_mutex,&expected,created,false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))vSemaphoreDelete(created);
+        mutex=__atomic_load_n(&session_mutex,__ATOMIC_ACQUIRE);
+    }
+    return xSemaphoreTake(mutex,0)==pdTRUE;
+}
+static void give_session(void){xSemaphoreGive(session_mutex);}
+static bool session_allowed(void) {
+    if(!state.active || security_fatal)return false;
+    if(proof_failures>=MAX_FAILURES || esp_timer_get_time()>=expires) {
+        cp_provision_set_status(proof_failures>=MAX_FAILURES?"locked":"expired","Start a new setup session");
+        portENTER_CRITICAL(&lock);wipe(state.proof,sizeof state.proof);wipe(state.ap_password,sizeof state.ap_password);portEXIT_CRITICAL(&lock);
+        return false;
+    }
+    return true;
+}
+static void authentication_failure(void){if(proof_failures<MAX_FAILURES)proof_failures++;(void)session_allowed();}
+static bool security_enter(void){if(!take_session())return false;if(state.mode!=CP_PROVISION_BLE||!session_allowed()){give_session();return false;}return true;}
+static void security_failure(void){authentication_failure();}
+static void security_broken(void){security_fatal=true;teardown_fault=ESP_FAIL;cp_provision_set_status("failed","Security context failed; restart required");}
+void cp_provision_snapshot(cp_provision_snapshot_t *out) {
+    if(!out)return;
+    if(take_session()){(void)session_allowed();give_session();}
+    portENTER_CRITICAL(&lock);*out=state;portEXIT_CRITICAL(&lock);
+}
 void cp_provision_set_status(const char *value, const char *reason) { portENTER_CRITICAL(&lock); snprintf(state.state, sizeof(state.state), "%s", value ? value : "unknown"); snprintf(state.reason, sizeof(state.reason), "%s", reason ? reason : ""); portEXIT_CRITICAL(&lock); }
 static bool copy_field(char *dest, size_t cap, const cJSON *obj, const char *key) { const char *v = str(obj, key); if (!v || strlen(v) >= cap) return false; memcpy(dest, v, strlen(v) + 1); return true; }
 static cJSON *parse_request(const char *data, size_t len) {
@@ -52,7 +85,7 @@ static cJSON *parse_request(const char *data, size_t len) {
     unsigned depth = 0; bool quoted = false, escaped = false;
     for (size_t i = 0; i < len; i++) {
         unsigned char ch = data[i]; if (!ch) return NULL;
-        if (quoted) { if (escaped) escaped = false; else if (ch == 92) escaped = true; else if (ch == 34) quoted = false; }
+        if (quoted) { if (escaped) { if(ch=='u'&&i+4<len&&!memcmp(data+i+1,"0000",4))return NULL; escaped = false; } else if (ch == 92) escaped = true; else if (ch == 34) quoted = false; }
         else if (ch == 34) quoted = true;
         else if (ch == '{' || ch == '[') { if (++depth > 2) return NULL; }
         else if (ch == '}' || ch == ']') { if (!depth) return NULL; --depth; }
@@ -61,6 +94,10 @@ static cJSON *parse_request(const char *data, size_t len) {
     const char *end = NULL; cJSON *r = cJSON_ParseWithLengthOpts(data, len, &end, false);
     while (end && end < data + len && isspace((unsigned char)*end)) ++end;
     if (!cJSON_IsObject(r) || end != data + len) { cJSON_Delete(r); return NULL; }
+    for(cJSON *a=r->child;a;a=a->next){
+        if(cJSON_IsArray(a)||cJSON_IsObject(a)){cJSON_Delete(r);return NULL;}
+        for(cJSON *b=a->next;b;b=b->next)if(!strcmp(a->string,b->string)){cJSON_Delete(r);return NULL;}
+    }
     return r;
 }
 static void delete_request(cJSON *request) {
@@ -71,21 +108,30 @@ static void delete_request(cJSON *request) {
 static cJSON *reply(bool ok, const char *reason) { cJSON *r = cJSON_CreateObject(); if (!r) return NULL; cJSON_AddNumberToObject(r, "v", 1); cJSON_AddBoolToObject(r, "ok", ok); if (reason) cJSON_AddStringToObject(r, "reason", reason); return r; }
 /* JSON is already decrypted by protocomm, or arrived over the strong WPA2 AP
  * after Host/Origin/content-type checks. Never return/log submitted secrets. */
-static cJSON *handle(const cJSON *request, bool local_ap) {
-    if (!state.active || esp_timer_get_time() > expires) return reply(false, "setup_expired");
-    const cJSON *version = cJSON_GetObjectItemCaseSensitive(request, "v");
-    if (!cJSON_IsNumber(version) || version->valuedouble != 1) return reply(false, "unsupported_version");
-    if (local_ap && (!same(str(request, "nonce"), nonce) || !same(str(request, "proof"), state.proof))) {
-        if (++proof_failures >= 8) expires = 0;
-        return reply(false, "invalid_setup_proof");
+static cJSON *handle(const cJSON *request, cp_provision_mode_t transport) {
+    const cJSON *version=cJSON_GetObjectItemCaseSensitive(request,"v");
+    if(!cJSON_IsNumber(version)||version->valuedouble!=1)return reply(false,"unsupported_version");
+    const char *op=str(request,"op");if(!op)return reply(false,"invalid_operation");
+    /* Physical USB status is intentionally available after radio handoff. */
+    bool usb_status=transport==CP_PROVISION_USB&&!strcmp(op,"status");
+    if(usb_status&&state.active)(void)session_allowed();
+    if(!usb_status && (!state.active||state.mode!=transport))return reply(false,"setup_not_ready");
+    if(!usb_status && !session_allowed())return reply(false,proof_failures>=MAX_FAILURES?"setup_locked":"setup_expired");
+    if(transport==CP_PROVISION_SOFTAP && (!same(str(request,"nonce"),nonce)||!same(str(request,"proof"),state.proof))){authentication_failure();return reply(false,proof_failures>=MAX_FAILURES?"setup_locked":"invalid_setup_pin");}
+    if(!strcmp(op,"info")||!strcmp(op,"status")) {
+        cp_provision_snapshot_t snapshot;portENTER_CRITICAL(&lock);snapshot=state;portEXIT_CRITICAL(&lock);
+        cJSON *r=reply(true,NULL);if(!r)return NULL;
+        cJSON_AddStringToObject(r,"node_id",snapshot.node_id);cJSON_AddStringToObject(r,"board","FoloToy AI Passport / ESP32-C3");
+        cJSON_AddStringToObject(r,"firmware_version",esp_app_get_description()->version);
+        cJSON_AddStringToObject(r,"transport",transport==CP_PROVISION_USB?"usb":transport==CP_PROVISION_SOFTAP?"ap":"ble");
+        cJSON_AddStringToObject(r,"security",transport==CP_PROVISION_USB?"physical-usb":transport==CP_PROVISION_SOFTAP?"wpa2-local":"security2");
+        cJSON_AddStringToObject(r,"state",snapshot.state);cJSON_AddStringToObject(r,"reason",snapshot.reason);cJSON_AddStringToObject(r,"attempt_id",snapshot.attempt_id);
+        cJSON_AddBoolToObject(r,"active",snapshot.active);
+        if(transport==CP_PROVISION_USB&&!strcmp(op,"info"))cJSON_AddStringToObject(r,"nonce",nonce);
+        int64_t left=expires-esp_timer_get_time();cJSON_AddNumberToObject(r,"session_expires_in_ms",left>0?left/1000:0);
+        return r;
     }
-    const char *op = str(request, "op"); if (!op) return reply(false, "invalid_operation");
-    if (!strcmp(op, "info") || !strcmp(op, "status")) {
-        cp_provision_snapshot_t s; cp_provision_snapshot(&s);
-        cJSON *r = reply(true, NULL); if (!r) return NULL;
-        cJSON_AddStringToObject(r, "node_id", s.node_id); cJSON_AddStringToObject(r, "board", "FoloToy AI Passport / ESP32-C3");
-        cJSON_AddStringToObject(r, "state", s.state); cJSON_AddStringToObject(r, "attempt_id", s.attempt_id); return r;
-    }
+    if(transport==CP_PROVISION_USB&&!same(str(request,"nonce"),nonce))return reply(false,"invalid_session_nonce");
     if (strcmp(op, "configure")) return reply(false, "invalid_operation");
     const char *attempt = str(request, "attempt_id");
     if (!cp_provision_uuid_v4(attempt)) return reply(false, "invalid_attempt_id");
@@ -107,7 +153,8 @@ static cJSON *handle(const cJSON *request, bool local_ap) {
         if (!same_id) return reply(false, "attempt_in_progress");
         if (!same_body) return reply(false, "attempt_payload_changed");
         cJSON *r = reply(true, NULL); if (!r) return NULL;
-        cJSON_AddStringToObject(r, "state", state.state); cJSON_AddStringToObject(r, "attempt_id", attempt); return r;
+        char status[24];portENTER_CRITICAL(&lock);memcpy(status,state.state,sizeof status);portEXIT_CRITICAL(&lock);
+        cJSON_AddStringToObject(r,"state",status);cJSON_AddStringToObject(r,"attempt_id",attempt);return r;
     }
     esp_err_t err = submit_fn(&candidate, attempt, submit_ctx); wipe(&candidate, sizeof(candidate));
     if (err != ESP_OK) { wipe(digest, sizeof(digest)); return reply(false, "supervisor_busy"); }
@@ -119,7 +166,10 @@ static esp_err_t app_handler(uint32_t session_id, const uint8_t *in, ssize_t len
     (void)session_id; (void)ctx;
     if (len <= 0 || len > 512) return ESP_ERR_INVALID_SIZE;
     cJSON *request = parse_request((const char *)in, (size_t)len);
-    cJSON *result = request ? handle(request, false) : reply(false, "invalid_json");
+    cJSON *result;
+    if(!request)result=reply(false,"invalid_json");
+    else if(!take_session())result=reply(false,"session_busy");
+    else {result=handle(request,CP_PROVISION_BLE);give_session();}
     delete_request(request);
     char *encoded = result ? cJSON_PrintUnformatted(result) : NULL; cJSON_Delete(result);
     if (!encoded) return ESP_ERR_NO_MEM;
@@ -132,7 +182,7 @@ static bool local_request(httpd_req_t *req, bool post) {
     if (httpd_req_get_hdr_value_len(req, "Origin") &&
         (httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof(origin)) != ESP_OK || strcmp(origin, "http://192.168.4.1"))) return false;
     if (post && (httpd_req_get_hdr_value_str(req, "Content-Type", content, sizeof(content)) != ESP_OK || strcmp(content, "application/json"))) return false;
-    return state.active && esp_timer_get_time() <= expires;
+    return true;
 }
 static void headers(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Cache-Control", "no-store"); httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
@@ -142,9 +192,12 @@ static void headers(httpd_req_t *req) {
 #include "setup_page.h"
 static esp_err_t page_handler(httpd_req_t *req) {
     if (!local_request(req, false)) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Local setup only");
+    if(!take_session()){httpd_resp_set_status(req,"503 Service Unavailable");return httpd_resp_sendstr(req,"Setup busy");}
+    if(state.mode!=CP_PROVISION_SOFTAP||!session_allowed()){give_session();return httpd_resp_send_err(req,HTTPD_403_FORBIDDEN,"Setup expired or locked");}
+    char node[16],session_nonce[33];memcpy(node,state.node_id,sizeof node);memcpy(session_nonce,nonce,sizeof session_nonce);give_session();
     headers(req); httpd_resp_set_type(req, "text/html; charset=utf-8");
-    httpd_resp_sendstr_chunk(req, CP_SETUP_HEAD); httpd_resp_sendstr_chunk(req, state.node_id);
-    httpd_resp_sendstr_chunk(req, CP_SETUP_MID); httpd_resp_sendstr_chunk(req, nonce);
+    httpd_resp_sendstr_chunk(req, CP_SETUP_HEAD); httpd_resp_sendstr_chunk(req, node);
+    httpd_resp_sendstr_chunk(req, CP_SETUP_MID); httpd_resp_sendstr_chunk(req, session_nonce);
     httpd_resp_sendstr_chunk(req, CP_SETUP_END); return httpd_resp_send_chunk(req, NULL, 0);
 }
 static esp_err_t configure_handler(httpd_req_t *req) {
@@ -153,7 +206,10 @@ static esp_err_t configure_handler(httpd_req_t *req) {
     char *body = calloc(1, req->content_len + 1); if (!body) return ESP_ERR_NO_MEM;
     int pos = 0; while (pos < req->content_len) { int n = httpd_req_recv(req, body + pos, req->content_len - pos); if (n <= 0) { wipe(body, req->content_len + 1); free(body); return ESP_FAIL; } pos += n; }
     cJSON *request = parse_request(body, (size_t)pos); wipe(body, req->content_len + 1); free(body);
-    cJSON *result = request ? handle(request, true) : reply(false, "invalid_json");
+    cJSON *result;
+    if(!request)result=reply(false,"invalid_json");
+    else if(!take_session())result=reply(false,"session_busy");
+    else {result=handle(request,CP_PROVISION_SOFTAP);give_session();}
     delete_request(request); char *encoded = result ? cJSON_PrintUnformatted(result) : NULL; cJSON_Delete(result);
     if (!encoded) return ESP_ERR_NO_MEM;
     headers(req); httpd_resp_set_type(req, "application/json"); esp_err_t err = httpd_resp_sendstr(req, encoded); free(encoded); return err;
@@ -173,44 +229,54 @@ static esp_err_t start_ap(void) {
     if ((err = httpd_register_uri_handler(http, &root)) != ESP_OK) return err;
     return httpd_register_uri_handler(http, &setup);
 }
-esp_err_t cp_provision_start(cp_provision_mode_t mode, const char *node, const char *proof, cp_provision_submit_fn submit, void *ctx) {
-    if (state.active || !node || strlen(node) != 15 || !proof || strlen(proof) != 32 || !submit || mode > CP_PROVISION_SOFTAP) return ESP_ERR_INVALID_ARG;
-    for (unsigned i = 0; i < 32; i++) if (!isxdigit((unsigned char)proof[i])) return ESP_ERR_INVALID_ARG;
-    memset(&state, 0, sizeof(state)); state.active = true; state.mode = mode;
-    snprintf(state.node_id, sizeof(state.node_id), "%s", node); snprintf(state.proof, sizeof(state.proof), "%s", proof);
-    snprintf(state.service_name, sizeof(state.service_name), "CampusPulse-%s", node + 9);
-    /* RF may still be off: random bytes provide variation, never the security
-     * claim. HMAC is keyed by the persistent proof generated with true entropy. */
-    uint8_t context[44]; esp_fill_random(context, 32);
-    uint64_t now = (uint64_t)esp_timer_get_time(); uint32_t seq = ++session_sequence;
-    for (unsigned i = 0; i < 8; i++) context[32+i] = (uint8_t)(now >> (56-8*i));
-    for (unsigned i = 0; i < 4; i++) context[40+i] = (uint8_t)(seq >> (24-8*i));
-    bool derived = cp_provision_session_secrets(state.proof, context, sizeof(context), state.ap_password, nonce);
-    wipe(context, sizeof(context)); wipe(attempt_digest, sizeof(attempt_digest));
-    if (!derived) { cp_provision_stop(); return ESP_FAIL; }
-    submit_fn = submit; submit_ctx = ctx; expires = esp_timer_get_time() + SESSION_US; proof_failures = 0; cp_provision_set_status("waiting", "");
-    esp_err_t err = esp_event_loop_create_default(); if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) goto fail;
-    if (mode == CP_PROVISION_SOFTAP) { err = start_ap(); if (err != ESP_OK) goto fail; return ESP_OK; }
-    pc = protocomm_new(); if (!pc) { err = ESP_ERR_NO_MEM; goto fail; }
-    static protocomm_ble_name_uuid_t lookup[] = { {"prov-session", 0xff51}, {"cp-setup", 0xff52} };
-    protocomm_ble_config_t ble = { .service_uuid = {0x01,0x7a,0xc6,0x42,0xaf,0x8b,0x48,0xa8,0x1d,0x4f,0x3a,0x7b,0x00,0x00,0xc0,0xf0}, .nu_lookup_count = 2, .nu_lookup = lookup };
-    snprintf(ble.device_name, sizeof(ble.device_name), "%s", state.service_name);
-    if ((err = protocomm_ble_start(pc, &ble)) != ESP_OK) {
-        /* IDF can fail after controller initialization and free its private
-         * transport state. Do not retry or assume ownership was released. */
-        if (esp_bt_controller_get_status() != ESP_BT_CONTROLLER_STATUS_IDLE) {
-            teardown_fault = err; cp_provision_set_status("stop_failed", "Bluetooth start incomplete; restart required"); return err;
-        }
-        goto fail;
-    }
-    ble_started = true;
-    pop.data = (const uint8_t *)state.proof; pop.len = 32;
-    if ((err = protocomm_set_security(pc, "prov-session", &protocomm_security1, &pop)) != ESP_OK ||
-        (err = protocomm_add_endpoint(pc, "cp-setup", app_handler, NULL)) != ESP_OK) goto fail;
-    return ESP_OK;
-fail: { esp_err_t stopped = cp_provision_stop(); return stopped == ESP_OK ? err : stopped; }
+static esp_err_t stop_locked(void);
+esp_err_t cp_provision_usb_exchange(const uint8_t *request,size_t length,uint8_t **response,size_t *response_length) {
+    if(!response||!response_length)return ESP_ERR_INVALID_ARG;
+    *response=NULL;*response_length=0;
+    if(!request||!length||length>REQUEST_MAX)return ESP_ERR_INVALID_SIZE;
+    cJSON *object=parse_request((const char *)request,length),*result;
+    if(!object)result=reply(false,"invalid_json");
+    else if(!take_session())result=reply(false,"session_busy");
+    else {result=handle(object,CP_PROVISION_USB);give_session();}
+    delete_request(object);char *encoded=result?cJSON_PrintUnformatted(result):NULL;cJSON_Delete(result);
+    if(!encoded)return ESP_ERR_NO_MEM;
+    *response=(uint8_t *)encoded;*response_length=strlen(encoded);return ESP_OK;
 }
-esp_err_t cp_provision_stop(void) {
+esp_err_t cp_provision_start(cp_provision_mode_t mode,const char *node,const char *master,cp_provision_submit_fn submit,void *ctx) {
+    if(!node||strlen(node)!=15||strncmp(node,"cp_",3)||!master||strlen(master)!=32||!submit||mode<CP_PROVISION_BLE||mode>CP_PROVISION_USB)return ESP_ERR_INVALID_ARG;
+    for(unsigned i=3;i<15;i++)if(!((node[i]>='0'&&node[i]<='9')||(node[i]>='a'&&node[i]<='f')))return ESP_ERR_INVALID_ARG;
+    if(!take_session())return ESP_ERR_INVALID_STATE;
+    if(state.active||security_fatal||teardown_fault!=ESP_OK){give_session();return ESP_ERR_INVALID_STATE;}
+    cp_provision_snapshot_t next={.active=true,.mode=mode};snprintf(next.node_id,sizeof next.node_id,"%s",node);snprintf(next.service_name,sizeof next.service_name,"CampusPulse-%s",node+9);
+    uint8_t context[44],srp_salt[16];esp_fill_random(context,32);uint64_t now=(uint64_t)esp_timer_get_time();uint32_t seq=++session_sequence;
+    for(unsigned i=0;i<8;i++)context[32+i]=(uint8_t)(now>>(56-8*i));
+    for(unsigned i=0;i<4;i++)context[40+i]=(uint8_t)(seq>>(24-8*i));
+    bool derived=cp_provision_session_secrets(master,context,sizeof context,next.proof,next.ap_password,nonce,srp_salt);wipe(context,sizeof context);wipe(attempt_digest,sizeof attempt_digest);
+    if(!derived){give_session();return ESP_FAIL;}
+    if(mode==CP_PROVISION_USB){wipe(next.proof,sizeof next.proof);wipe(next.ap_password,sizeof next.ap_password);}
+    snprintf(next.state,sizeof next.state,"waiting");portENTER_CRITICAL(&lock);state=next;portEXIT_CRITICAL(&lock);wipe(&next,sizeof next);
+    submit_fn=submit;submit_ctx=ctx;expires=esp_timer_get_time()+SESSION_US;proof_failures=0;
+    if(mode==CP_PROVISION_USB){wipe(srp_salt,sizeof srp_salt);give_session();return ESP_OK;}
+    esp_err_t err=esp_event_loop_create_default();if(err!=ESP_OK&&err!=ESP_ERR_INVALID_STATE)goto fail;
+    if(mode==CP_PROVISION_SOFTAP){wipe(srp_salt,sizeof srp_salt);err=start_ap();if(err!=ESP_OK)goto fail;give_session();return ESP_OK;}
+    uint8_t *salt=malloc(16),*verifier=malloc(384);
+    if(!salt||!verifier){free(salt);free(verifier);err=ESP_ERR_NO_MEM;goto fail;}
+    memcpy(salt,srp_salt,16);wipe(srp_salt,sizeof srp_salt);
+    srp=(protocomm_security2_params_t){.salt=(const char *)salt,.salt_len=16,.verifier=(const char *)verifier,.verifier_len=384};
+    if(!cp_provision_sec2_verifier(state.proof,salt,verifier)){err=ESP_FAIL;goto fail;}
+    pc=protocomm_new();if(!pc){err=ESP_ERR_NO_MEM;goto fail;}
+    /* Install security before advertising so GAP_CONNECT can never miss it. */
+    const cp_provision_security_hooks_t hooks={security_enter,give_session,security_failure,security_broken};
+    if((err=protocomm_set_security(pc,"prov-session",cp_provision_security2(&hooks),&srp))!=ESP_OK||(err=protocomm_add_endpoint(pc,"cp-setup",app_handler,NULL))!=ESP_OK)goto fail;
+    static protocomm_ble_name_uuid_t lookup[]={{"prov-session",0xff51},{"cp-setup",0xff52}};
+    protocomm_ble_config_t ble={.service_uuid={0x01,0x7a,0xc6,0x42,0xaf,0x8b,0x48,0xa8,0x1d,0x4f,0x3a,0x7b,0x00,0x00,0xc0,0xf0},.nu_lookup_count=2,.nu_lookup=lookup};
+    snprintf(ble.device_name,sizeof ble.device_name,"%s",state.service_name);
+    if((err=protocomm_ble_start(pc,&ble))!=ESP_OK){if(esp_bt_controller_get_status()!=ESP_BT_CONTROLLER_STATUS_IDLE){teardown_fault=err;cp_provision_set_status("stop_failed","Bluetooth start incomplete; restart required");give_session();return err;}goto fail;}
+    ble_started=true;
+    give_session();return ESP_OK;
+fail:{wipe(srp_salt,sizeof srp_salt);esp_err_t stopped=stop_locked();give_session();return stopped==ESP_OK?err:stopped;}
+}
+static esp_err_t stop_locked(void) {
     if (teardown_fault != ESP_OK) return teardown_fault;
     esp_err_t err;
     if (http) { if ((err = httpd_stop(http)) != ESP_OK) goto failed; http = NULL; }
@@ -233,10 +299,15 @@ esp_err_t cp_provision_stop(void) {
     }
     if (ap_netif) { esp_netif_destroy_default_wifi(ap_netif); ap_netif = NULL; }
     portENTER_CRITICAL(&lock); state.active = false; wipe(state.proof, sizeof(state.proof)); wipe(state.ap_password, sizeof(state.ap_password)); portEXIT_CRITICAL(&lock);
-    wipe(nonce, sizeof(nonce)); wipe(attempt_digest, sizeof(attempt_digest)); return ESP_OK;
+    wipe(nonce,sizeof nonce);
+    if(srp.salt){wipe((void *)srp.salt,srp.salt_len);free((void *)srp.salt);}
+    if(srp.verifier){wipe((void *)srp.verifier,srp.verifier_len);free((void *)srp.verifier);}
+    memset(&srp,0,sizeof srp);return ESP_OK;
 failed:
     /* Preserve our handles and active ownership. Upstream BLE failure is
      * irrecoverable in this boot; AP shutdown may be retried by the supervisor. */
     cp_provision_set_status("stop_failed", "Transport shutdown failed; restart required");
     return err;
 }
+
+esp_err_t cp_provision_stop(void){if(!take_session())return ESP_ERR_INVALID_STATE;esp_err_t err=stop_locked();give_session();return err;}

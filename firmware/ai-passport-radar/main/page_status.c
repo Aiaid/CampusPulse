@@ -43,17 +43,22 @@ static void paint_status(void *arg)
     const cp_status_view_t *view = arg;
     ui_clear(UI_COL_BG);
     if(view->setup_active){
-        ui_text(12,6,view->setup_softap?"Wi-Fi hotspot setup":"Bluetooth setup",UI_COL_TEAL);
+        ui_text(12,6,view->setup_usb?"USB setup":view->setup_softap?"Wi-Fi hotspot setup":"Bluetooth setup",UI_COL_TEAL);
         field(36,"Node",view->node_id,sizeof view->node_id);
-        field(76,view->setup_softap?"Wi-Fi name":"Device name",view->setup_name,sizeof view->setup_name);
-        char part[17];memcpy(part,view->setup_proof,16);part[16]=0;
-        ui_text(12,116,"Setup proof",UI_COL_MUTED);value_text(136,part,sizeof part);
-        memcpy(part,view->setup_proof+16,16);part[16]=0;value_text(156,part,sizeof part);
-        if(view->setup_softap){ui_text(12,186,"Wi-Fi password",UI_COL_MUTED);
-            memcpy(part,view->setup_password,16);part[16]=0;value_text(206,part,sizeof part);
-            memcpy(part,view->setup_password+16,16);part[16]=0;value_text(226,part,sizeof part);
-            ui_text(12,252,"Open 192.168.4.1",UI_COL_FG);
-        }else field(196,"State",view->setup_state,sizeof view->setup_state);
+        if(view->setup_usb){
+            ui_text(12,92,"Connect USB cable",UI_COL_FG);
+            ui_text(12,120,"Select USB in admin",UI_COL_FG);
+            field(176,"State",view->setup_state,sizeof view->setup_state);
+        }else{
+            field(76,view->setup_softap?"Wi-Fi name":"Device name",view->setup_name,sizeof view->setup_name);
+            char pin[9];memcpy(pin,view->setup_proof,8);pin[8]=0;
+            field(116,"Setup PIN (5 min)",pin,sizeof pin);
+            if(view->setup_softap){
+                char password[13];memcpy(password,view->setup_password,12);password[12]=0;
+                field(176,"Wi-Fi password",password,sizeof password);
+                ui_text(12,230,"Open 192.168.4.1",UI_COL_FG);
+            }else field(176,"State",view->setup_state,sizeof view->setup_state);
+        }
         ui_text(12,282,"UP:BLE DOWN:Wi-Fi",UI_COL_MUTED);return;
     }
     ui_text(12, 6, "CampusPulse", UI_COL_TEAL);

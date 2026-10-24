@@ -1,5 +1,36 @@
 # Prior work and reuse
 
+## 2026-10-25 — Short PIN and USB provisioning
+
+The revised local BLE flow uses the installed Apache-2.0 ESP-IDF 5.5.3
+`protocomm_security2` and SRP implementation, linked from the SDK rather than
+vendored. The browser implementation independently follows its protobuf schema,
+SRP group/formulas and patch-1 AES-GCM counter behavior. The public synthetic
+fixture and generation recipe under `tests/provisioning/` fingerprint the six
+SDK reference files; they contain no actual device secrets or observations.
+The former Security 1 runtime and fixtures remain in Git history.
+
+WebCrypto supplies SHA-512 and AES-GCM; browser SRP arithmetic uses JavaScript
+BigInt and makes no constant-time execution guarantee. A passing mock/browser
+fixture does not establish physical Bluetooth transport, timing or memory
+behavior. Pinned SDK debug logging includes secret material, so provisioning
+builds reject a compiled log maximum above INFO.
+
+A generated build copy of the pinned SDK `security2.c` receives an IV alignment
+correction, with original Apache-2.0 notices retained and source fingerprints
+checked before transformation. The installed SDK and wire/cryptographic
+algorithms are unchanged. Fixed-width HMAC salt and standard mbedTLS verifier
+generation also avoid the original helper's leading-zero salt conversion.
+Native interoperability checks compile the actual SDK implementation; host
+platform shims and these compatibility guards are distinguished from device
+timing/transport acceptance.
+
+The bounded USB framing, console adapter and administrator Web Serial path are
+new CampusPulse code. They use the installed SDK native USB Serial/JTAG driver;
+no new upstream board driver, font, image, capture or credential is imported.
+See the [local provisioning contract](../specs/local-provisioning-v2.md) for
+verification gates and the distinction between local receipt and cloud ACK.
+
 ## 2026-10-25 — Redistributable firmware font replacement
 
 The current generated text/digit font files use official Noto Sans CJK SC Bold

@@ -2,6 +2,7 @@
 #include "cp_board.h"
 #include "cp_core.h"
 #include "cp_runtime.h"
+#include "cp_usb.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -20,6 +21,10 @@ static cp_core_t s_core;
 static char s_node_id[CP_NODE_ID_SIZE];
 #if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
 static esp_err_t s_runtime_error;
+static bool begin_usb_setup(void *unused) {
+    (void)unused;
+    return cp_runtime_request_setup(CP_PROVISION_USB);
+}
 #endif
 
 static void input_received(const cp_input_event_t *event, void *context) {
@@ -63,6 +68,7 @@ static void show_status(const cp_runtime_snapshot_t *runtime) {
                  : cp_collection_state_name(runtime->collection));
     view.setup_active = runtime->provision.active;
     view.setup_softap = runtime->provision.mode == CP_PROVISION_SOFTAP;
+    view.setup_usb = runtime->provision.mode == CP_PROVISION_USB;
     snprintf(view.setup_name, sizeof view.setup_name, "%s", runtime->provision.service_name);
     snprintf(view.setup_proof, sizeof view.setup_proof, "%s", runtime->provision.proof);
     snprintf(view.setup_password, sizeof view.setup_password, "%s", runtime->provision.ap_password);
@@ -174,8 +180,14 @@ esp_err_t cp_app_start(void) {
     }
 #endif
 #if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
-    if (s_runtime_error == ESP_OK)
+    if (s_runtime_error == ESP_OK) {
         s_runtime_error = cp_runtime_start();
+        if (s_runtime_error == ESP_OK) {
+            esp_err_t usb = cp_usb_start(begin_usb_setup, NULL);
+            if (usb != ESP_OK)
+                ESP_LOGW(TAG, "USB provisioning unavailable: %s", esp_err_to_name(usb));
+        }
+    }
 #endif
     if (!s_diagnostics)
         ESP_LOGI(TAG, "Runtime initialized; provisioning and assigned policy control collection");

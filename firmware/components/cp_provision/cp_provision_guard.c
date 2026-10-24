@@ -13,27 +13,36 @@ bool cp_provision_uuid_v4(const char *value) {
     }
     return value[14] == '4' && (value[19] == '8' || value[19] == '9' || value[19] == 'a' || value[19] == 'b');
 }
-static bool derive(const char *proof, const char *domain, const uint8_t *context, size_t length, char out[33]) {
-    uint8_t message[128] = {0}, digest[32] = {0};
+static bool derive(const char *proof, const char *domain, const uint8_t *context, size_t length, uint8_t out[32]) {
+    uint8_t message[128] = {0};
     const size_t domain_len = strlen(domain);
     if (domain_len + 1 + length > sizeof(message)) return false;
     memcpy(message, domain, domain_len); memcpy(message + domain_len + 1, context, length);
     int err = mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
                              (const unsigned char *)proof, 32, message,
-                             domain_len + 1 + length, digest);
-    if (err == 0) {
-        static const char hex[] = "0123456789abcdef";
-        for (unsigned i = 0; i < 16; i++) { out[2*i] = hex[digest[i] >> 4]; out[2*i+1] = hex[digest[i] & 15]; }
-        out[32] = 0;
-    } else wipe(out, 33);
-    wipe(message, sizeof(message)); wipe(digest, sizeof(digest)); return err == 0;
+                             domain_len + 1 + length, out);
+    wipe(message, sizeof(message)); if (err) wipe(out,32); return err == 0;
 }
-bool cp_provision_session_secrets(const char *proof, const uint8_t *context, size_t length, char ap[33], char nonce[33]) {
-    if (!proof || strlen(proof) != 32 || !context || length < 16 || length > 64 || !ap || !nonce) return false;
+bool cp_provision_session_secrets(const char *proof, const uint8_t *context, size_t length, char pin[9], char ap[13], char nonce[33], uint8_t salt[16]) {
+    if (!proof || strlen(proof) != 32 || !context || length < 16 || length > 64 || !pin || !ap || !nonce || !salt) return false;
     for (unsigned i = 0; i < 32; i++) if (!lower_hex(proof[i])) return false;
-    bool ok = derive(proof, "campuspulse/setup/ap-password/v1", context, length, ap)
-        && derive(proof, "campuspulse/setup/nonce/v1", context, length, nonce);
-    if (!ok) { wipe(ap, 33); wipe(nonce, 33); } return ok;
+    uint8_t digest[32] = {0}; bool ok = derive(proof,"campuspulse/setup/pin/v2",context,length,digest);
+    bool chosen = false;
+    /* Rejection sampling removes modulo bias and preserves leading zeros. */
+    for (unsigned i=0;ok && !chosen && i<8;i++) {
+        const uint8_t *p=digest+4*i;
+        uint32_t n=((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];
+        if (n>=4200000000u) continue;
+        n%=100000000u; for (int j=7;j>=0;j--) { pin[j]=(char)('0'+n%10); n/=10; } pin[8]=0;chosen=true;
+    }
+    ok=ok && chosen && derive(proof,"campuspulse/setup/ap-password/v2",context,length,digest);
+    if(ok) { static const char alphabet[]="23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+        for(unsigned i=0;i<12;i++) { unsigned bit=i*5,index=bit/8,shift=bit%8; unsigned v=(unsigned)digest[index]<<8|digest[index+1]; ap[i]=alphabet[(v>>(11-shift))&31]; } ap[12]=0; }
+    ok=ok && derive(proof,"campuspulse/setup/nonce/v2",context,length,digest);
+    if(ok) { static const char hex[]="0123456789abcdef";for(unsigned i=0;i<16;i++){nonce[2*i]=hex[digest[i]>>4];nonce[2*i+1]=hex[digest[i]&15];}nonce[32]=0; }
+    ok=ok && derive(proof,"campuspulse/setup/srp-salt/v2",context,length,digest);
+    if(ok)memcpy(salt,digest,16);
+    wipe(digest,sizeof digest);if(!ok){wipe(pin,9);wipe(ap,13);wipe(nonce,33);wipe(salt,16);}return ok;
 }
 bool cp_provision_settings_digest(const cp_settings_t *s, uint8_t out[32]) {
     if (!s || !out) return false;

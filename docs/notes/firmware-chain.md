@@ -1,12 +1,23 @@
 # Passport provisioning, policy and durable upload chain
 
+> Hardware update, 2026-10-25: one connected Passport now passes application-only
+> flashing, protected-region verification and a 60-second BLE-setup startup test
+> after the supervisor stack fix. See the final hardware section below. Earlier
+> software-only evidence remains historical; Wi-Fi/enrollment/field-radio
+> acceptance is still separate.
+
+> Local provisioning revision: the long displayed proof and Security 1 details
+> below describe the initial software snapshot. The
+> [short PIN / USB contract](../specs/local-provisioning-v2.md) specifies the
+> replacement; its verification is recorded separately from these earlier tests.
+
 > The 158-file source fingerprint and four-image table below are the historical
 > pre-font-replacement acceptance snapshot. Current font arrays were replaced
 > on 2026-10-25 with licensed OFL derivatives. Fresh open-font release builds
 > passed below; use those artifacts for publication/flashing, not the historical
 > private-font binaries. See [font provenance](../../firmware/fonts/README.md).
 
-Dates: 2026-10-24–2026-10-25. Status: **local software chain implemented and
+Dates: 2026-10-24–2026-10-25. Historical snapshot status: **local software chain implemented and
 verified against the frozen source; physical-device acceptance and deployment
 have not been performed**.
 
@@ -309,7 +320,7 @@ firmware/tools/check-chain.sh
 bash firmware/components/cp_settings/tests/run-host.sh
 IDF_PATH=/path/to/esp-idf-v5.5.3 bash firmware/components/cp_network/tests/run-host.sh
 bash tests/provisioning/host/run.sh
-npx vitest run tests/provisioning/security1.test.js
+npx vitest run tests/provisioning
 node scripts/provisioning-browser-smoke.mjs
 npm run build
 firmware/tools/build-passport.sh
@@ -333,6 +344,10 @@ a separate evidence cohort and was not reused as proof for this v2 chain.
 
 ## Remaining acceptance
 
+Historical local-only boundary: the subsequent 2026-10-25 flashing section
+supersedes the publication, flashing and startup statements in this section.
+Radio, Wi-Fi enrollment and upload acceptance remain separate.
+
 No physical Passport has been flashed by this work. Still required: verify its
 revision and existing Flash layout; test wrong proof, permission cancellation,
 BLE/AP disconnect, bad network, interrupted settings commit, setup recovery,
@@ -346,3 +361,127 @@ profiles, layouts, builds and hardware checks exist. Durable Passport manual
 wait/parking markers, terminal authorization, USB provisioning and ePaper cards
 remain planned. No v2 cloud deployment, production registration, production
 capture or private-source publication is included in this local acceptance.
+
+## One-Passport flashing and startup — 2026-10-25
+
+The user explicitly authorized flashing and separately approved resetting only
+the backed-up legacy queue. The connected chip reported ESP32-C3 QFN32 revision
+1.1, embedded 8 MiB Flash, 40 MHz crystal and native USB Serial/JTAG. Its existing
+ESP-IDF 5.5.3 bootloader and partition table passed structural/checksum checks.
+The actual table retains `factory` at `0x10000` / `0x300000`, NVS at
+`0x9000` / `0x6000`, protected `cardid` at `0x356000` / `0x4000`, and the compatible
+`blelog` queue alias at `0x360000` / `0x400000` (data subtype `0x40`).
+
+An 8,388,608-byte backup was read and compared with the device before writing.
+The old queue was foreign to the new journal: all 341 slots would be quarantined,
+with zero usable slots. After the user's approval, only that 4 MiB region was
+erased. No whole-chip erase occurred. The bootloader/table stayed in place;
+only the application was written at `0x10000`.
+
+The initial application exposed a real `cp_supervisor` stack-protection reset.
+Commit `5ea501a13831e1081592fe671086826199f003f9` reuses one caller-owned runtime
+snapshot, raises its stack from 4096 to 8192 bytes and records its high-water
+mark. Native normal/diagnostic tests and both C3 builds passed. The final normal
+image identifies itself as `cp-5ea501a13831`, is 1,452,400 bytes and has SHA-256
+`cf315420d2b5299a91ba3e1af8c7de5c37b881349c6819936790e3ffd95990aa`.
+
+Before each normal boot, the complete 8 MiB device digest matched a private
+verification-only expected Flash copy. Unwritten regions, including `cardid`,
+were retained. First boot legitimately created setup state in NVS; that new state
+was saved before the corrective application update, and `cardid` was also read
+back directly and matched the original backup. No padded full-Flash image was
+written: the full expected copy was used only by the comparison command.
+
+The corrected image was observed for 60 seconds: zero panics, zero software
+resets, journal pending/quarantined counts both zero, BLE host started and
+advertising requested. Display/input/battery drivers reported ready. The
+supervisor reported a minimum 5032 free stack bytes during this setup scene;
+this is not a measured bound for Wi-Fi/TLS/collection workloads. The user
+confirmed the display normally shows Bluetooth setup, Node and Setup proof.
+Phone BLE transactions, Wi-Fi enrollment, assigned-policy capture
+and actual upload/reclamation still require their own acceptance.
+
+The protected original backup and raw serial logs remain private and ignored
+under `captures/passport-flash.*`; this note omits device identifiers, setup
+proofs, credentials and observation bytes. The corrected local image package is
+`firmware/build/publication-20261025/normal-stack-fixed/`, with separate images
+and font copyright/OFL notices. The v2 server/docs deployment at commit
+`1912d48` passed hosted CI and deployment; public read-only checks confirmed its
+five v2 operations, protected unauthenticated configuration response and
+database-backed place summary.
+
+## Short PIN / USB revision — local acceptance, 2026-10-25
+
+This revision replaces the original displayed long proof and Security 1 flow.
+Display-equipped nodes use an eight-digit numeric PIN, five-minute expiry and
+five failed authentication attempts across reconnects. The internal factory
+secret remains in its existing NVS record. Security 2 uses the pinned SDK SRP6a
+and patch-1 AES-GCM protocol; no Security 0/1 downgrade exists. Hotspot passwords
+are independent twelve-character base32 strings. The screen presents the short
+PIN on one line and labels physical USB setup without displaying a PIN.
+
+The new `cp_usb` module separates bounded framing/controller logic from native
+USB Serial/JTAG. An unenrolled headless profile waits for explicit USB `begin`.
+Status stays available during network validation; failures retain previous
+settings and reopen USB. The browser refreshes and checks factory identity and
+nonce before sending, retains the same unique cloud credential after uncertain
+responses, and accepts matching local `received`/`testing`/`saved` replies while
+still requiring fresh cloud contact and applied ACK for completion. This fixes
+both failure-session nonce rotation and duplicate replies during validation.
+
+Two SDK compatibility repairs are explicit: fixed sixteen-byte salt plus standard
+mbedTLS verifier generation avoid the helper's leading-zero conversion; a
+fingerprint-limited generated copy aligns the SDK's private IV to `uint32_t`.
+The original source SHA-256 is
+`d6dedb2b759c4ae45c1c88ff251de4ba1f830e5b896c0193ef01ce69c2a862bc`;
+the patched source is
+`ef2cc20030a39c7870a0b741db136000d8659f907004fbb61412d45846ec18e2`.
+Only the IV member's alignment changes; compile-time assertions retain the
+12-byte nonce/counter layout. Installed SDK files, algorithms and wire schema
+are unchanged. Original Apache notices remain in generated code. See the
+[component contract](../../firmware/components/cp_provision/README.md).
+
+Final local verification:
+
+- 479 tests in 47 release-scope frontend/API test files and production web build
+  pass. The separate uncommitted research analysis suite is excluded from this
+  release count and remains outside this change.
+- Chromium drives the actual wizard/WebCrypto/WebStreams with synthetic BLE,
+  USB and cloud peers: wrong PIN, synchronous chooser activation, lost configure
+  reply, duplicate `testing` ACK, failed Wi-Fi/new nonce/corrected candidate,
+  credential retention and fresh cloud applied-state gating. WebKit drives the
+  embedded eight-digit local form. These are not physical transport tests.
+- `check-chain.sh` passes native sanitizer/fault checks, twenty actual-runtime
+  scenarios, app startup/status tests in normal and diagnostic modes, bounded
+  USB/console tests, actual provisioning-module pthread concurrency/expiry/
+  idempotence tests, and literal C-codec fixtures against isolated workerd/D1/R2.
+- The SDK C peer executes actual Security 2/SRP with mbedTLS, with the declared
+  alignment repair. ASan/UBSan cover the peer, SDK protocol/SRP and module under
+  host shims; the linked mbedTLS dependency is a separate native library build.
+  Explicit assertions exercise leading-zero salt, SHA-512 identity hash, padded
+  client A and minimal server B, busy connection establishment, wrong PIN across
+  reconnects, expiry, malformed protobuf and ciphertext bounds. Host timings are
+  not C3 measurements.
+
+Four fresh C3 builds were reconfigured/rebuilt with the final repairs. Their
+compile-command records contain exactly one generated checked Security 2 unit
+and no original SDK Security 2 translation unit. All require Security 2, compile
+logging no higher than INFO, retain TLS date/certificate validation and pass
+separate-image/partition guards:
+
+| Configuration | Application bytes |
+| --- | ---: |
+| Normal, LCD/buttons | 1,476,416 |
+| Headless | 1,384,064 |
+| Diagnostics, LCD/buttons | 593,248 |
+| Diagnostics, headless | 481,248 |
+
+The ignored local package is `firmware/build/shortpin-usb-20261025/`, with separate
+images, SDK patch manifests, application/SDK licenses and OFL/font notices. Its
+227-file local source manifest SHA-256 is
+`5db5923a2b3d5fe584b3fb90e9e2d68585735797a3851c1c73136856edc81074`.
+This records the tested software snapshot; a committed-version normal image and
+any subsequent physical USB/startup results require their own record. No device
+has been updated to this revision at this checkpoint. Physical BLE, browser USB
+chooser, target-phone hotspot, real Wi-Fi/cloud enrollment and sustained capture/
+upload acceptance remain separate.

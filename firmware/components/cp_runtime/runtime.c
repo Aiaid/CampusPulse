@@ -26,6 +26,7 @@ static SemaphoreHandle_t s_lock;
 static QueueHandle_t s_commands;
 static TaskHandle_t s_task;
 static bool s_prepared, s_enrolled, s_testing;
+static bool s_candidate_pending;
 static uint64_t s_policy_response_seen;
 static uint64_t s_policy_attempted_sequence;
 static char s_reason[80];
@@ -48,10 +49,16 @@ static esp_err_t submit(const cp_settings_t *candidate, const char *attempt, voi
     if (!candidate || !attempt || strlen(attempt) >= 37 || strcmp(candidate->node_id, s_node) ||
         !cp_settings_validate(candidate))
         return ESP_ERR_INVALID_ARG;
+    bool available = false;
+    if (!__atomic_compare_exchange_n(&s_candidate_pending, &available, true, false,
+                                      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        return ESP_ERR_INVALID_STATE;
     command_t cmd = {.kind = CMD_CANDIDATE, .candidate = *candidate};
     strcpy(cmd.attempt, attempt);
     esp_err_t result = xQueueSend(s_commands, &cmd, 0) == pdTRUE ? ESP_OK : ESP_ERR_NO_MEM;
     cp_settings_clear_sensitive(&cmd.candidate);
+    if (result != ESP_OK)
+        __atomic_store_n(&s_candidate_pending, false, __ATOMIC_RELEASE);
     return result;
 }
 static void publish(void) {
@@ -106,6 +113,7 @@ static void test_candidate(command_t *cmd) {
         s_enrolled = true;
         s_testing = false;
         reason("stored_restarting");
+        cp_provision_set_status("saved", "stored_restarting");
         publish();
         cp_settings_clear_sensitive(&cmd->candidate);
         vTaskDelay(pdMS_TO_TICKS(1500));
@@ -193,14 +201,22 @@ static void runtime_task(void *arg) {
         cp_core_set_identity(&s_core, CP_IDENTITY_ENROLLED);
         if (cp_network_start(&s_settings) != ESP_OK)
             reason("network_start_failed");
-    } else
+    } else if (s_core.profile->capabilities & CP_CAP_DISPLAY) {
         enter_setup(CP_PROVISION_BLE);
+    } else {
+        /* A headless boot cannot present the wireless setup PIN. USB remains
+         * available, but only an explicit begin command opens its session. */
+        cp_core_set_setup_active(&s_core, true);
+        reason("awaiting_usb_setup");
+        publish();
+    }
     for (;;) {
         command_t cmd;
         if (xQueueReceive(s_commands, &cmd, pdMS_TO_TICKS(500)) == pdTRUE) {
-            if (cmd.kind == CMD_CANDIDATE)
+            if (cmd.kind == CMD_CANDIDATE) {
                 test_candidate(&cmd);
-            else if (cmd.kind == CMD_RESUME && s_enrolled) {
+                __atomic_store_n(&s_candidate_pending, false, __ATOMIC_RELEASE);
+            } else if (cmd.kind == CMD_RESUME && s_enrolled) {
                 if (cp_provision_stop() == ESP_OK) {
                     cp_core_set_setup_active(&s_core, false);
                     cp_core_set_identity(&s_core, CP_IDENTITY_ENROLLED);
@@ -267,13 +283,14 @@ esp_err_t cp_runtime_start(void) {
                : ESP_ERR_NO_MEM;
 }
 bool cp_runtime_request_setup(cp_provision_mode_t mode) {
-    if (!s_prepared || (mode != CP_PROVISION_BLE && mode != CP_PROVISION_SOFTAP))
+    if (!s_prepared || __atomic_load_n(&s_candidate_pending, __ATOMIC_ACQUIRE) ||
+        (mode != CP_PROVISION_BLE && mode != CP_PROVISION_SOFTAP && mode != CP_PROVISION_USB))
         return false;
     command_t cmd = {.kind = CMD_MODE, .mode = mode};
     return xQueueSend(s_commands, &cmd, 0) == pdTRUE;
 }
 bool cp_runtime_request_resume(void) {
-    if (!s_prepared || !s_enrolled)
+    if (!s_prepared || !s_enrolled || __atomic_load_n(&s_candidate_pending, __ATOMIC_ACQUIRE))
         return false;
     command_t cmd = {.kind = CMD_RESUME};
     return xQueueSend(s_commands, &cmd, 0) == pdTRUE;

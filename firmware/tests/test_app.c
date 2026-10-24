@@ -33,6 +33,10 @@ static unsigned runtime_setup_calls, runtime_resume_calls;
 static esp_err_t runtime_prepare_error, runtime_start_error;
 static cp_provision_mode_t requested_setup_mode;
 static cp_runtime_snapshot_t runtime_view;
+static unsigned usb_start_calls;
+static cp_usb_begin_fn usb_begin_handler;
+static void *usb_begin_context;
+static bool usb_worker_running;
 static bool task_running, running_before_boot;
 static void (*task_entry)(void *);
 static void *task_context;
@@ -133,6 +137,14 @@ void vTaskDelay(TickType_t delay)
     longjmp(scheduler_exit, 1);
 }
 
+esp_err_t cp_usb_start(cp_usb_begin_fn begin, void *context)
+{
+    assert(board_calls == 1 && runtime_start_calls == 1 && !s_boot_ready && begin);
+    assert(!runtime_setup_calls); /* Installing a console must not enter setup. */
+    ++usb_start_calls;usb_begin_handler = begin;usb_begin_context = context;
+    return ESP_OK;
+}
+
 esp_err_t cp_runtime_prepare(const char *node, const cp_board_profile_t *profile)
 {
     /* Entropy/NVS preparation precedes board initialization, which may enable ADC. */
@@ -159,8 +171,8 @@ void cp_runtime_snapshot(cp_runtime_snapshot_t *out)
 
 bool cp_runtime_request_setup(cp_provision_mode_t mode)
 {
-    assert(task_running && s_boot_ready);
-    assert(mode == CP_PROVISION_BLE || mode == CP_PROVISION_SOFTAP);
+    assert((task_running || usb_worker_running) && s_boot_ready);
+    assert(mode == CP_PROVISION_BLE || mode == CP_PROVISION_SOFTAP || mode == CP_PROVISION_USB);
     requested_setup_mode = mode;
     runtime_setup_calls++;
     return true;
@@ -258,6 +270,7 @@ static void reset_fixture(void)
     fail_queue = fail_task = display_ready = input_ready = false;
     runtime_prepare_calls = runtime_start_calls = runtime_snapshot_calls = 0;
     runtime_setup_calls = runtime_resume_calls = 0;
+    usb_start_calls = 0;usb_begin_handler = NULL;usb_begin_context = NULL;usb_worker_running = false;
     runtime_prepare_error = runtime_start_error = ESP_OK;
     requested_setup_mode = CP_PROVISION_BLE;
     memset(&runtime_view, 0, sizeof runtime_view);
@@ -322,7 +335,7 @@ static void test_optional_failures_identity_and_idempotence(void)
     assert(cp_app_start() == ESP_OK);
     assert(task_creations == 1 && board_calls == 1 && factory_calls == 1);
 #if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
-    assert(runtime_prepare_calls == 1 && runtime_start_calls == 1);
+    assert(runtime_prepare_calls == 1 && runtime_start_calls == 1 && usb_start_calls == 1);
 #else
     assert(!runtime_prepare_calls && !runtime_start_calls);
 #endif
@@ -462,6 +475,24 @@ static void test_actual_capture_and_pressure_status(void)
 #endif
 }
 
+static void test_usb_console_is_explicit_and_separate(void)
+{
+    reset_fixture();
+    assert(cp_app_start() == ESP_OK);
+#if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
+    assert(usb_start_calls == 1 && usb_begin_handler && !runtime_setup_calls);
+    usb_worker_running = true;
+    assert(usb_begin_handler(usb_begin_context));
+    usb_worker_running = false;
+    assert(runtime_setup_calls == 1 && requested_setup_mode == CP_PROVISION_USB);
+    runtime_view.provision.active = true;runtime_view.provision.mode = CP_PROVISION_USB;
+    run_one_supervisor_round(false);
+    assert(last_view.setup_usb && !last_view.setup_softap && !last_view.setup_proof[0]);
+#else
+    assert(!usb_start_calls && !usb_begin_handler);
+#endif
+}
+
 int main(void)
 {
     test_allocation_failures_before_callbacks();
@@ -471,6 +502,7 @@ int main(void)
     test_scanner_failure_preserves_safe_status();
     test_runtime_initialization_failure_status();
     test_runtime_setup_and_resume_input_routes();
+    test_usb_console_is_explicit_and_separate();
     test_actual_capture_and_pressure_status();
     reset_fixture();
     printf("actual cp_app startup/supervisor (diagnostics=%d): 8 host test groups passed\n",

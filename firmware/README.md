@@ -4,9 +4,13 @@ The current local AI Passport implementation connects protected browser BLE or
 device-hosted SoftAP setup, durable enrollment, v2 policy control, canonical
 MAC/address-type summaries, a frozen Flash journal and exact upload receipts.
 See the [firmware chain and evidence boundaries](../docs/notes/firmware-chain.md).
-Final frozen-source software acceptance passed on 2026-10-25, including four
-fresh C3 image variants. Physical-device validation and production deployment
-have not been performed. T-Energy-S3 and Waveshare support remain
+The initial chain's software acceptance passed on 2026-10-25, including four
+fresh C3 image variants. Its server is deployed and one Passport application
+update/startup was verified while retaining protected data. Physical enrollment
+and capture/upload acceptance remain separate. The
+[short PIN and USB revision](../docs/specs/local-provisioning-v2.md) passes local
+native/SDK/browser checks and four C3 configurations; its physical acceptance
+is recorded separately. T-Energy-S3 and Waveshare support remain
 pending independently verified profiles and layouts.
 
 The project entry is [ai-passport-radar](ai-passport-radar/README.md), imported at
@@ -21,7 +25,7 @@ Activate ESP-IDF 5.5.3 and its Python environment, then run:
 ```bash
 firmware/tools/check-chain.sh
 node scripts/provisioning-browser-smoke.mjs
-npx vitest run tests/provisioning/security1.test.js
+npx vitest run tests/provisioning
 firmware/tools/build-passport.sh
 firmware/tools/build-passport.sh --diagnostic
 firmware/tools/build-passport.sh --headless
@@ -32,10 +36,11 @@ The chain helper includes native sanitizer/fault tests and sends literal C-codec
 fixtures to a real isolated local workerd/D1/R2 instance. The browser script uses
 synthetic cloud/GATT and WebKit for the device page; it cannot validate physical
 Bluetooth or iPhone hotspot connectivity. The two build flags select diagnostics
-and no LCD/buttons; they do not select another board family. Normal headless
-requires already validated enrollment settings or an independent secure channel
-for the setup proof; it does not provide human onboarding without that channel,
-and USB provisioning remains planned.
+and no LCD/buttons; they do not select another board family. The USB revision
+gives normal headless builds a physical setup path without a displayed code.
+Connecting a cable alone does not enter setup; select USB in the administrator
+wizard. It requires a desktop browser exposing Web Serial. iPhone/iPad browser
+setup uses the local hotspot of a display-equipped device.
 
 Builds use fresh directories and validate separate bootloader, partition and app
 images. Python operations use `uv`. No helper deploys or flashes hardware.

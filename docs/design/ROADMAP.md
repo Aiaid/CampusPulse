@@ -15,6 +15,12 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
+- [ ] Simplify local provisioning: use an expiring eight-digit numeric code with
+      Security 2 authentication on display-equipped nodes, and a physical USB
+      provisioning path for headless nodes. Preserve internal device secrets,
+      bounded attempts, prior enrollment on failure and protected Flash data;
+      verify SDK interoperability, browser flows and actual Passport startup/USB.
+
 - [ ] Deliver the authorized firmware integration commit/push and Passport
       flash: replace inherited proprietary raster fonts with reproducible open
       fonts, rebuild/verify the release images, inspect and back up the connected

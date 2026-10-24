@@ -153,6 +153,7 @@ void cp_board_present(const cp_board_view_t *view) {
     COPY_FIELD(setup_state);
     screen.setup_active = view->setup_active;
     screen.setup_softap = view->setup_softap;
+    screen.setup_usb = view->setup_usb;
 #undef COPY_FIELD
     status_page_render(&screen);
     s_last_view = *view;

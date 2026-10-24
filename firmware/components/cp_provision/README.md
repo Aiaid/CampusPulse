@@ -1,115 +1,136 @@
 # Device-local provisioning
 
-This component is an exclusive radio boot mode for the AI Passport baseline.
-The application supervisor owns mode selection, displayed setup proof, candidate
-validation, durable settings and reboot. The BLE scanner must not run concurrently.
-No hardware was flashed or exercised as part of the implementation tests.
+The controller owns setup mode, candidate validation, durable settings and
+reboot. Collection and the setup radio never own NimBLE concurrently. The
+[local provisioning contract](../../../docs/specs/local-provisioning-v2.md)
+defines short numeric PINs and physical USB, separate from cloud protocol v2.
 
-## BLE
+## Display PIN and BLE
 
-- ESP-IDF 5.5.3 `protocomm_ble` uses the configured NimBLE host. The component
-  does not register another NimBLE host, release Bluetooth memory, or enable SMP.
-- `protocomm_security1` authenticates possession of a random 32-hex setup proof
-  before application exchanges. It uses the official X25519/SHA-256/AES-CTR
-  protocol; there is no Security 0 fallback. This protocol is stream encryption,
-  not AES-GCM. Do not describe it as authenticated encryption of each message.
-- Service: `f0c00000-7b3a-4f1d-a848-8baf42c67a01`; session characteristic:
-  `f0c0ff51-7b3a-4f1d-a848-8baf42c67a01`; protected application characteristic:
-  `f0c0ff52-7b3a-4f1d-a848-8baf42c67a01`. Each request is a write-with-response,
-  then a read; one request is outstanding at a time. The browser rejects payloads
-  over 512 bytes and closes the session after a transport/protocol error.
-- Inside the encrypted application endpoint, JSON has `v:1` and `op:info`,
-  `op:status` or `op:configure`. Info identifies the factory-derived `cp_` node,
-  never the browser's opaque `BluetoothDevice.id`.
-- Configure fields: `node_id`, `attempt_id` (UUID), `ssid`, `password`,
-  `device_token`. Attempt IDs must be lowercase UUIDv4. An accepted attempt
-  retains a SHA-256 digest of explicit length-prefixed settings fields; an exact
-  retry returns its existing status while changed settings under the same ID
-  are rejected. The only accepted cloud credential is the independent `cpd_`
-  device credential. API origin is fixed by `cp_settings`; clients cannot set it.
+The screen shows eight ASCII digits, including leading zeros. A session expires
+after five minutes; five failed authentication attempts across connections lock
+it. Explicitly starting a new setup session resets that budget. The persistent
+128-bit factory setup secret stays internal and is never displayed or returned
+by an endpoint. Domain-separated HMAC derives the PIN, nonce, SRP salt and the
+independent hotspot password from that secret and boot/session context. RF-off
+randomness supplies variation, not the claim of true entropy.
 
-## Safari / iOS fallback
+BLE uses the pinned ESP-IDF 5.5.3 Security 2 protocol: SRP6a, SHA-512 and
+patch-1 AES-256-GCM counters, with public username `campuspulse`. Security 0/1
+are disabled; numeric codes are never sent through the former Security 1 flow.
+The service UUID is `f0c00000-7b3a-4f1d-a848-8baf42c67a01`; the session and
+protected application characteristics end in `ff51` and `ff52` respectively.
+Each request is a write-with-response then a read, with one request outstanding.
+Encrypted messages are at most 512 bytes, including the 16-byte GCM tag.
 
-The device creates a temporary WPA2 personal hotspot with a 32-hex password,
-one client, and an HTTP page at `http://192.168.4.1`. This fallback relies
-on the WPA2 link, not HTTP TLS or WebCrypto on an insecure origin. It is a distinct
-local form, not a plaintext protocomm Security 0 endpoint.
+The wrapper validates protobuf shape, bounds, public values and session phase
+before calling SDK handlers. Authentication and expiry checks share a
+nonblocking session gate. Transport establishment uses its own short guard so
+a concurrent status snapshot cannot lose a valid BLE connection. Security and
+application endpoints are registered before advertising. Storage/network work
+never runs in the application transport callback; the SDK's synchronous SRP
+handshake remains a separate timing/stack measurement boundary.
 
-The exact embedded ASCII page has no external assets or cloud requests. Users
-copy the node-bound enrollment handoff from the HTTPS administrator page, then
-enter the target network password locally. It checks the local node before
-submitting. Device requests require a fixed Host, same origin when supplied,
-JSON content type, per-session nonce, and device setup proof. The AP password and nonce are
-separately domain-labeled HMAC-SHA256 outputs keyed by the persistent setup
-proof, truncated to 128 bits. Random bytes, monotonic time and a per-boot session
-counter form the context. RF-off random bytes are treated only as variation,
-not as an independent source of true entropy; secrecy depends on the proof
-generated with an actual entropy source. Eight failed
-proofs lock the session; all requests expire after ten minutes. Bodies are limited
-to 1024 bytes and JSON nesting is bounded before recursive parsing. Responses
-never contain Wi-Fi passwords, cloud credentials, or setup proof. The page clears
-sensitive form fields on acceptance and page exit. No cloud CSP exception exists.
+Pinned SDK compatibility guards include:
 
-Only WPA2 personal target networks are supported by this settings/network slice.
-Enterprise/PEAP and open networks are explicitly unsupported in the UI.
+- Build-time INFO logging ceiling: SDK DEBUG logs contain PIN/key material.
+- Fixed 16-byte salt and standard mbedTLS verifier generation, avoiding the SDK
+  helper's minimal-integer salt conversion when the salt begins with zero.
+- A pinned build-time IV alignment correction, applied to a generated SDK
+  translation unit. The installed SDK is unchanged; its original source hash
+  must match before patching. SRP, GCM, counters and the wire schema are unchanged.
+- Malformed/short ciphertext is rejected before SDK length arithmetic. A fatal
+  SDK command-0 allocation/state failure quarantines that single context until
+  reboot, avoiding reuse/double-free of an SDK dangling pointer. It cannot
+  allocate repeated poisoned contexts in one boot.
 
-## Supervisor contract
+The browser uses WebCrypto SHA-512/AES-GCM and JavaScript BigInt SRP arithmetic;
+it makes no constant-time execution guarantee. Synthetic interoperability and
+host timings do not establish actual phone ATT behavior or C3 timing/stack use.
 
-`cp_provision_start(mode,node_id,proof,submit,ctx)` requires a factory-random
-per-device setup proof supplied by the application, shown locally. Never derive
-it from a MAC or compile a global password. The submission callback copies the
-candidate and attempt ID to its worker queue and returns promptly. It must not
-perform Wi-Fi, TLS or NVS operations in the transport task.
+## Physical USB and headless nodes
 
-The `received` response confirms only that the supervisor accepted the candidate
-in RAM. Allow time for the final write/read or HTTP response (at least one second)
-before stopping provisioning. `cp_provision_stop()` stops HTTP/BLE/AP and destroys
-its Wi-Fi resources without freeing Bluetooth memory. Check its returned error
-before starting another radio owner. A failed BLE teardown is latched until
-reboot because IDF can free its transport bookkeeping despite a stop failure;
-controller IDLE is also verified to catch an ignored deinit failure. The supervisor then tests
-Wi-Fi/time/TLS/cloud authentication, saves settings only on success, and reboots
-into normal mode. On failure it retains existing settings and reports the reason
-on the board. A disconnected BLE link or vanished hotspot is not success.
+`CP_PROVISION_USB` uses the independent `cp_usb` framing/console adapter. Cable
+connection starts no setup session. An explicit framed `begin` queues USB mode
+through the controller. An unenrolled profile without a display waits for this
+path instead of advertising a PIN it cannot show. Enrolled nodes retain USB for
+local recovery.
 
-The administrator wizard distinguishes registration, desired policy, fresh cloud
-contact, and an applied ACK for that policy. Lost registration responses trigger
-read-only reconciliation and require a saved credential or an explicit user
-credential rotation; neither retries nor polling silently rotate credentials.
+USB `info` identifies the factory node and current application version, with
+`transport: "usb"`, `security: "physical-usb"` and a local session nonce.
+`configure` requires that nonce and the node identity, without a manually typed
+PIN. The browser refreshes identity/nonce before transmission, including after
+a failed network test. A changed factory identity closes the connection before
+any candidate credential is sent.
+
+`cp_provision_usb_exchange()` returns an allocated response to its caller, which
+must clear/free it. Payloads are bounded to 1024 bytes. Status remains available
+while radio setup has stopped for network validation; it returns no PIN, nonce,
+hotspot password, internal secret or cloud device credential. USB RX and TX have
+one owner and bounded buffers. The native driver is USB Serial/JTAG, never UART0
+(which conflicts with the Passport backlight pin). Other-board backends require
+independent driver/profile acceptance.
+
+## Hotspot fallback
+
+The device hosts a WPA2-personal hotspot with a separate 12-character
+unambiguous base32 password, one client and a page at `http://192.168.4.1`.
+The local form uses the eight-digit PIN and nonce, fixed Host/origin and JSON
+content type, bounded scalar parsing and duplicate/NUL rejection. It relies on
+the WPA2 link, not HTTP TLS. It is not a plaintext protocomm endpoint.
+
+Users copy the node-bound cloud handoff while online, join the device hotspot,
+and enter the target Wi-Fi credentials only in the device page. The page has no
+external assets or cloud requests and clears its form on acceptance/page exit.
+The cloud admin page never fetches arbitrary HTTP LAN endpoints or weakens CSP.
+Browser API availability is detected at runtime; desktop Web Serial and the
+local hotspot remain distinct routes. A PWA does not itself add a missing API.
+
+## Shared submission and recovery
+
+`cp_provision_start(mode,node_id,master_secret,submit,ctx)` accepts the existing
+internal 32-hex master. The callback copies candidate settings and a lowercase
+UUIDv4 attempt ID to the controller queue and returns promptly. It performs no
+Wi-Fi, TLS or NVS work. Only independent `cpd_` device credentials are accepted;
+API origin is fixed. Target networks currently support WPA2 personal, not
+Enterprise/PEAP or open networks.
+
+An accepted attempt freezes the complete length-framed settings digest. Exact
+retries return the current known state; changing the body under the same ID is
+rejected. `received`/`testing`/`saved` are local states, never proof of cloud
+activation. The controller allows reply completion, stops setup ownership,
+tests network/time/TLS/cloud authentication, atomically saves on success and
+reboots. Failure keeps prior enrollment and opens a retryable setup session.
+The browser retains its unique cloud credential after an uncertain response;
+retrying never silently rotates it.
+
+Check every stop error before starting another radio owner. Failed BLE teardown
+is latched until reboot and controller IDLE is verified. Neither cable setup nor
+these helpers erase NVS, `cardid`, journal records or the whole Flash. The wizard
+requires fresh cloud contact and an applied ACK for its published configuration;
+a disappeared link or saved settings alone cannot complete it.
 
 ## Verification and provenance
 
-The code is a new CampusPulse implementation using the installed ESP-IDF APIs.
-Protocol field definitions and session behavior are based on ESP-IDF v5.5.3
-`components/protocomm/proto/session.proto`, `sec1.proto`, and the Apache-2.0
-reference client `tools/esp_prov/security/security1.py`. No SDK implementation is
-vendored here. See the [official protocomm documentation](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32c3/api-reference/provisioning/protocomm.html).
+Run `firmware/tools/check-chain.sh` with the pinned SDK. It includes native
+collector/storage/runtime/USB tests, HMAC guard tests, actual provisioning-module
+concurrency/expiry tests, the SDK C interoperability peer and isolated real
+workerd/D1/R2 ingestion. The peer compiles the installed SDK Security 2/SRP and
+mbedTLS sources with host platform shims; it checks source fingerprints and
+explicit leading-zero salt/A/hash/B cases, wrong PINs across reconnects,
+malformed frames, expiry, and bidirectional GCM.
 
-- `npx vitest run tests/provisioning/security1.test.js`: eight tests, including
-  exact handshake vectors generated by the official Python client, continuous
-  CTR partial-block interoperability, rejection paths, synthetic GATT, published
-  config validation and fresh-applied state boundaries.
-- `node scripts/provisioning-browser-smoke.mjs`: a temporary local Vite server
-  (port 18879, fails rather than taking an occupied port), synthetic cloud and
-  GATT only. Chromium drives the actual administrator UI, checks synchronous
-  chooser activation, encrypted settings, credential/body/storage boundaries,
-  publication, ACK and lost-response recovery. WebKit drives the exact embedded
-  device page when its test runtime is installed.
-- `bash tests/provisioning/host/run.sh`: native C guard tests check UUIDv4
-  rejection, independent HMAC vectors, key/context/domain separation and
-  complete settings digest binding (including length framing and padding
-  independence). The host crypto adapter uses OpenSSL; firmware uses mbedTLS.
-- Component compilation was checked against actual ESP-IDF 5.5.3 RISC-V headers
-  and compiler. Integrated firmware build is the supervisor's acceptance gate.
-- These checks do not validate physical Bluetooth, ATT behavior on particular
-  phones, hotspot connectivity, flash persistence, real network credentials,
-  RF completeness, battery use, or hardware acceptance.
+`npx vitest run tests/provisioning` covers the official Python fixture, browser
+crypto, enrollment guards and bounded USB transport. The synthetic fixture's
+recipe/hashes live alongside it. The former Security 1 implementation remains
+in Git history. `node scripts/provisioning-browser-smoke.mjs` drives Chromium's
+actual UI/WebCrypto/WebStreams with synthetic cloud/BLE/USB peers, plus the
+embedded page in WebKit when installed. It owns localhost port 18879 and closes
+its own processes. It does not register a production device or exercise radio.
 
-Regenerate the public synthetic fixture with an installed IDF checkout:
-
-```sh
-IDF_PATH=/path/to/esp-idf-v5.5.3 uv run --no-project --with protobuf --with cryptography \
-  tests/provisioning/idf-security1-fixture.py > tests/provisioning/idf-security1-fixture.json
-```
-
-The fixture's deterministic keys and proof are test inputs, not device secrets.
+The SDK remains Apache-2.0, with its copyright retained in generated patched
+sources. No SDK algorithm is vendored into the repository. See the
+[reuse record](../../../docs/notes/reuse.md) and
+[firmware acceptance](../../../docs/notes/firmware-chain.md) for exact evidence.
+Actual BLE, browser USB chooser, phone hotspot, Wi-Fi/cloud acceptance, sustained
+capture/upload, power and memory margins require their own physical tests.

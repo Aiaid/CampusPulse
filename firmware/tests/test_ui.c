@@ -291,6 +291,7 @@ static void test_bounded_status(void)
     memset(&view, 0xff, sizeof view); // Every text field is deliberately unterminated.
     view.setup_active = false;
     view.setup_softap = false;
+    view.setup_usb = false;
     view.battery_percent = -1;
     ui_owner = status_render = true;
     status_page_render(&view);
@@ -298,12 +299,14 @@ static void test_bounded_status(void)
     const unsigned calls = render_calls;
     status_page_render(NULL);
     assert(render_calls == calls);
-    // Setup fields are likewise bounded, including both 16-character halves.
+    // Setup fields are bounded: an 8-digit PIN, 12-character AP password, and USB view.
     view.setup_active = true;
     status_page_render(&view);
     view.setup_softap = true;
     status_page_render(&view);
-    assert(render_calls == calls + 2);
+    view.setup_usb = true;
+    status_page_render(&view);
+    assert(render_calls == calls + 3);
     ui_owner = status_render = false;
 }
 

@@ -35,8 +35,11 @@ done
 "$CP_BUILD/test_codec"
 bash "$CP_FW/components/cp_settings/tests/run-host.sh"
 bash "$CP_FW/components/cp_network/tests/run-host.sh"
+bash "$CP_FW/components/cp_usb/tests/run-host.sh"
 bash "$CP_FW/tests/runtime/run-host.sh"
 bash tests/provisioning/host/run.sh
+bash "$CP_FW/components/cp_provision/tests/build-sdk-peer.sh" "$CP_BUILD/sdk-security2"
+node "$CP_FW/components/cp_provision/tests/sdk-interop.mjs" "$CP_BUILD/sdk-security2/sdk-peer"
 mkdir "$CP_BUILD/fixtures"
 "$CP_BUILD/generate_fixtures" "$CP_BUILD/fixtures"
 node --input-type=module - "$CP_BUILD/fixtures" <<'JS'

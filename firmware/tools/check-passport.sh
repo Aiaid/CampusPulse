@@ -47,6 +47,7 @@ for CP_DIAGNOSTIC in 0 1; do
         -I"${FIRMWARE_ROOT}/components/cp_board/include" \
         -I"${FIRMWARE_ROOT}/components/cp_esp/include" \
         -I"${FIRMWARE_ROOT}/components/cp_runtime/include" \
+        -I"${FIRMWARE_ROOT}/components/cp_usb/include" \
         -I"${FIRMWARE_ROOT}/components/cp_network/include" \
         -I"${FIRMWARE_ROOT}/components/cp_settings/include" \
         -I"${FIRMWARE_ROOT}/components/cp_provision/include" \
