@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { chromium } from '@playwright/test';
+import { assertAdminViewVisible, installAdminCosmeticFilter } from './admin-cosmetic-filter-fixture.mjs';
 
 // Mutates only a fresh, isolated LOCAL Worker. Real navigator.credentials
 // ceremonies run through Chromium's CTAP2 virtual authenticator and the actual
@@ -23,6 +24,7 @@ const secrets = [token, password, newPassword];
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || (existsSync(chromium.executablePath()) ? chromium.executablePath() : '/usr/bin/chromium'), headless: true, args: ['--no-sandbox'] });
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  await installAdminCosmeticFilter(context);
   await context.route('**/*', route => new URL(route.request().url()).origin === target.origin ? route.continue() : route.abort());
   const page = await context.newPage();
   const errors = []; page.on('pageerror', () => errors.push('Browser runtime error'));
@@ -95,6 +97,7 @@ try {
   const setup = await result(() => page.getByRole('button', { name: '创建管理员账号', exact: true }).click(), '/auth/setup', 'POST', 201);
   const accountID = setup.account.id;
   await page.getByRole('heading', { name: '运行概览', exact: true }).waitFor();
+  await assertAdminViewVisible(page, '运行概览', '设备联系');
   assert.equal((await api('/session', 'POST', { token })).status, 401, 'Bootstrap token loses authority after setup');
   const sessionCookie = (await context.cookies()).find(c => c.name === 'cp_admin_session');
   assert.ok(sessionCookie?.httpOnly && sessionCookie.sameSite === 'Strict' && sessionCookie.path === '/api/v1/admin', 'Scoped HttpOnly Strict session required');
@@ -103,6 +106,7 @@ try {
   await login(username, 'synthetic-wrong-password', 401);
   await login(username, password);
   await nav('账号与安全');
+  await assertAdminViewVisible(page, '账号与安全', '账号资料');
   await reauth('password', password, true);
   await page.getByRole('button', { name: '登记 Passkey', exact: true }).click();
   let dialog = page.getByRole('dialog', { name: '登记新的 Passkey', exact: true });
@@ -150,6 +154,10 @@ try {
   await nav('账号与安全');
   await reauth('password', newPassword);
   await page.setViewportSize({ width: 390, height: 844 });
+  await nav('运行概览');
+  await assertAdminViewVisible(page, '运行概览', '设备联系');
+  await nav('账号与安全');
+  await assertAdminViewVisible(page, '账号与安全', '账号资料');
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Security page fits phone width');
   await page.getByRole('button', { name: '删除 Passkey Renamed synthetic key', exact: true }).click();
   dialog = page.getByRole('dialog', { name: '删除这个 Passkey？', exact: true });
@@ -170,5 +178,5 @@ try {
   await logout();
   assert.deepEqual(errors, [], 'No browser runtime errors');
   await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId });
-  console.log('Admin auth browser smoke passed against isolated local Worker: restricted bootstrap, account setup, password login, real CTAP2 resident UV Passkey registration/login/reauth, account/key rename, password change, all-session revocation, retained key login, key deletion denial, password fallback, audit secrecy, scoped cookies and phone layout. Virtual authenticator acceptance does not validate physical biometric hardware.');
+  console.log('Admin auth browser smoke passed against isolated local Worker: restricted bootstrap, account setup, password login, real CTAP2 resident UV Passkey registration/login/reauth, account/key rename, password change, all-session revocation, retained key login, key deletion denial, password fallback, audit secrecy, scoped cookies, phone layout and desktop/phone overview/account visibility under controlled generic cosmetic filters. Virtual authenticator acceptance does not validate physical biometric hardware.');
 } finally { await browser.close(); }

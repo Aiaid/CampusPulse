@@ -113,6 +113,15 @@ assignments; firmware and device acceptance remain pending.
 
 ## Completed archive
 
+- [x] Fix Safari administrator-page cosmetic-filter collisions by replacing
+      generic `ad-` classes, custom properties and animations with `cp-admin-`.
+      Preserve account/API behavior and browser protections. The release snapshot
+      passes 324 tests across 34 suites, build, and real local Worker authentication/CTAP2
+      and management browser regressions under controlled cosmetic filters,
+      including desktop and 390px overview/account geometry. See
+      [browser compatibility](../notes/admin-browser-compatibility.md).
+      Controlled Chromium acceptance is separate from live Safari verification.
+
 - [x] Enrich frontend-only simulation with teaching-day, weekend and rainy-day
       profiles for all eight places, independent parking intensity and full-day
       variation. Share scene/time selection across maps, details and nine history

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { chromium } from '@playwright/test';
+import { assertAdminViewVisible, installAdminCosmeticFilter } from './admin-cosmetic-filter-fixture.mjs';
 
 // Real-browser acceptance against an isolated, migrated LOCAL Worker only.
 // The script writes synthetic registry/configuration/settings rows. It never
@@ -32,6 +33,7 @@ const browser = await chromium.launch({
 });
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  await installAdminCosmeticFilter(context);
   // All APIs remain the real Worker. Prevent incidental external map/font calls.
   await context.route('**/*', route => new URL(route.request().url()).origin === target.origin ? route.continue() : route.abort());
   const page = await context.newPage();
@@ -93,6 +95,10 @@ try {
     await result(() => page.getByRole('button', { name: '账号密码登录', exact: true }).click(), '/session', 'POST');
   }
   await page.getByRole('heading', { name: '运行概览', exact: true }).waitFor();
+  await assertAdminViewVisible(page, '运行概览', '设备联系');
+  await nav('账号与安全');
+  await assertAdminViewVisible(page, '账号与安全', '账号资料');
+  await nav('运行概览');
   await storageHasNoSecrets([token, password]);
   const sessionCookie = (await context.cookies()).find(c => c.name === 'cp_admin_session');
   assert.ok(sessionCookie?.httpOnly && sessionCookie.sameSite === 'Strict' && sessionCookie.path === '/api/v1/admin', 'A scoped HttpOnly Strict cookie is required');
@@ -231,6 +237,7 @@ try {
   await result(() => page.getByRole('button', { name: '保存站点设置', exact: true }).click(), '/settings', 'PUT');
   await page.reload();
   await page.getByRole('heading', { name: '运行概览', exact: true }).waitFor();
+  await assertAdminViewVisible(page, '运行概览', '设备联系');
   await nav('站点设置');
   assert.equal(await page.getByLabel('站点名称', { exact: true }).inputValue(), `Synthetic browser QA ${suffix}`, 'Settings survive browser refresh');
   const publicSettings = await page.evaluate(() => fetch('/api/v1/settings').then(r => r.json()));
@@ -241,6 +248,10 @@ try {
   assert.ok(secrets.every(secret => !auditText.includes(secret)), 'Audit must not reveal any old or current credential');
   await storageHasNoSecrets(secrets);
   await page.setViewportSize({ width: 390, height: 844 });
+  await nav('运行概览');
+  await assertAdminViewVisible(page, '运行概览', '设备联系');
+  await nav('账号与安全');
+  await assertAdminViewVisible(page, '账号与安全', '账号资料');
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Administrator phone layout must not overflow horizontally');
   await nav('设备管理');
   const deviceRow = page.getByRole('row').filter({ has: page.getByRole('button', { name: `查看设备 ${node}`, exact: true }) });
@@ -248,14 +259,14 @@ try {
   const rowBox = await deviceRow.boundingBox();
   assert.ok(rowBox && rowBox.height < 220, 'Phone device row must remain readable instead of wrapping one character per line');
   const tableLayout = await deviceRow.evaluate(row => {
-    const scroll = row.closest('.ad-table-scroll');
+    const scroll = row.closest('.cp-admin-table-scroll');
     const table = row.closest('table');
     return { innerScrolls: !!scroll && scroll.scrollWidth > scroll.clientWidth, tableWidth: table?.getBoundingClientRect().width ?? 0, viewport: innerWidth, globalWidth: document.documentElement.scrollWidth };
   });
   assert.ok(tableLayout.innerScrolls && tableLayout.tableWidth > tableLayout.viewport && tableLayout.globalWidth <= tableLayout.viewport, 'Wide phone tables must scroll inside their container');
   await page.getByRole('button', { name: `查看设备 ${node}`, exact: true }).click();
   await page.getByRole('heading', { name: renamedNode, exact: true }).waitFor();
-  await page.locator('.ad-three-values').getByText('设备确认应用', { exact: true }).waitFor();
+  await page.locator('.cp-admin-three-values').getByText('设备确认应用', { exact: true }).waitFor();
   await page.getByText('synthetic-browser-fixture', { exact: true }).first().waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Device details fit phone width');
   await result(() => page.getByRole('button', { name: '退出登录', exact: true }).click(), '/session', 'DELETE');
@@ -264,5 +275,5 @@ try {
   assert.equal(signedOut, 401, 'Logout revokes administrator access');
   await storageHasNoSecrets(secrets);
   assert.deepEqual(errors, [], 'No browser runtime errors');
-  console.log('Admin browser smoke passed against isolated local Worker: failed/corrected login, credential rotation, disable/reenable, device/place/placement, draft edit/validate/publish/clone, original policy preservation, synthetic ACK UI, persisted settings, audit, logout and phone table layout. Synthetic ACK acceptance does not establish physical activation.');
+  console.log('Admin browser smoke passed against isolated local Worker: failed/corrected login, credential rotation, disable/reenable, device/place/placement, draft edit/validate/publish/clone, original policy preservation, synthetic ACK UI, persisted settings, audit, logout, phone table layout and desktop/phone overview/account visibility under controlled generic cosmetic filters. Synthetic ACK acceptance does not establish physical activation.');
 } finally { await browser.close(); }
