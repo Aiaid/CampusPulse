@@ -27,7 +27,8 @@ static void input_received(const cp_input_event_t *event, void *context) {
     if (xQueueSend(s_input, event, 0) != pdTRUE)
         __atomic_add_fetch(&s_input_drops, 1u, __ATOMIC_RELAXED);
 }
-static void show_status(void) {
+static void show_status(const cp_runtime_snapshot_t *runtime) {
+    (void)runtime;
     cp_board_view_t view = {.battery_percent = cp_board_battery_percent()};
     snprintf(view.node_id, sizeof(view.node_id), "%s", s_node_id);
     snprintf(view.board, sizeof(view.board), "%s", cp_board_profile()->board_id);
@@ -39,35 +40,33 @@ static void show_status(void) {
     snprintf(view.collection, sizeof(view.collection), "%s",
              s_diagnostics ? "LOCAL DIAGNOSTICS" : cp_collection_state_name(state));
 #if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
-    cp_runtime_snapshot_t runtime;
-    cp_runtime_snapshot(&runtime);
     snprintf(view.network, sizeof view.network, "%s",
-             runtime.testing_candidate                          ? "TESTING CONNECTION"
-             : runtime.network.network == CP_NETWORK_READY      ? "CONNECTED"
-             : runtime.network.network == CP_NETWORK_CONNECTING ? "CONNECTING"
-                                                                : "OFFLINE");
+             runtime->testing_candidate                          ? "TESTING CONNECTION"
+             : runtime->network.network == CP_NETWORK_READY      ? "CONNECTED"
+             : runtime->network.network == CP_NETWORK_CONNECTING ? "CONNECTING"
+                                                                 : "OFFLINE");
     snprintf(view.authentication, sizeof view.authentication, "%s",
-             runtime.network.auth == CP_AUTH_VALID      ? "AUTHENTICATED"
-             : runtime.network.auth == CP_AUTH_REJECTED ? "AUTH REJECTED"
-             : runtime.enrolled                         ? "AWAITING CLOUD"
-                                                        : "NOT ENROLLED");
+             runtime->network.auth == CP_AUTH_VALID      ? "AUTHENTICATED"
+             : runtime->network.auth == CP_AUTH_REJECTED ? "AUTH REJECTED"
+             : runtime->enrolled                         ? "AWAITING CLOUD"
+                                                         : "NOT ENROLLED");
     snprintf(view.policy, sizeof view.policy, "%s",
-             runtime.network.activation_confirmed ? "CLOUD CONFIRMED"
-             : runtime.network.policy_present     ? "POLICY ASSIGNED"
-                                                  : "WAITING FOR CONFIG");
+             runtime->network.activation_confirmed ? "CLOUD CONFIRMED"
+             : runtime->network.policy_present     ? "POLICY ASSIGNED"
+                                                   : "WAITING FOR CONFIG");
     snprintf(view.collection, sizeof view.collection, "%s",
-             s_runtime_error != ESP_OK          ? "RUNTIME ERROR"
-             : !runtime.pipeline.storage_ready  ? "JOURNAL UNAVAILABLE"
-             : runtime.pipeline.pressure_paused ? "STORAGE PAUSED"
-             : cp_collection_allowed(runtime.collection) && !runtime.pipeline.collecting
+             s_runtime_error != ESP_OK           ? "RUNTIME ERROR"
+             : !runtime->pipeline.storage_ready  ? "JOURNAL UNAVAILABLE"
+             : runtime->pipeline.pressure_paused ? "STORAGE PAUSED"
+             : cp_collection_allowed(runtime->collection) && !runtime->pipeline.collecting
                  ? "CAPTURE STOPPED"
-                 : cp_collection_state_name(runtime.collection));
-    view.setup_active = runtime.provision.active;
-    view.setup_softap = runtime.provision.mode == CP_PROVISION_SOFTAP;
-    snprintf(view.setup_name, sizeof view.setup_name, "%s", runtime.provision.service_name);
-    snprintf(view.setup_proof, sizeof view.setup_proof, "%s", runtime.provision.proof);
-    snprintf(view.setup_password, sizeof view.setup_password, "%s", runtime.provision.ap_password);
-    snprintf(view.setup_state, sizeof view.setup_state, "%s", runtime.provision.state);
+                 : cp_collection_state_name(runtime->collection));
+    view.setup_active = runtime->provision.active;
+    view.setup_softap = runtime->provision.mode == CP_PROVISION_SOFTAP;
+    snprintf(view.setup_name, sizeof view.setup_name, "%s", runtime->provision.service_name);
+    snprintf(view.setup_proof, sizeof view.setup_proof, "%s", runtime->provision.proof);
+    snprintf(view.setup_password, sizeof view.setup_password, "%s", runtime->provision.ap_password);
+    snprintf(view.setup_state, sizeof view.setup_state, "%s", runtime->provision.state);
 #endif
     cp_board_present(&view);
 }
@@ -75,7 +74,12 @@ static void supervisor(void *context) {
     (void)context;
     while (!__atomic_load_n(&s_boot_ready, __ATOMIC_ACQUIRE))
         vTaskDelay(pdMS_TO_TICKS(10));
-    uint32_t reported_drops = 0;
+    uint32_t reported_drops = 0, stack_sample_rounds = 0;
+#if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
+    /* One caller-owned snapshot, shared with presentation: never nest two
+     * large runtime snapshots on this task stack. */
+    cp_runtime_snapshot_t runtime;
+#endif
     for (;;) {
         cp_input_event_t event;
         if (xQueueReceive(s_input, &event, pdMS_TO_TICKS(500)) == pdTRUE) {
@@ -83,7 +87,6 @@ static void supervisor(void *context) {
                 cp_board_diagnostic_input(&event);
 #if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
             else {
-                cp_runtime_snapshot_t runtime;
                 cp_runtime_snapshot(&runtime);
                 if (event.kind == CP_INPUT_LONG && event.button == CP_BUTTON_OK) {
                     if (runtime.provision.active)
@@ -104,8 +107,17 @@ static void supervisor(void *context) {
             ESP_LOGW(TAG, "Input queue losses: %lu", (unsigned long)dropped);
             reported_drops = dropped;
         }
-        if (!s_diagnostic_ui)
-            show_status();
+        if (!s_diagnostic_ui) {
+#if CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
+            show_status(NULL);
+#else
+            cp_runtime_snapshot(&runtime);
+            show_status(&runtime);
+#endif
+        }
+        if (stack_sample_rounds < 10 && ++stack_sample_rounds == 10)
+            ESP_LOGI(TAG, "Supervisor minimum free stack: %u bytes",
+                     (unsigned)uxTaskGetStackHighWaterMark(NULL));
     }
 }
 esp_err_t cp_app_start(void) {
@@ -129,7 +141,7 @@ esp_err_t cp_app_start(void) {
         return ESP_ERR_NO_MEM;
     /* Start the consumer before enabling callbacks; task failure is still safe
      * to clean up because no input driver holds a reference to the queue. */
-    if (xTaskCreate(supervisor, "cp_supervisor", 4096, NULL, 5, &s_task) != pdPASS) {
+    if (xTaskCreate(supervisor, "cp_supervisor", 8192, NULL, 5, &s_task) != pdPASS) {
         vQueueDelete(s_input);
         s_input = NULL;
         return ESP_ERR_NO_MEM;
