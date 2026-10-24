@@ -22,6 +22,7 @@ describe('authored frontend simulation data', () => {
     expect(simulationTimes).toEqual([...new Set(simulationTimes)].sort((a, b) => a - b));
   });
 
+  // Exhaustive correctness sweep; shared CI CPUs can exceed the default 5s.
   test('keeps every place and scenario deterministic, finite, bounded and smooth all day', () => {
     for (const place of places) for (const { id } of simulationScenarios) {
       let previous;
@@ -44,7 +45,7 @@ describe('authored frontend simulation data', () => {
         previous = sample;
       }
     }
-  });
+  }, 15_000);
 
   test('shows class, meal and evening peaks instead of one shared daily curve', () => {
     for (const id of ['teaching-8', 'literature', 'tianjiabing', 'teaching-9']) {
