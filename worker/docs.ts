@@ -45,7 +45,8 @@ const initializer = `window.ui = SwaggerUIBundle({
   requestInterceptor: function (request) {
     const target = new URL(request.url, window.location.origin);
     if (target.origin !== window.location.origin ||
-        !(target.pathname === '/openapi.json' || target.pathname.startsWith('/api/v1/'))) {
+        !(target.pathname === '/openapi.json' || target.pathname.startsWith('/api/v1/') ||
+          target.pathname.startsWith('/api/v2/'))) {
       throw new Error('Documentation requests must stay on this site and its API.');
     }
     return request;

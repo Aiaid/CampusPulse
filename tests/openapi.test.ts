@@ -124,6 +124,20 @@ describe('same-origin documentation routes', () => {
     expect(code).not.toContain(token);
   });
 
+  it('allows both implemented API versions while blocking off-origin or unsupported documentation requests', async () => {
+    const code = await (await fetchWorker('/docs/swagger-init.js')).text();
+    const window = { location: { origin: 'https://docs.campuspulse.test' }, ui: undefined as Json | undefined };
+    new Function('window', 'SwaggerUIBundle', code)(window, (options: Json) => options);
+    const intercept = window.ui!.requestInterceptor as (request: { url: string }) => { url: string };
+    for (const path of ['/openapi.json', '/api/v1/health', '/api/v2/device/config', '/api/v2/ingest']) {
+      const request = { url: new URL(path, window.location.origin).href };
+      expect(intercept(request)).toBe(request);
+    }
+    for (const url of ['https://external.invalid/api/v2/ingest', '/api/v3/ingest', '/api/v20/ingest', '/unrelated']) {
+      expect(() => intercept({ url })).toThrow('Documentation requests must stay on this site and its API.');
+    }
+  });
+
   it('handles HEAD, rejects mutation methods, and does not mask unknown docs as the SPA', async () => {
     for (const path of ['/docs', '/docs/', '/openapi.json', '/docs/swagger-init.js']) {
       const get = await fetchWorker(path);

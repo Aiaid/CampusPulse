@@ -51,9 +51,16 @@ try {
   });
   await page.goto(`${origin}/docs?url=https://example.invalid/forbidden.json`);
   await page.locator('.opblock').nth(8).waitFor();
-  assert.equal(await page.locator('.opblock').count(), 45, 'All implemented public, account/Passkey/admin, operator, device and research operations');
+  assert.equal(await page.locator('.opblock').count(), 50, 'All implemented public, account/Passkey/admin, operator, v1/v2 device and research operations');
   assert.ok(!(await page.content()).includes(token), 'Credential absent from initial HTML');
   const op = (method, path) => page.locator(`.opblock-${method}`).filter({ has: page.locator(`.opblock-summary-path[data-path="${path}"]`) });
+  for (const [method, path] of [
+    ['get', '/api/v2/device/config'],
+    ['post', '/api/v2/device/contact'],
+    ['post', '/api/v2/device/config/ack'],
+    ['post', '/api/v2/ingest'],
+    ['get', '/api/v2/research/batches/{id}'],
+  ]) assert.equal(await op(method, path).count(), 1, `Exactly one ${method.toUpperCase()} ${path} operation`);
   const open = async operation => {
     if (!(await operation.locator('.opblock-body').isVisible())) await operation.locator('.opblock-summary-control').click();
     await operation.getByRole('button', { name: 'Try it out', exact: true }).click();
@@ -80,6 +87,9 @@ try {
   const deviceConfig = op('get', '/api/v1/device/config');
   await open(deviceConfig);
   assert.equal((await execute(deviceConfig, 'GET', '/api/v1/device/config', 401)).error.code, 'unauthorized');
+  const deviceConfigV2 = op('get', '/api/v2/device/config');
+  await open(deviceConfigV2);
+  assert.equal((await execute(deviceConfigV2, 'GET', '/api/v2/device/config', 401)).error.code, 'unauthorized');
   const research = op('get', '/api/v1/research/batches/{id}');
   await open(research);
   await research.locator('input[placeholder="id"]').fill('33333333-3333-4333-8333-333333333333');
