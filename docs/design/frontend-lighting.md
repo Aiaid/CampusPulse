@@ -1,7 +1,13 @@
 # October 21 frontend migration and night lighting
 
+> Current update, 2026-10-25: the default night mode is **校园光照**, with
+> **轻量** quality. Background Workers, cropped library canvases and scoped
+> caches supersede the old scheduling/allocation descriptions. **场景设置 →
+> 光照精度 → 精细** restores the prior detail. See [performance notes](../notes/lighting-performance.md)
+> for measurements and [campus lighting](campus-lighting.md) for the current model.
+
 Latest local iteration: [unified library-entry lighting](library-entry-lighting.md).
-The default night choice is now **入口实验**, with **暖光增强** and **原始效果**
+The earlier default night choice was **入口实验**, with **暖光增强** and **原始效果**
 retained for comparison. The experiment adds approximate surface normals,
 height, tree-volume transmission and shared actor shading; the sections below
 describe the retained enhanced baseline and its historical checkpoints.

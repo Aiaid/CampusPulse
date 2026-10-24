@@ -11,6 +11,13 @@ import { campusDemoRoutes } from './campus-scene-data';
 import { sampleCampusActor } from './campus-scene-lighting';
 import { campusCrownMasks, drawCampusCrownMasks, drawNativeCanopyMasks } from './campus-tree-masks';
 import { getCampusNativeCanopyMasks, subscribeCampusNativeCanopy } from './CampusLightingLayer';
+import { createActorLightSampler, createRenderCache } from './render-cache';
+
+const actorDefinitions = createRenderCache(8);
+const actorOcclusion = createRenderCache(200);
+const actorCoverage = createRenderCache(200);
+const actorLightSamples = createActorLightSampler({ sampleLocal: sampleLocalLight,
+  sampleLibrary: sampleLibraryActor, sampleCampus: sampleCampusActor, blend: blendActorLight });
 
 const EPOCH = typeof performance === 'undefined' ? 0 : performance.now();
 // Every mounted map reads this one clock, including panes opened later. Root
@@ -212,6 +219,7 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
     const unsubscribeNativeCanopy = subscribeCampusNativeCanopy(redraw);
     const actorCanvas = document.createElement('canvas');
     const shadowCanvas = document.createElement('canvas');
+    const projectedPaths = createRenderCache(2);
     const playbackChanged = () => {
       sceneTime(performance.now(), canMove());
       redraw();
@@ -242,16 +250,20 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       const context = canvas.getContext('2d');
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
       context.clearRect(0, 0, width, height);
-      const actors = (props.demo ? makeActors(props.minute, props.layers, props.scenarioId) : []).map((actor) => actorPosition(actor, elapsed)).sort((a, b) => a.y - b.y);
+      const definitions = props.demo ? actorDefinitions.resolve(props.scenarioId,
+        [props.minute, props.layers.people, props.layers.bikes], () => makeActors(props.minute, props.layers, props.scenarioId)) : [];
+      const actors = definitions.map((actor) => actorPosition(actor, elapsed)).sort((a, b) => a.y - b.y);
+      const treeRevision = treeMaterialState().revision;
       let hiddenCount = 0;
       let visibleCount = 0;
       const campusLighting = props.isDark && props.lighting === 'campus';
       const libraryLighting = props.isDark && (props.lighting === 'library' || campusLighting);
       const localLighting = props.isDark && (props.lighting === 'atmospheric' || libraryLighting);
       const readableDetail = props.demo && props.detailView && (campusLighting || libraryLighting && props.selectedId === 'library');
-      const shadowClip = libraryLighting ? groundClipPaths(projectPoint, width, height) : null;
+      const shadowClip = libraryLighting && actors.length ? projectedPaths.resolve('ground',
+        [projectPoint, width, height], () => groundClipPaths(projectPoint, width, height)) : null;
       let shadowContext = null;
-      if (libraryLighting) {
+      if (shadowClip) {
         if (shadowCanvas.width !== pixelWidth || shadowCanvas.height !== pixelHeight) {
           shadowCanvas.width = pixelWidth; shadowCanvas.height = pixelHeight;
         }
@@ -275,7 +287,8 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
           { readable: readableDetail, viewWidth: width, amount: libraryAmount });
         const {width:spriteWidth,height:spriteHeight,physicalWidth,physicalHeight,presentationScale} = dimensions;
         if (screen.left < -spriteWidth || screen.left > width + spriteWidth || screen.top < -spriteHeight || screen.top > height + spriteHeight) continue;
-        const occludingBuilding = classifyOcclusion([actor.x, actor.y]);
+        const occludingBuilding = actorOcclusion.resolve(actor.id, [actor.x, actor.y],
+          () => classifyOcclusion([actor.x, actor.y]));
         const occluded = Boolean(occludingBuilding);
         if (occluded) hiddenCount += 1;
         const revealed = occluded && props.xray && occludingBuilding.placeId === props.selectedId;
@@ -292,9 +305,7 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
         let litFrame = null;
         let lightSample = null;
         if (localLighting) {
-          const previous = sampleLocalLight(actor.x, actor.y);
-          const sample = campusLighting ? sampleCampusActor(actor.x, actor.y)
-            : libraryAmount > 0 ? blendActorLight(previous, sampleLibraryActor(actor.x, actor.y), libraryAmount) : previous;
+          const sample = actorLightSamples.sample(actor, { campus: campusLighting, libraryAmount, treeRevision });
           lightSample = sample;
           if (libraryAmount > .05) libraryActorCount += 1;
           if (libraryAmount > .05 && (sample.indirectIntensity ?? 0) > .015) bounceActorCount += 1;
@@ -309,7 +320,8 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
         }
         if (shadowContext) {
           const shadows = drawActorShadows(shadowContext, screen, spriteWidth, spriteHeight, mapScale, lightSample, libraryAmount, shadowClip, actor,
-            occluded ? 0 : surfaceCoverage([actor.x, actor.y]), physicalWidth, physicalHeight);
+            occluded ? 0 : actorCoverage.resolve(actor.id, [actor.x, actor.y],
+              () => surfaceCoverage([actor.x, actor.y])), physicalWidth, physicalHeight);
           if (shadows.cast) actorShadowCount += 1;
           if (shadows.contact) actorContactCount += 1;
         }
@@ -394,23 +406,28 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       }
       // Cut sprites by registered projected silhouettes without reading remote
       // school imagery into canvas. Xray keeps the selected building open.
-      context.save();
-      context.globalCompositeOperation = 'destination-out';
-      context.globalAlpha = 1;
-      context.filter = 'none';
-      context.fillStyle = '#000';
-      context.beginPath();
-      for (const building of buildings) {
-        if (props.xray && building.placeId === props.selectedId) continue;
-        building.polygon.forEach(([x,y], index) => {
-          const point = projectPoint(x,y);
-          if (index === 0) context.moveTo(point.left,point.top);
-          else context.lineTo(point.left,point.top);
+      if (actors.length) {
+        context.save();
+        context.globalCompositeOperation = 'destination-out';
+        context.globalAlpha = 1;
+        context.filter = 'none';
+        context.fillStyle = '#000';
+        const silhouettes = projectedPaths.resolve('silhouettes', [projectPoint, props.xray, props.selectedId], () => {
+          const path = new Path2D();
+          for (const building of buildings) {
+            if (props.xray && building.placeId === props.selectedId) continue;
+            building.polygon.forEach(([x,y], index) => {
+              const point = projectPoint(x,y);
+              if (index === 0) path.moveTo(point.left,point.top);
+              else path.lineTo(point.left,point.top);
+            });
+            path.closePath();
+          }
+          return path;
         });
-        context.closePath();
+        context.fill(silhouettes);
+        context.restore();
       }
-      context.fill();
-      context.restore();
       canvas.dataset.scenario = props.demo ? props.scenarioId : 'field';
       canvas.dataset.minute = props.demo ? String(props.minute) : '';
       canvas.dataset.actorCount = String(actors.length);
@@ -438,6 +455,7 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       canvas.dataset.warmActorCount = String(warmActorCount);
       canvas.dataset.lightingBuckets = [...lightingBuckets].sort().join(';');
       canvas.dataset.lightingCacheFrames = String(actorLightingCacheStats().variants);
+      canvas.dataset.lightingSampleCacheEntries = String(actorLightSamples.size);
       canvas.dataset.personHeight = String(ACTOR_WORLD_HEIGHT.walk * mapScale);
       const presentation = actorDimensions({kind:'walk'}, {width:1,height:1}, mapScale, {readable:readableDetail,viewWidth:width});
       canvas.dataset.personPhysicalHeight = String(presentation.physicalHeight);

@@ -16,6 +16,7 @@ validation records are not evidence for this implementation.
 
 | Document | Purpose | Status |
 | --- | --- | --- |
+| [Lighting performance / 光照性能](notes/lighting-performance.md) | Background compilation, scoped caches, cropped high-DPI canvases and matched Chrome measurements | Locally optimized; hardware-accelerated Chrome comparison and renderer regression; production/Safari acceptance separate |
 | [GIS location settings](notes/gis-location-settings.md) | Official-map location picker, shared field registry, full-image coordinate conversion and reachable map corners | Locally implemented; frontend tests and fixture-based desktop/phone browser regression; no deployment or production writes |
 | [Admin browser compatibility](notes/admin-browser-compatibility.md) | Safari cosmetic-filter diagnosis, dedicated CSS namespace and optional Passkey extension reports | Local 350-test release snapshot, real-Worker CTAP2 and desktop/phone regressions passed; physical Safari enrollment separate |
 | [Simulation scenarios](notes/simulation.md) | Teaching-day/weekend/rain profiles, full-day replay and separate parking intensity | Locally verified: 198 frontend tests, build, desktop/390px browser isolation; frontend-only synthetic data |

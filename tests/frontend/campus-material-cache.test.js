@@ -76,6 +76,66 @@ describe('world-registered campus material work', () => {
     expect(cache.get('0')).toBe('fresh'); expect(cache.snapshot().entries).toBe(1);
   });
 
+  test('cancels lost demand and stale generations without cooling down or exposing obsolete pixels', async () => {
+    const jobs = [];
+    const cache = createCampusChunkCache({ concurrency: 1, compile: (request, { signal }) => {
+      const job = deferred(); jobs.push({ ...job, request, signal });
+      signal.addEventListener('abort', () => job.reject(new Error('aborted')), { once: true });
+      return job.promise;
+    } });
+    cache.setViewport('map', [chunk('0')]); await turn();
+    cache.setViewport('map', [chunk('1')]); await turn();
+    expect(jobs[0].signal.aborted).toBe(true); expect(jobs[1].request.key).toBe('1');
+    cache.invalidate(); await turn(); expect(jobs[1].signal.aborted).toBe(true);
+    jobs[2].resolve('current'); await turn();
+    expect(cache.get('0')).toBeNull(); expect(cache.get('1')).toBe('current');
+    expect(cache.snapshot()).toMatchObject({ running: 0, failed: 0, ready: 1 });
+  });
+
+  test('upgrades normals only for explicit diagnostic demand and reuses them after leaving diagnostics', async () => {
+    const calls = [], cache = createCampusChunkCache({ compile: async request => { calls.push(request); return request; } });
+    cache.setViewport('map', [chunk('0')]); await turn(); expect(calls[0].diagnostic).toBe(false);
+    cache.setViewport('diagnostic', [chunk('0')], 1, { diagnostic: true }); await turn();
+    expect(calls[1].diagnostic).toBe(true); expect(cache.snapshot().ready).toBe(1);
+    cache.removeViewport('diagnostic'); cache.setViewport('map', [chunk('0')]); await turn();
+    expect(calls).toHaveLength(2);
+  });
+
+  test('replaces full-resolution caches on a quality downgrade while retaining original source resolution', async () => {
+    const calls = [], cache = createCampusChunkCache({ compile: async request => { calls.push(request); return request; } });
+    cache.setViewport('map', [chunk('0'), chunk('1')], 2, { quality: 'full', sourceResolution: 2 }); await turn();
+    expect(cache.snapshot()).toMatchObject({ ready: 2, detail: 2 });
+    cache.setViewport('map', [chunk('0')], 1, { quality: 'efficient', sourceResolution: 2 }); await turn();
+    expect(cache.get('0')).toMatchObject({ quality: 'efficient', resolution: 1, sourceResolution: 2 });
+    expect(cache.get('1')).toBeNull();
+    expect(cache.snapshot()).toMatchObject({ ready: 1, detail: 0, entries: 1 });
+    cache.setViewport('map', [chunk('0')], 2, { quality: 'full', sourceResolution: 2 }); await turn();
+    expect(cache.get('0')).toMatchObject({ quality: 'full', resolution: 2, sourceResolution: 2 });
+    expect(calls.map(request => request.resolution)).toEqual([2, 2, 1, 2]);
+  });
+
+  test('an efficient quality budget releases full caches even after every viewport unmounts', async () => {
+    const cache = createCampusChunkCache({ compile: async request => request });
+    cache.setViewport('map', [chunk('0')], 2, { quality: 'full', sourceResolution: 2 }); await turn();
+    cache.removeViewport('map'); expect(cache.snapshot()).toMatchObject({ entries: 1, owners: 0 });
+    cache.setQualityBudget('efficient', 1);
+    expect(cache.snapshot()).toMatchObject({ entries: 0, owners: 0, running: 0 });
+    expect(cache.get('0')).toBeNull();
+  });
+
+  test('cancels obsolete high-quality compilation and accepts only the replacement quality', async () => {
+    const jobs = [], cache = createCampusChunkCache({ concurrency: 1, compile: (request, { signal }) => {
+      const job = deferred(); jobs.push({ ...job, request, signal });
+      signal.addEventListener('abort', () => job.reject(new Error('aborted')), { once: true }); return job.promise;
+    } });
+    cache.setViewport('map', [chunk('0')], 2, { quality: 'full', sourceResolution: 2 }); await turn();
+    cache.setViewport('map', [chunk('0')], 1, { quality: 'efficient', sourceResolution: 2 }); await turn();
+    expect(jobs[0].signal.aborted).toBe(true);
+    expect(jobs[1].request).toMatchObject({ quality: 'efficient', resolution: 1, sourceResolution: 2 });
+    jobs[1].resolve('efficient'); await turn();
+    expect(cache.get('0')).toBe('efficient'); expect(cache.snapshot()).toMatchObject({ ready: 1, running: 0, failed: 0 });
+  });
+
   test('bounds image residency and coalesces requests across simultaneous chunks', async () => {
     let calls = 0, clock = 0;
     const imageCache = createCampusImageCache({ maxEntries: 2, now: () => clock, retryMs: 100,

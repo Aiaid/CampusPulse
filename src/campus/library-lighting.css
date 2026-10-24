@@ -6,7 +6,8 @@
 }
 .cp-library-light {
   position: absolute;
-  inset: 0;
+  left: 0;
+  top: 0;
   pointer-events: none;
   user-select: none;
 }

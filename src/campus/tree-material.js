@@ -9,6 +9,13 @@ let loading = null;
 const listeners = new Set();
 
 export function treeMaterialState() { return state; }
+/** Structured-cloneable CPU state. Artwork stays on the main thread. The
+ * executor copies these arrays once per worker/revision, never transfers the
+ * live samplers' buffers away from actors or subsequent renders. */
+export function treeMaterialSnapshot() { return { state, prepared }; }
+export function installTreeMaterialSnapshot(snapshot) {
+  state = Object.freeze({ ...snapshot.state }); prepared = snapshot.prepared;
+}
 /** Cropped same-origin leaf alpha for fast canvas depth masks. Prepared once,
  * never reads GIS pixels or creates a per-frame pixel buffer. */
 export function treeMaterialArtwork() { return artwork; }
@@ -98,12 +105,18 @@ export function loadTreeMaterial() {
   loading = new Promise(resolve => {
     const source = new Image();
     source.decoding = 'async';
-    const fallback = () => {
-      publish({ status: 'fallback' });
-      resolve(state);
+    let finished = false, deadline;
+    const finish = next => {
+      if (finished) return;
+      finished = true; clearTimeout(deadline);
+      source.onload = null; source.onerror = null;
+      publish(next); resolve(state);
     };
+    const fallback = () => finish({ status: 'fallback' });
+    deadline = setTimeout(fallback, 8000);
     source.onerror = fallback;
     source.onload = () => {
+      if (finished) return;
       try {
         const ratio = Math.min(1, MAX_TEXTURE_SIZE / Math.max(source.naturalWidth, source.naturalHeight));
         const canvas = document.createElement('canvas');
@@ -123,8 +136,7 @@ export function loadTreeMaterial() {
           cropContext.drawImage(canvas, left, top, crop.width, crop.height, 0, 0, crop.width, crop.height);
           artwork = crop;
         }
-        publish({ ready: true, status: 'ready', revision: state.revision + 1, width: material.width, height: material.height });
-        resolve(state);
+        finish({ ready: true, status: 'ready', revision: state.revision + 1, width: material.width, height: material.height });
       } catch {
         fallback();
       }

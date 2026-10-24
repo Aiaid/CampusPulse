@@ -25,6 +25,13 @@ let prepared = null, loading = null;
 const listeners = new Set();
 
 export function gisMaterialState() { return state; }
+/** Structured-cloneable CPU state. Artwork stays on the main thread. The
+ * executor copies these arrays once per worker/revision, never transfers the
+ * live samplers' buffers away from actors or subsequent renders. */
+export function gisMaterialSnapshot() { return { state, prepared }; }
+export function installGisMaterialSnapshot(snapshot) {
+  state = Object.freeze({ ...snapshot.state }); prepared = snapshot.prepared;
+}
 export function subscribeGisMaterial(listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);

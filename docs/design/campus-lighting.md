@@ -1,6 +1,11 @@
 # Campus material and lighting extension
 
-Updated: 2026-10-24. Status: locally built, tested and browser-verified; no deployment.
+Updated: 2026-10-25. Status: locally built, tested and browser-verified; no deployment.
+
+The renderer now defaults to lower-resolution lighting with a shared
+轻量/精细 control. Background compilation, cropped library canvases and scoped
+caches supersede the original scheduling/allocation below. See
+[performance measurements and quality tradeoffs](../notes/lighting-performance.md).
 
 ## Scope and evidence boundary
 
@@ -27,9 +32,12 @@ full-campus coverage does not mean that every facade or tree has been measured.
   response, point-source occlusion, bounded ground bounce and window emission.
   Registered building silhouettes exclude ground overlays where geometry is
   incomplete. The accepted library ROI delegates to the original field.
-- `CampusLightingLayer.jsx` compiles128-unit world chunks asynchronously, two
-  jobs at a time, yielding after row batches. The two maps share one cache.
-  Overview density1 and detail density2 replace the same stable chunk key.
+- `CampusLightingLayer.jsx` prepares official source pixels and sends128-unit
+  world chunks to a shared bounded two-Worker queue. Browsers without the needed
+  worker canvas support use the same compiler with cooperative row checkpoints.
+  The two maps share one cache. The default light-color density is1; 精细
+  restores adaptive density1/2. Source imagery and native canopy alpha retain
+  their original sampling detail independently of the light-color budget.
   Eight source-map units of halo exceed the normalization kernel radius,
   preventing artificial normalization borders between neighboring chunks.
 - The chunk cache and anonymous source-image cache are bounded to64 entries

@@ -117,6 +117,23 @@ assignments; firmware and device acceptance remain pending.
 
 ## Completed archive
 
+- [x] Default to lower-resolution lighting with a shared, locally remembered
+      轻量/精细 control. Preserve official source sampling, text/actor DPR and
+      full-resolution native canopy occlusion; lower only material/light color
+      resolution. Matched visible Chromium improved full/efficient readiness
+      6.9→4.1s and DOM canvas capacity157.2→86.1MiB, with265 frontend tests and
+      production build passing. See [measurements and tradeoffs](../notes/lighting-performance.md).
+      Local implementation; production deployment/Safari acceptance separate.
+
+- [x] Reduce lighting startup work with a bounded two-Worker compiler, scoped
+      lamp/actor caches and cropped high-DPI library canvases. Matched warmed-tile
+      visible Chromium at1920×1080/DPR2 improved readiness19.9→6.7s, longest
+      main-thread task2126→139ms and DOM canvas capacity374.8→157.2MiB. Build,
+      256 frontend tests and mobile/day/night/xray/field/no-Worker regression pass.
+      Preserve lighting equations, source assets and frame-rate target. See
+      [performance notes](../notes/lighting-performance.md); deployment and live
+      Safari acceptance remain separate.
+
 - [x] Connect administrator location editing to the shared official GIS picker,
       public field maps/search/details and record place IDs. Preserve full-image
       coordinate registration and separate demo places; allow all map corners

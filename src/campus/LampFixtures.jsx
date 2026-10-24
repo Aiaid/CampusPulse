@@ -7,6 +7,7 @@ import { campusLights } from './campus-scene-data';
 import { campusTreeOpacityAt, getCampusTreesInBounds } from './campus-scene-lighting';
 import { getCampusNativeCanopyMasks, subscribeCampusNativeCanopy } from './CampusLightingLayer';
 import { drawNativeCanopyMasks } from './campus-tree-masks';
+import { createRenderCache, nativeMaskDependencies } from './render-cache';
 import './lamp-fixtures.css';
 
 const FIXTURE_URL = '/assets/campus-lamp-v1.png';
@@ -91,14 +92,13 @@ const localFixtures = libraryLights.filter(source => source.fixtureType !== 'can
   ...source.ground, height: source.height, id: source.id,
 }));
 const outsideBuildings = source => !buildings.some(building => pointInPolygon([source.x, source.y], building.polygon));
-const treeMaskedFixtures = new Map();
-let treeMaskRevision = -1;
+const treeMaskedFixtures = createRenderCache(512);
 
 /** Static world-space alpha crops, shared by both cameras. Only nearby fixtures
  * behind a crown are sampled. The exact same leaf gaps and painter ground depth
  * as actors decide opacity; a foreground pole remains intact above foliage.
  */
-function fixtureWithTreeOcclusion(source, material, revision, campus = false) {
+export function fixtureWithTreeOcclusion(source, material, revision, campus = false) {
   const worldHeight = source.height / material.lensFraction;
   const worldWidth = worldHeight * material.width / material.height;
   const left = source.x - material.lensAnchorX * worldWidth, top = source.y - worldHeight;
@@ -110,35 +110,36 @@ function fixtureWithTreeOcclusion(source, material, revision, campus = false) {
     && top < tree.screenBounds.top + tree.screenBounds.height
     && source.y > tree.screenBounds.top);
   if (!overlaps && !nativeCrowns.length) return { image: material.image, masked: false };
-  if (treeMaskRevision !== revision) {
-    treeMaskedFixtures.clear(); treeMaskRevision = revision;
-  }
   const key = `${campus ? 'campus' : 'library'}:${source.id}`;
-  if (treeMaskedFixtures.has(key)) return treeMaskedFixtures.get(key);
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.ceil(worldWidth * 8));
-  canvas.height = Math.max(1, Math.ceil(worldHeight * 8));
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context) return { image: material.image, masked: false };
-  context.drawImage(material.image, 0, 0, canvas.width, canvas.height);
-  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-  for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
-    const alpha = (y * canvas.width + x) * 4 + 3;
-    if (!pixels.data[alpha]) continue;
-    const worldX = left + (x + .5) / canvas.width * worldWidth;
-    const worldY = top + (y + .5) / canvas.height * worldHeight;
-    pixels.data[alpha] *= 1 - (campus ? campusTreeOpacityAt : treeOpacityAt)(worldX, worldY, source.y);
-  }
-  context.putImageData(pixels, 0, 0);
-  if (nativeCrowns.length) {
-    context.save(); context.globalCompositeOperation = 'destination-out';
-    context.setTransform(canvas.width / worldWidth, 0, 0, canvas.height / worldHeight,
-      -left * canvas.width / worldWidth, -top * canvas.height / worldHeight);
-    drawNativeCanopyMasks(context, nativeCrowns, {groundY:source.y}); context.restore();
-  }
-  const result = { image: canvas, masked: true };
-  treeMaskedFixtures.set(key, result);
-  return result;
+  // Chunk scheduling/progress still requests a redraw, but only a changed
+  // intersecting mask or tree artwork requires resampling this lamp's alpha.
+  return treeMaskedFixtures.resolve(key, [revision, material, source.x, source.y, source.height,
+    ...nativeMaskDependencies(nativeCrowns)], () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.ceil(worldWidth * 8));
+    canvas.height = Math.max(1, Math.ceil(worldHeight * 8));
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return { image: material.image, masked: false };
+    context.drawImage(material.image, 0, 0, canvas.width, canvas.height);
+    if (overlaps) {
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+      for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
+        const alpha = (y * canvas.width + x) * 4 + 3;
+        if (!pixels.data[alpha]) continue;
+        const worldX = left + (x + .5) / canvas.width * worldWidth;
+        const worldY = top + (y + .5) / canvas.height * worldHeight;
+        pixels.data[alpha] *= 1 - (campus ? campusTreeOpacityAt : treeOpacityAt)(worldX, worldY, source.y);
+      }
+      context.putImageData(pixels, 0, 0);
+    }
+    if (nativeCrowns.length) {
+      context.save(); context.globalCompositeOperation = 'destination-out';
+      context.setTransform(canvas.width / worldWidth, 0, 0, canvas.height / worldHeight,
+        -left * canvas.width / worldWidth, -top * canvas.height / worldHeight);
+      drawNativeCanopyMasks(context, nativeCrowns, {groundY:source.y}); context.restore();
+    }
+    return { image: canvas, masked: true };
+  });
 }
 
 /** Physical-looking illustrative objects for the existing artistic light list.
@@ -193,7 +194,7 @@ export default function LampFixtures({ project, scale, viewWidth, viewHeight,
           // naturally places the pole foot a little to its left.
           const left = footX - material.lensAnchorX * drawnWidth, top = footY - drawnHeight;
           if (left + drawnWidth < 0 || left > width || footY < 0 || top > height) continue;
-          const fixture = fixtureWithTreeOcclusion(source, material, `${treeRevision}:${nativeRevision}`, lighting === 'campus');
+          const fixture = fixtureWithTreeOcclusion(source, material, treeRevision, lighting === 'campus');
           context.drawImage(fixture.image, left, top, drawnWidth, drawnHeight);
           if (fixture.masked) maskedCount += 1;
           count += 1;
@@ -218,6 +219,7 @@ export default function LampFixtures({ project, scale, viewWidth, viewHeight,
         anchor: 'trimmed-alpha-emitting-lens-x-and-pole-foot-y', heights: 'illustrative-map-units-library-shared-source-height',
         occlusion: 'all-projected-building-silhouettes-and-shared-tree-alpha-by-ground-depth',
         treeMaskedFixtureCount: String(maskedCount), treeMaterialRevision: String(treeRevision),
+        treeMaskCacheEntries: String(treeMaskedFixtures.size),
         xray: xray ? 'building-clipping-preserved' : 'off',
         selectedId, worldX: String(origin.left), worldY: String(origin.top), worldScale: String(scale),
       });

@@ -29,13 +29,16 @@ export function visibleCampusChunks({ width, height, scale, translateX, translat
 export function createCampusChunkCache({ compile, maxEntries = 64, concurrency = 2,
   now = () => Date.now(), retryMs = 30_000 } = {}) {
   const entries = new Map(), owners = new Map(), listeners = new Set();
-  let running = 0, revision = 0, generation = 0, tick = 0;
+  let running = 0, revision = 0, generation = 0, tick = 0, qualityBudget = null;
   const notify = () => { revision++; for (const listener of listeners) listener(); };
   const demands = () => {
     const union = new Map();
     for (const viewport of owners.values()) for (const chunk of viewport.chunks) {
       const prior = union.get(chunk.key);
-      if (!prior || prior.resolution < viewport.resolution) union.set(chunk.key, { ...chunk, resolution: viewport.resolution });
+      union.set(chunk.key, { ...chunk, resolution: Math.max(prior?.resolution ?? 0, viewport.resolution),
+        sourceResolution: Math.max(prior?.sourceResolution ?? 0, viewport.sourceResolution),
+        quality: prior?.quality === 'full' || viewport.quality === 'full' ? 'full' : 'efficient',
+        diagnostic: Boolean(prior?.diagnostic || viewport.diagnostic) });
     }
     return union;
   };
@@ -48,6 +51,17 @@ export function createCampusChunkCache({ compile, maxEntries = 64, concurrency =
   };
   const pump = () => {
     const wanted = demands();
+    for (const entry of entries.values()) {
+      const demand = wanted.get(entry.key);
+      if (entry.running && (!demand || entry.targetGeneration !== generation
+        || entry.targetQuality !== demand.quality || entry.targetResolution > demand.resolution
+        || entry.targetSourceResolution > demand.sourceResolution)) entry.controller.abort();
+      // Switching all cameras to the lighter profile also releases high-detail
+      // chunks that have left the viewport instead of retaining them forever.
+      if (!demand && !entry.running && entry.quality === 'full'
+        && (qualityBudget?.quality === 'efficient'
+          || owners.size && [...owners.values()].every(viewport => viewport.quality === 'efficient'))) entries.delete(entry.key);
+    }
     for (const chunk of wanted.values()) {
       if (running >= concurrency) break;
       let entry = entries.get(chunk.key);
@@ -60,26 +74,47 @@ export function createCampusChunkCache({ compile, maxEntries = 64, concurrency =
         entry = { ...chunk, value: null, resolution: 0, generation: -1, used: ++tick, running: false, failedAt: -Infinity };
         entries.set(chunk.key, entry);
       }
-      const adequate = entry.value && entry.resolution >= chunk.resolution && entry.generation === generation;
-      if (entry.running || adequate || now() - entry.failedAt < retryMs) continue;
-      const targetGeneration = generation, targetResolution = Math.max(chunk.resolution, entry.resolution);
-      entry.running = true; running++; notify();
-      Promise.resolve().then(() => compile({ ...chunk, resolution: targetResolution })).then(value => {
+      const adequate = entry.value && entry.resolution === chunk.resolution && entry.generation === generation
+        && entry.quality === chunk.quality && entry.sourceResolution === chunk.sourceResolution
+        && (!chunk.diagnostic || entry.diagnostic);
+      const signature = `${chunk.quality}:${chunk.resolution}:${chunk.sourceResolution}`;
+      if (entry.running || adequate || entry.failedSignature === signature && now() - entry.failedAt < retryMs) continue;
+      const targetGeneration = generation, targetResolution = chunk.resolution;
+      const diagnostic = Boolean(chunk.diagnostic || entry.diagnostic && entry.quality === chunk.quality
+        && entry.resolution === targetResolution), controller = new AbortController();
+      entry.running = true; entry.controller = controller; entry.targetGeneration = targetGeneration;
+      entry.targetQuality = chunk.quality; entry.targetResolution = targetResolution;
+      entry.targetSourceResolution = chunk.sourceResolution; running++; notify();
+      Promise.resolve().then(() => compile({ ...chunk, resolution: targetResolution, diagnostic }, { signal: controller.signal })).then(value => {
+        if (controller.signal.aborted || targetGeneration !== generation) return;
         if (!value) throw new Error('Material unavailable');
         entry.value = value; entry.resolution = targetResolution; entry.generation = targetGeneration;
+        entry.diagnostic = diagnostic; entry.quality = chunk.quality; entry.sourceResolution = chunk.sourceResolution;
         entry.failedAt = -Infinity; entry.used = ++tick;
-      }).catch(() => { entry.failedAt = now(); }).finally(() => {
+      }).catch(() => { if (!controller.signal.aborted) { entry.failedAt = now(); entry.failedSignature = signature; } }).finally(() => {
         entry.running = false; running--; trim(); notify(); pump();
       });
     }
   };
   return {
-    setViewport(owner, chunks, resolution = 1) {
-      owners.set(owner, { chunks, resolution: Math.max(1, Math.min(2, resolution)) });
+    setViewport(owner, chunks, resolution = 1, { diagnostic = false, quality = 'full', sourceResolution = resolution } = {}) {
+      if (qualityBudget) { quality = qualityBudget.quality; resolution = Math.min(resolution, qualityBudget.resolutionLimit); }
+      owners.set(owner, { chunks, resolution: Math.max(1, Math.min(2, resolution)), diagnostic,
+        quality, sourceResolution: Math.max(1, Math.min(2, sourceResolution)) });
       for (const chunk of chunks) { const entry = entries.get(chunk.key); if (entry) entry.used = ++tick; }
       trim(); pump();
     },
-    removeViewport(owner) { owners.delete(owner); trim(); },
+    removeViewport(owner) { owners.delete(owner); trim(); pump(); },
+    setQualityBudget(quality, resolutionLimit) {
+      qualityBudget = { quality, resolutionLimit: Math.max(1, Math.min(2, resolutionLimit)) };
+      for (const viewport of owners.values()) {
+        viewport.quality = quality;
+        viewport.resolution = Math.min(viewport.sourceResolution, qualityBudget.resolutionLimit);
+      }
+      // This is also called with zero owners, so unmounted maps cannot keep an
+      // obsolete high-resolution allocation alive until their next render.
+      pump(); notify();
+    },
     get(key) { return entries.get(key)?.value ?? null; },
     values() { return [...entries.values()].map(entry => entry.value).filter(Boolean); },
     invalidate() { generation++; for (const entry of entries.values()) entry.failedAt = -Infinity; pump(); },
@@ -87,7 +122,12 @@ export function createCampusChunkCache({ compile, maxEntries = 64, concurrency =
     snapshot() {
       const wanted = demands();
       return { revision, generation, running, owners: owners.size, entries: entries.size, visible: wanted.size,
-        ready: [...wanted.keys()].filter(key => entries.get(key)?.value).length,
+        ready: [...wanted.values()].filter(chunk => {
+          const entry = entries.get(chunk.key);
+          return entry?.value && entry.generation === generation && entry.resolution === chunk.resolution
+            && entry.quality === chunk.quality && entry.sourceResolution === chunk.sourceResolution
+            && (!chunk.diagnostic || entry.diagnostic);
+        }).length,
         failed: [...entries.values()].filter(entry => Number.isFinite(entry.failedAt)).length,
         detail: [...entries.values()].filter(entry => entry.resolution === 2).length };
     },

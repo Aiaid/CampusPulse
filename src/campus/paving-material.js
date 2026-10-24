@@ -11,6 +11,13 @@ let prepared = null, loading = null;
 const listeners = new Set();
 
 export function pavingMaterialState() { return state; }
+/** Structured-cloneable CPU state. Artwork stays on the main thread. The
+ * executor copies these arrays once per worker/revision, never transfers the
+ * live samplers' buffers away from actors or subsequent renders. */
+export function pavingMaterialSnapshot() { return { state, prepared }; }
+export function installPavingMaterialSnapshot(snapshot) {
+  state = Object.freeze({ ...snapshot.state }); prepared = snapshot.prepared;
+}
 export function subscribePavingMaterial(listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
@@ -63,9 +70,18 @@ export function loadPavingMaterial() {
   publish({ status: 'loading' });
   loading = new Promise(resolve => {
     const source = new Image(); source.decoding = 'async';
-    const fallback = () => { publish({ status: 'fallback' }); resolve(state); };
+    let finished = false, deadline;
+    const finish = next => {
+      if (finished) return;
+      finished = true; clearTimeout(deadline);
+      source.onload = null; source.onerror = null;
+      publish(next); resolve(state);
+    };
+    const fallback = () => finish({ status: 'fallback' });
+    deadline = setTimeout(fallback, 8000);
     source.onerror = fallback;
     source.onload = () => {
+      if (finished) return;
       try {
         if (source.naturalWidth < 2 || source.naturalHeight < 2) return fallback();
         const ratio = Math.min(1, MAX_TEXTURE_SIZE / Math.max(source.naturalWidth, source.naturalHeight));
@@ -78,8 +94,7 @@ export function loadPavingMaterial() {
         const material = preparePavingMaterial(context.getImageData(0, 0, canvas.width, canvas.height));
         if (!material) return fallback();
         prepared = material;
-        publish({ ready: true, status: 'ready', revision: state.revision + 1, width: material.width, height: material.height });
-        resolve(state);
+        finish({ ready: true, status: 'ready', revision: state.revision + 1, width: material.width, height: material.height });
       } catch { fallback(); }
     };
     source.src = ASSET_URL;

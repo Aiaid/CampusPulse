@@ -5,6 +5,8 @@ import { groundLightAtlas } from './lighting-field';
 import { facadeArtwork } from './facade-atlas';
 import { MAP_WIDTH, MAP_HEIGHT } from './scene-data';
 import { withoutLibraryLight } from './library-baseline-mask';
+import { lightingQualityProfile } from './lighting-quality.js';
+import { useLightingQuality } from './lighting-quality-store.js';
 import './night-lighting.css';
 
 function traceBuilding(context, polygon, project) {
@@ -41,13 +43,15 @@ export default function NightLighting({ project, scale, viewWidth, viewHeight, i
   xray = false, selectedId = 'library', lighting = 'atmospheric', renderer = 'canvas-original', suppressLibrary = false,
 }) {
   const canvasRef = useRef(null);
+  const quality = useLightingQuality();
+  const profile = lightingQualityProfile(quality);
   const textureRef = useRef(null);
   const requestRef = useRef(0);
   const drawRef = useRef(null);
   drawRef.current = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, profile.pixelRatioLimit);
     const width = Math.max(1, Math.round(viewWidth * dpr));
     const height = Math.max(1, Math.round(viewHeight * dpr));
     if (canvas.width !== width || canvas.height !== height) {
@@ -59,6 +63,8 @@ export default function NightLighting({ project, scale, viewWidth, viewHeight, i
     context.clearRect(0, 0, viewWidth, viewHeight);
     canvas.dataset.lampCount = '0';
     canvas.dataset.windowCount = '0';
+    canvas.dataset.quality = profile.id;
+    canvas.dataset.pixelRatio = String(dpr);
     canvas.dataset.surfaceMask = lighting === 'atmospheric' ? 'reviewed-paving-minus-buildings' : 'buildings-only';
     canvas.dataset.lightAtlas = lighting === 'atmospheric' ? '2048x1280-world' : 'viewport-original';
     canvas.dataset.surfaceWidths = lighting === 'atmospheric' ? 'artistic-bounded-corridors' : 'unbounded-pools';
@@ -174,7 +180,7 @@ export default function NightLighting({ project, scale, viewWidth, viewHeight, i
   // Project is affine in CampusMap. Compare its transform, not its function
   // identity, so an unrelated clock/selection render cannot redraw static light.
   const origin = project?.(0, 0);
-  useEffect(invalidate, [origin?.left, origin?.top, scale, viewWidth, viewHeight, isDark, xray, selectedId, lighting, suppressLibrary]);
+  useEffect(invalidate, [origin?.left, origin?.top, scale, viewWidth, viewHeight, isDark, xray, selectedId, lighting, suppressLibrary, quality]);
   return <canvas ref={canvasRef} className="cp-night-lighting" aria-hidden="true"
     data-lighting="illustrative" data-lighting-mode={lighting} data-renderer={renderer} style={{ width: viewWidth, height: viewHeight }} />;
 }

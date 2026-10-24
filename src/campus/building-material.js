@@ -9,6 +9,13 @@ let prepared = null, artwork = null, loading = null;
 const listeners = new Set();
 
 export function buildingMaterialState() { return state; }
+/** Structured-cloneable CPU state. Artwork stays on the main thread. The
+ * executor copies these arrays once per worker/revision, never transfers the
+ * live samplers' buffers away from actors or subsequent renders. */
+export function buildingMaterialSnapshot() { return { state, prepared }; }
+export function installBuildingMaterialSnapshot(snapshot) {
+  state = Object.freeze({ ...snapshot.state }); prepared = snapshot.prepared;
+}
 export function buildingMaterialArtwork() { return artwork; }
 export function subscribeBuildingMaterial(listener) {
   listeners.add(listener);
@@ -128,9 +135,18 @@ export function loadBuildingMaterial() {
   publish({ status: 'loading' });
   loading = new Promise(resolve => {
     const source = new Image(); source.decoding = 'async';
-    const fallback = () => { publish({ status: 'fallback' }); resolve(state); };
+    let finished = false, deadline;
+    const finish = next => {
+      if (finished) return;
+      finished = true; clearTimeout(deadline);
+      source.onload = null; source.onerror = null;
+      publish(next); resolve(state);
+    };
+    const fallback = () => finish({ status: 'fallback' });
+    deadline = setTimeout(fallback, 8000);
     source.onerror = fallback;
     source.onload = () => {
+      if (finished) return;
       try {
         if (source.naturalWidth < 4 || source.naturalHeight < 2) return fallback();
         const ratio = Math.min(1, MAX_CELL_SIZE / Math.max(source.naturalWidth / 2, source.naturalHeight));
@@ -147,9 +163,8 @@ export function loadBuildingMaterial() {
         artwork = { image: source, warmEmissionNormalization: material.warmEmissionNormalization,
           cells: { unlit: { x: 0, y: 0, width: half, height: source.naturalHeight },
           warm: { x: half, y: 0, width: half, height: source.naturalHeight } } };
-        publish({ ready: true, status: 'ready', revision: state.revision + 1, width: material.width, height: material.height,
+        finish({ ready: true, status: 'ready', revision: state.revision + 1, width: material.width, height: material.height,
           warmEmissionNormalization: material.warmEmissionNormalization });
-        resolve(state);
       } catch { fallback(); }
     };
     source.src = ASSET_URL;

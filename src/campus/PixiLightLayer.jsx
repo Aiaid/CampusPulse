@@ -8,6 +8,8 @@ import { groundLightAtlas, groundSurfaceMask, lampSurfaceFrame } from './lightin
 import { MAP_HEIGHT, MAP_WIDTH } from './scene-data';
 import { libraryBlend } from './library-lighting';
 import { withoutLibraryLight } from './library-baseline-mask';
+import { lightingQualityProfile } from './lighting-quality.js';
+import { useLightingQuality } from './lighting-quality-store.js';
 import './night-lighting.css';
 
 const sceneLamps = [...lampPoints, ...campusLightLamps];
@@ -56,9 +58,10 @@ export default function PixiLightLayer({ project,scale,viewWidth,viewHeight,isDa
   xray=false,selectedId='library',lighting='atmospheric',onFailure,suppressLibrary=false,
 }){
   const hostRef=useRef(null);
+  const quality=useLightingQuality();
   const runtimeRef=useRef(null);
   const current=useRef(null);
-  current.current={project,scale,viewWidth,viewHeight,isDark,xray,selectedId,lighting,onFailure,suppressLibrary};
+  current.current={project,scale,viewWidth,viewHeight,isDark,xray,selectedId,lighting,onFailure,suppressLibrary,quality};
   const origin=project?.(0,0);
 
   useEffect(()=>{
@@ -115,7 +118,7 @@ export default function PixiLightLayer({ project,scale,viewWidth,viewHeight,isDa
         await app.init({
           preference:'webgl',backgroundAlpha:0,autoStart:false,sharedTicker:false,
           width:Math.max(1,current.current.viewWidth),height:Math.max(1,current.current.viewHeight),
-          resolution:Math.min(window.devicePixelRatio||1,1.5),autoDensity:true,
+          resolution:Math.min(window.devicePixelRatio||1,1.5,lightingQualityProfile(current.current.quality).pixelRatioLimit),autoDensity:true,
           antialias:false,powerPreference:'low-power',eventMode:'none',
           eventFeatures:{move:false,globalMove:false,click:false,wheel:false},
           preserveDrawingBuffer:false,
@@ -193,7 +196,8 @@ export default function PixiLightLayer({ project,scale,viewWidth,viewHeight,isDa
           try{
             const props=current.current;
             const width=Math.max(1,props.viewWidth),height=Math.max(1,props.viewHeight);
-            const resolution=Math.min(window.devicePixelRatio||1,1.5);
+            const profile=lightingQualityProfile(props.quality);
+            const resolution=Math.min(window.devicePixelRatio||1,1.5,profile.pixelRatioLimit);
             if(app.screen.width!==width||app.screen.height!==height||app.renderer.resolution!==resolution)app.renderer.resize(width,height,resolution);
             canvas.style.width=`${width}px`;canvas.style.height=`${height}px`;
             const point=props.project?.(0,0)??{left:0,top:0};
@@ -215,6 +219,8 @@ export default function PixiLightLayer({ project,scale,viewWidth,viewHeight,isDa
             }
             const visible=({x,y},padding)=>{const p=props.project(x,y);return p.left>=-padding&&p.left<=width+padding&&p.top>=-padding&&p.top<=height+padding;};
             canvas.dataset.lightingMode=props.lighting;
+            canvas.dataset.quality=profile.id;
+            canvas.dataset.pixelRatio=String(resolution);
             canvas.dataset.librarySuppressed=String(props.suppressLibrary);
             canvas.dataset.worldX=String(point.left);
             canvas.dataset.worldY=String(point.top);
@@ -239,6 +245,6 @@ export default function PixiLightLayer({ project,scale,viewWidth,viewHeight,isDa
     initialize();
     return()=>{cancelled=true;cancelAnimationFrame(frame);if(initialized)dispose();};
   },[]);
-  useEffect(()=>{runtimeRef.current?.invalidate();},[origin?.left,origin?.top,scale,viewWidth,viewHeight,isDark,xray,selectedId,lighting,suppressLibrary]);
+  useEffect(()=>{runtimeRef.current?.invalidate();},[origin?.left,origin?.top,scale,viewWidth,viewHeight,isDark,xray,selectedId,lighting,suppressLibrary,quality]);
   return <div ref={hostRef} className="cp-pixi-light-host" aria-hidden="true" />;
 }
