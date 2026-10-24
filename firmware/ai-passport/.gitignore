@@ -1,0 +1,19 @@
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+.vscode/
+.idea/
+
+# 本地 WiFi 凭证（写死但不上库；模板见 main/wifi_cred_local.example.h）
+main/wifi_cred_local.h
+
+# 本地设备身份/凭据（写死但不上库；模板见 main/device_cred_local.example.h）
+main/device_cred_local.h
+
+# Generated repository-local links; canonical skill sources live in skills/.
+/.agents/skills/passport-develop
+/.agents/skills/passport-setup
+/.agents/skills/passport-build
+/.agents/skills/passport-device-test
+/.agents/skills/passport-debug
