@@ -560,3 +560,32 @@ Password derivation uses native `node:crypto` scrypt rather than third-party
 password implementation code. New auth screenshots show synthetic local QA only,
 contain no credential values and are not committed; final copies are metadata
 stripped/rechecked before any sharing.
+
+## 2026-10-25 application icon
+
+The selected icon is newly AI-generated with the built-in image generation tool
+for CampusPulse; no external logo, artwork or implementation was imported.
+The selected design is an abstract C-shaped campus route with a turquoise endpoint
+on navy. The earlier literal gateway/pulse concept was rejected and is not bundled.
+This is a generated raster asset, not a claim of trademark clearance or an
+upstream open-source license. Existing third-party notices are unchanged.
+
+`public/icons/campuspulse-1024.png` is the metadata-stripped selected master.
+The 512/192 px manifest icons, 180 px Apple touch icon, 32 px favicon and
+16/32/48 px ICO are Lanczos-resized derivatives. The homepage brand uses the
+192 px variant. These files add no service worker or offline functionality.
+Original generation output is retained outside the repository. Final served PNG
+and ICO files were inspected with ExifTool after conversion: no EXIF, GPS, XMP,
+IPTC, MakerNotes, comments, embedded thumbnails, or identity/contact/path metadata
+were found. Only image-format structure remains. Orientation and colors were
+visually checked. Local browser/build verification is separate from deployment.
+
+Final generation prompt (built-in tool; opaque background):
+
+```text
+Use case: logo-brand
+Asset type: original CampusPulse application icon, single square image.
+Design a refined, memorable abstract identity for a campus activity map. One bold geometric C-shaped continuous route, suggestive of a softly folded map or a campus circulation loop. The C has a subtle upward rhythm in its open right edge, integrated into the same shape, not an added heartbeat line. Make it feel like a smart map product, contemporary university life, and movement.
+Visual discipline: one cohesive thick silhouette, a few decisive rounded corners, carefully balanced negative space. Prefer a beautiful simple symbol over literal explanation. Flat vector-like graphic, no texture, no glow, no shadows. Pale icy cyan for the main C, one restrained turquoise endpoint that belongs to the route. Deep midnight navy full-bleed square background. Symbol occupies about 68 percent of canvas width, centered optically. Crisp at 16px.
+No literal buildings, no gates, no towers, no roofs, no heart or ECG zigzag, no antennas, no shields, no pins, no tiny details, no text, no wordmark, no letters other than the abstract C shape, no presentation mockup, no outer border. Deliver exactly one finished square icon.
+```

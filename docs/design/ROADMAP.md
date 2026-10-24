@@ -139,6 +139,12 @@ collection and durable upload. Final local software verification passed on
 
 ## Completed archive
 
+- [x] Generate an original abstract campus-route C app icon and integrate the
+      homepage brand, browser favicon, Apple touch icon and manifest variants.
+      Final assets were metadata-stripped/rechecked; local build and desktop/
+      mobile browser icon loading passed (2026-10-25). Deployment remains separate.
+      Prompt and provenance are recorded in [reuse notes](../notes/reuse.md).
+
 - [x] Default to lower-resolution lighting with a shared, locally remembered
       轻量/精细 control. Preserve official source sampling, text/actor DPR and
       full-resolution native canopy occlusion; lower only material/light color
