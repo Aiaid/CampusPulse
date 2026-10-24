@@ -29,7 +29,7 @@ export function createAdminOpenApi() {
       responses: { [status]: json(method === 'get' ? 'Current server state; no credential digests or raw identifiers.' : 'Committed server result.', object), ...errors },
     };
   }
-  const draftBody = entity({ config: ref('CaptureConfig'), raw_retention_hours: { type: 'integer', minimum: 1, maximum: 8760 }, aggregate_retention_days: { type: 'integer', minimum: 1, maximum: 3650 } }, ['config']);
+  const draftBody = entity({ config: ref('AnyCaptureConfig'), raw_retention_hours: { type: 'integer', minimum: 1, maximum: 8760 }, aggregate_retention_days: { type: 'integer', minimum: 1, maximum: 3650 } }, ['config']);
   const draftUpdate = entity({ ...draftBody.properties, revision: integer }, ['config', 'revision']);
   const revision = entity({ revision: integer });
   const anchor = entity({ x: { type: 'number', minimum: 0, maximum: 1 }, y: { type: 'number', minimum: 0, maximum: 1 } });

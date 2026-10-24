@@ -24,8 +24,12 @@ jobs:
       - run: npm run build
       - name: Verify ingestion against local workerd D1 and R2
         run: node scripts/ingest-runtime-smoke.mjs
+      - name: Verify device v2 against local workerd D1 and R2
+        run: node scripts/device-v2-runtime-smoke.mjs
       - name: Install browser
         run: npx playwright install --with-deps chromium
+      - name: Verify protected provisioning wizard with synthetic peers
+        run: node scripts/provisioning-browser-smoke.mjs
       - name: Prepare local database and disposable operator/admin credentials
         run: |
           node --input-type=module -e "import {writeFileSync} from 'node:fs'; import {randomBytes} from 'node:crypto'; writeFileSync('.dev.vars',['OPERATOR_TOKEN='+randomBytes(32).toString('hex'),'ADMIN_TOKEN='+randomBytes(32).toString('hex'),'ADMIN_SMOKE_USERNAME=ci-admin','ADMIN_SMOKE_PASSWORD='+randomBytes(24).toString('hex'),'ADMIN_SMOKE_NEW_USERNAME=ci-admin-updated','ADMIN_SMOKE_NEW_PASSWORD='+randomBytes(24).toString('hex')].join('\n')+'\n',{mode:0o600});"

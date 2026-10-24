@@ -1,5 +1,6 @@
 import type { Env, PlaceKind } from './types';
-import { IngestError, parseIngestJson, validateCaptureConfig, type CaptureConfig } from './ingest-validation';
+import { IngestError, parseIngestJson } from './ingest-validation';
+import { validateAnyCaptureConfig as validateCaptureConfig, type AnyCaptureConfig as CaptureConfig } from './device-v2-validation';
 import { json, readBytes, sha256 } from './ingest';
 import { adminOrigin, adminSecret, requireAdminSession, requireFreshSession, sessionAssertion, AuthRateLimitError } from './admin-auth';
 import { handleAdminIdentity } from './admin-account';
@@ -54,16 +55,27 @@ interface DeviceRow {
   last_seen_at: string | null; firmware_version: string | null; reported_config_id: string | null;
   desired_config_id: string | null; activation_state: 'applied' | 'failed' | null;
   status_json: string | null; status_received_at: string | null; status_boot_id: string | null;
+  applied_config_id: string | null; control_json: string | null; control_received_at: string | null; desired_protocol: string | null;
 }
 const DEVICE_SELECT = `SELECT n.id,n.name,n.board,n.enabled,
-  b.received_at AS last_seen_at,b.firmware_version,b.capture_config_id AS reported_config_id,
-  d.capture_config_id AS desired_config_id,a.state AS activation_state,
+  CASE WHEN c.received_at IS NOT NULL AND (b.received_at IS NULL OR c.received_at>b.received_at) THEN c.received_at ELSE b.received_at END AS last_seen_at,
+  CASE WHEN c.received_at IS NOT NULL AND (b.received_at IS NULL OR c.received_at>b.received_at) THEN c.firmware_version ELSE b.firmware_version END AS firmware_version,
+  b.capture_config_id AS reported_config_id,d.capture_config_id AS desired_config_id,
+  CASE WHEN json_extract(p.config_json,'$.protocol')='campuspulse/2' THEN
+    CASE WHEN c.activation_config_id=d.capture_config_id THEN c.activation_state ELSE NULL END ELSE a.state END AS activation_state,
+  CASE WHEN json_extract(p.config_json,'$.protocol')='campuspulse/2' THEN c.applied_config_id
+    WHEN a.state='applied' THEN a.capture_config_id ELSE NULL END AS applied_config_id,
+  json_extract(p.config_json,'$.protocol') AS desired_protocol,
+  c.contact_json AS control_json,c.received_at AS control_received_at,
   s.item_json AS status_json,s.received_at AS status_received_at,s.boot_id AS status_boot_id
   FROM device_nodes n
-  LEFT JOIN ingestion_batches b ON b.rowid = (SELECT x.rowid FROM ingestion_batches x WHERE x.node_id = n.id ORDER BY x.received_at DESC,x.rowid DESC LIMIT 1)
-  LEFT JOIN device_desired_configs d ON d.node_id = n.id
-  LEFT JOIN config_activation a ON a.node_id = n.id AND a.capture_config_id = d.capture_config_id
-  LEFT JOIN node_status s ON s.rowid = (SELECT x.rowid FROM node_status x WHERE x.node_id = n.id ORDER BY x.received_at DESC,x.rowid DESC LIMIT 1)`;
+  LEFT JOIN all_ingestion_batches b ON b.node_id=n.id AND b.batch_id=(SELECT x.batch_id FROM all_ingestion_batches x WHERE x.node_id=n.id ORDER BY x.received_at DESC,x.batch_id DESC LIMIT 1)
+  LEFT JOIN device_desired_configs d ON d.node_id=n.id
+  LEFT JOIN capture_configs p ON p.id=d.capture_config_id
+  LEFT JOIN config_activation a ON a.node_id=n.id AND a.capture_config_id=d.capture_config_id
+  LEFT JOIN device_control_v2 c ON c.node_id=n.id
+  LEFT JOIN all_node_status s ON s.node_id=n.id AND s.batch_id=(SELECT x.batch_id FROM all_node_status x WHERE x.node_id=n.id ORDER BY x.received_at DESC,x.batch_id DESC LIMIT 1)`;
+
 function deviceFromRow(row: DeviceRow, staleSeconds: number, now: number) {
   const lastSeen = row.last_seen_at ? Date.parse(row.last_seen_at) : NaN;
   return { id: row.id, name: row.name || row.id, board: row.board, enabled: row.enabled === 1,
@@ -71,8 +83,10 @@ function deviceFromRow(row: DeviceRow, staleSeconds: number, now: number) {
     contact_state: !Number.isFinite(lastSeen) ? 'unknown' : now - lastSeen <= staleSeconds * 1000 ? 'recent' : 'stale',
     firmware_version: row.firmware_version,
     latest_status: row.status_json ? { item: JSON.parse(row.status_json), received_at: row.status_received_at, boot_id: row.status_boot_id } : null,
+    latest_control: row.control_json ? { ...JSON.parse(row.control_json), received_at: row.control_received_at } : null,
+    applied_config_id: row.applied_config_id,
     desired_config_id: row.desired_config_id, reported_config_id: row.reported_config_id,
-    config_state: !row.desired_config_id ? 'unassigned' : row.activation_state ?? (row.reported_config_id === row.desired_config_id ? 'reported' : 'pending') };
+    config_state: row.desired_protocol === 'campuspulse/2' ? (row.activation_state ?? 'pending') : !row.desired_config_id ? 'unassigned' : row.activation_state ?? (row.reported_config_id === row.desired_config_id ? 'reported' : 'pending') };
 }
 async function findDevice(env: Env, id: string) {
   const [row, settings] = await Promise.all([
@@ -164,14 +178,11 @@ export async function handleAdmin(request: Request, env: Env): Promise<Response 
     if (route === '/overview' && request.method === 'GET') {
       const settings = await readRuntimeSettings(env);
       const since = new Date(Date.now() - settings.stale_after_seconds * 1000).toISOString();
-      const row = await env.DB.prepare(`SELECT COUNT(*) AS devices_total,COALESCE(SUM(n.enabled),0) AS devices_enabled,
-        COALESCE(SUM(b.received_at >= ?),0) AS devices_recent,COALESCE(SUM(b.received_at < ?),0) AS devices_stale,
-        COALESCE(SUM(b.received_at IS NULL),0) AS devices_unknown,
-        COALESCE(SUM(d.capture_config_id IS NOT NULL AND (a.state IS NULL OR a.state != 'applied')),0) AS config_pending
-        FROM device_nodes n
-        LEFT JOIN ingestion_batches b ON b.rowid = (SELECT x.rowid FROM ingestion_batches x WHERE x.node_id=n.id ORDER BY x.received_at DESC,x.rowid DESC LIMIT 1)
-        LEFT JOIN device_desired_configs d ON d.node_id=n.id
-        LEFT JOIN config_activation a ON a.node_id=n.id AND a.capture_config_id=d.capture_config_id`).bind(since, since).first();
+      const row = await env.DB.prepare(`SELECT COUNT(*) AS devices_total,COALESCE(SUM(enabled),0) AS devices_enabled,
+        COALESCE(SUM(last_seen_at >= ?),0) AS devices_recent,COALESCE(SUM(last_seen_at < ?),0) AS devices_stale,
+        COALESCE(SUM(last_seen_at IS NULL),0) AS devices_unknown,
+        COALESCE(SUM(desired_config_id IS NOT NULL AND (activation_state IS NULL OR activation_state != 'applied')),0) AS config_pending
+        FROM (${DEVICE_SELECT})`).bind(since,since).first();
       return json({ ...row, server_time: new Date().toISOString() });
     }
     if (route === '/devices') {
@@ -204,12 +215,12 @@ export async function handleAdmin(request: Request, env: Env): Promise<Response 
         const [device, placements, configs, activation, events] = await Promise.all([
           findDevice(env, id),
           env.DB.prepare(`SELECT p.*,COALESCE(c.valid_until_ms,p.valid_until_ms) AS effective_valid_until_ms,c.recorded_at AS closed_at,
-            (SELECT COUNT(*) FROM sensor_windows w WHERE w.placement_id=p.id AND w.utc_ms IS NOT NULL AND
+            (SELECT COUNT(*) FROM all_sensor_windows w WHERE w.placement_id=p.id AND w.utc_ms IS NOT NULL AND
              (w.utc_ms < p.valid_from_ms OR w.utc_ms+w.duration_ms > COALESCE(c.valid_until_ms,p.valid_until_ms,9223372036854775807))) AS incompatible_window_count
             FROM placements p LEFT JOIN placement_closures c ON c.placement_id=p.id WHERE p.node_id=? ORDER BY p.valid_from_ms DESC,p.id LIMIT 201`).bind(id).all(),
           env.DB.prepare(`${PUBLISHED_SELECT} WHERE c.node_id = ? ORDER BY c.accept_until_ms DESC,c.id DESC LIMIT 201`).bind(id).all<PublishedRow>(),
-          env.DB.prepare('SELECT a.* FROM config_activation a JOIN device_desired_configs d ON d.node_id=a.node_id AND d.capture_config_id=a.capture_config_id WHERE a.node_id=?').bind(id).first(),
-          env.DB.prepare('SELECT id,capture_config_id,state,message,received_at FROM config_activation_events WHERE node_id=? ORDER BY id DESC LIMIT 100').bind(id).all(),
+          env.DB.prepare(`SELECT a.node_id,a.capture_config_id,a.state,a.message,a.received_at,NULL AS boot_id,NULL AS apply_seq FROM config_activation a JOIN device_desired_configs d ON d.node_id=a.node_id AND d.capture_config_id=a.capture_config_id JOIN capture_configs p ON p.id=d.capture_config_id WHERE a.node_id=? AND json_extract(p.config_json,'$.protocol') IS NOT 'campuspulse/2' UNION ALL SELECT c.node_id,c.activation_config_id,c.activation_state,c.activation_message,c.activation_received_at,c.boot_id,c.apply_seq FROM device_control_v2 c JOIN device_desired_configs d ON d.node_id=c.node_id AND d.capture_config_id=c.activation_config_id WHERE c.node_id=?`).bind(id,id).first(),
+          env.DB.prepare(`SELECT id,capture_config_id,state,message,received_at,NULL AS boot_id,NULL AS apply_seq FROM config_activation_events WHERE node_id=? UNION ALL SELECT id,capture_config_id,state,message,received_at,boot_id,apply_seq FROM config_activation_events_v2 WHERE node_id=? ORDER BY received_at DESC,id DESC LIMIT 100`).bind(id,id).all(),
         ]);
         return json({ device, placements: placements.results.slice(0, 200), configs: configs.results.slice(0, 200).map(publishedFromRow),
           activation: { current: activation, history: events.results }, placements_truncated: placements.results.length > 200, configs_truncated: configs.results.length > 200 });

@@ -1,5 +1,69 @@
 # Prior work and reuse
 
+## 2026-10-25 — Redistributable firmware font replacement
+
+The current generated text/digit font files use official Noto Sans CJK SC Bold
+2.004, pinned to notofonts/noto-cjk revision
+`523d033d6cb47f4a80c58a35753646f5c3608a78` and font SHA-256
+`b5f0d1a190a7f9b43c310a8850630af12553df32c4c050543f9059732d9b4c0a`.
+The exact upstream SIL OFL 1.1 license and the font's embedded Adobe copyright
+are retained in `firmware/fonts/OFL.txt` and `COPYRIGHT.txt`. The modified font
+names are CampusPulse Raster Text / CampusPulse Raster Digits; their font data
+remain OFL-1.1 rather than inheriting the application's MIT license.
+
+All 141 original text codepoints and 11 digit characters are regenerated; no
+Microsoft-derived pixel data is reused. A pinned uv generator, source/license
+and output fingerprints, coverage manifest, ASan/UBSan lookup tests and explicit
+20×20/60-row/107-pixel three-digit layout checks accompany the replacement.
+See [font provenance and regeneration](../../firmware/fonts/README.md). Local
+previews were metadata-cleared/rechecked and remain outside the repository.
+The full OTF is fetched separately, not bundled. New firmware images are required
+because this replacement changes the accepted firmware source fingerprint.
+
+## 2026-10-24 — User-selected AI Passport Radar firmware baseline
+
+The user explicitly selected `xiaoYan-bit/ai-passport-radar` for a local source
+import on the CampusPulse firmware branch. Upstream HEAD was verified as
+`5fb8ab532414eb0029fc5ea131a03cb0993db180`; the read-only local reference remains
+unchanged. The compiled radar sources, BSP, build defaults, dependency lock and
+MIT license are copied to `firmware/ai-passport-radar/`, with source/destination
+SHA-256 records in `UPSTREAM.json`. This is an exception for the selected
+firmware, not permission to publish the original private repository or its
+observations. On 2026-10-25 the user separately authorized publication of the
+selected current CampusPulse firmware; raw private history/data remain excluded.
+
+The source declares MIT, Copyright (c) 2026 FoloToy; its notice is retained.
+The original imported font arrays came from Microsoft YaHei/Bahnschrift and
+their independent redistribution rights were unverified. On 2026-10-25 those
+arrays were replaced completely with OFL-1.1 Noto Sans CJK-derived raster fonts;
+see the replacement record above. Historical import hashes stay historical.
+No external-use image assets are imported.
+
+Credentials, real observation examples, logs, captures, development diary,
+upstream Git metadata/instructions/workflows/skills, binaries and build outputs
+are excluded. Local adaptations preserve protected Flash regions, remove
+identifying source examples/diagnostic values, disable default raw calibration
+export/persistence, allow unconfigured Wi-Fi and correct Appearance byte order.
+See [firmware baseline](firmware-baseline.md) for verification and integration
+limits. No old CampusPulse receiver/backend or binary upload protocol is copied.
+
+Stage A adaptation: baseline commit `82549b0` preserves the import. Subsequent
+shared core, Passport adapter, supervisor, status renderer, maintenance boundary
+and host tests are local work described in [runtime notes](firmware-runtime.md).
+Imported Radar/UI sources are adapted in place; their original import hashes
+remain explicitly scoped to the baseline, with later changes visible in Git.
+No new private-source application, driver or bitmap/font was added by this stage.
+
+Post-stage-A provisioning, network/settings, v2 aggregation, journal, retry
+scheduler, codec, administrator wizard and tests are new CampusPulse code. The
+Security 1 wire contract follows the installed Apache-2.0 ESP-IDF 5.5.3 protocol
+definitions and reference client; its implementation is linked from the SDK,
+not vendored. Synthetic interoperability fixtures retain their generation recipe
+in `tests/provisioning/`; pinned SDK cJSON is used only from the external IDF
+checkout for host tests. See [firmware chain](firmware-chain.md) and the component
+README for provenance and verification boundaries. No additional upstream board
+drivers, captures, fonts, credentials or image assets were copied by this stage.
+
 Current boundary change: the runtime official-GIS source-material entry below
 supersedes the earlier blanket no-GIS-canvas-read design constraint. Historical
 checkpoint claims remain scoped to their dates/modules. The four generated

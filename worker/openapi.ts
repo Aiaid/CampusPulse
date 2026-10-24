@@ -1,3 +1,4 @@
+import { addDeviceV2OpenApi } from './device-v2-openapi';
 import { createAdminOpenApi } from './admin-openapi';
 
 /** Implemented public, operator, administrator, device and research API contract. */
@@ -85,7 +86,7 @@ export function createOpenApiDocument(): Record<string, unknown> {
     '503': error('Storage or registered policy unavailable.', ['storage_unavailable', 'capture_config_invalid', 'raw_storage_not_configured', 'raw_integrity_error', 'raw_object_missing'], true),
   };
 
-  return {
+  const document = {
     openapi: '3.1.0',
     info: {
       title: 'CampusPulse API', version: '0.3.0',
@@ -491,4 +492,5 @@ export function createOpenApiDocument(): Record<string, unknown> {
       },
     },
   };
+  return addDeviceV2OpenApi(document);
 }

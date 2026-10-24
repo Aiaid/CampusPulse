@@ -1,0 +1,69 @@
+{
+  "format_version": 1,
+  "derived_font_names": [
+    "CampusPulse Raster Text",
+    "CampusPulse Raster Digits"
+  ],
+  "license": "OFL-1.1",
+  "copyright": "© 2014-2021 Adobe (http://www.adobe.com/).",
+  "source": {
+    "family": "Noto Sans CJK SC",
+    "style": "Bold",
+    "version": "Version 2.004;hotconv 1.0.118;makeotfexe 2.5.65603",
+    "repository": "https://github.com/notofonts/noto-cjk",
+    "revision": "523d033d6cb47f4a80c58a35753646f5c3608a78",
+    "release": "Sans2.004",
+    "font_url": "https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf",
+    "font_sha256": "b5f0d1a190a7f9b43c310a8850630af12553df32c4c050543f9059732d9b4c0a",
+    "font_bytes": 17002248,
+    "license_url": "https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/LICENSE",
+    "license_sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
+  },
+  "generator": {
+    "script": "firmware/tools/generate-fonts.py",
+    "pillow": "13.0.0",
+    "fonttools": "4.67.0",
+    "freetype": "2.14.3",
+    "layout": "BASIC",
+    "threshold": 112
+  },
+  "text": {
+    "codepoints": 141,
+    "cell": [
+      20,
+      20
+    ],
+    "font_pixel_size": 17,
+    "baseline": 15,
+    "bitmap_bytes": 8460,
+    "max_advance": 18,
+    "coverage_sha256": "cf4d037e6d76fb02c66dfcecbc1f5adc4d16f2e16f3f81bba87beff2d7e89baa"
+  },
+  "digits": {
+    "characters": "0123456789-",
+    "height": 60,
+    "font_pixel_size": 60,
+    "baseline": 52,
+    "widths": [
+      30,
+      27,
+      30,
+      30,
+      33,
+      30,
+      30,
+      30,
+      30,
+      30,
+      16
+    ],
+    "bitmap_bytes": 2580,
+    "max_three_digit_width": 107
+  },
+  "outputs": {
+    "firmware/ai-passport-radar/main/font_zh.h": "bdfee208029a65312e03c35ff6050b97c1a6bef0418c32c41f21d5d149a1b61d",
+    "firmware/ai-passport-radar/main/font_digit.h": "949b561027a0e7f4ad97d36eef37cb3bfba9cca205065667844da12e4ab2b695",
+    "firmware/ai-passport-radar/main/font_zh.c": "f07538eba6f5bc586078bc44f0e8e84bbd82105ee7d17444ccc7f07795a5c8aa",
+    "firmware/ai-passport-radar/main/font_digit.c": "6a6624174665ac0244bd02bdfcccdb43b0ab9505d7867e9b4da52561111ed874"
+  }
+}

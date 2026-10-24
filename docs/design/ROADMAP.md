@@ -1,21 +1,43 @@
 # CampusPulse roadmap
 
 Current planning baseline: [Hackathon plan](hackathon-plan.md), 2026-10-23.
-The user selected all-Cloudflare hosting. All unchecked items are plans, not
-implemented capabilities or measured results. The competition deadline and
-mandatory track requirements remain unknown.
+The user selected all-Cloudflare hosting. Unchecked items mark remaining work
+or acceptance; any partial local implementation is identified explicitly below.
+The competition deadline and mandatory track requirements remain unknown.
 
 Hardware decision (2026-10-23): all five devices first implement BLE collection,
 bounded durable buffering and direct HTTPS upload with one shared core and
 board-specific adapters. AI Passport interaction and ePaper display follow that
 baseline. This supersedes dedicated manual-only, beacon-only and display-only
-assignments; firmware and device acceptance remain pending.
+assignments; the Passport local software chain now connects setup, policy,
+collection and durable upload. Final local software verification passed on
+2026-10-25; physical-device acceptance remains separate in [firmware chain](../notes/firmware-chain.md).
 
 ## P0 — Deliver the core MVP
+
+- [ ] Deliver the authorized firmware integration commit/push and Passport
+      flash: replace inherited proprietary raster fonts with reproducible open
+      fonts, rebuild/verify the release images, inspect and back up the connected
+      board's actual partitions, then flash separate images preserving `cardid`.
+      Record observed boot behavior separately from network/radio acceptance.
 
 - [ ] Verify administrator Passkey registration, login and reauthentication in
       the production Safari/Touch ID workflow after the optional-extension fix;
       controlled local browser acceptance is archived below.
+
+- [ ] Physically validate the implemented Passport ownership and provisioning
+      design: real-browser BLE, iPhone device-hosted SoftAP, wrong proof, interrupted
+      candidate validation/save, and failed transport teardown. Verify the board
+      profile and keep registration, network contact and applied config distinct.
+      USB recovery and other-board drivers remain planned.
+
+- [ ] Validate implemented factory identity and v2 policy/activation on hardware:
+      same-boot leases, auth rejection, stale retries, reboot reapplication,
+      assignment removal and placement/config window boundaries.
+- [ ] Validate implemented canonical MAC/address-type summaries, overall
+      windows/health, bounded sampled raw and frozen journals under actual radio
+      loss, reset, storage exhaustion and uncertain/duplicate ACKs. Measure
+      capacity/retention rather than infer them from compiled limits.
 
 - [ ] Register individually verified physical nodes, capture policies and fixed
       placements in production, then validate firmware ACK/reclamation and actual
@@ -125,6 +147,19 @@ assignments; firmware and device acceptance remain pending.
       production build passing. See [measurements and tradeoffs](../notes/lighting-performance.md).
       Local implementation; production deployment/Safari acceptance separate.
 
+- [x] Complete the Passport local software chain and frozen-source acceptance
+      (2026-10-24–25): protected browser BLE / device-hosted SoftAP provisioning,
+      durable validated enrollment, strict TLS, boot-bound v2 control/leases,
+      canonical MAC/type summaries, bounded raw evidence, frozen Flash batches
+      and exact ACK reclamation. Native/sanitizer/fault tests, literal C-codec
+      bytes against real isolated workerd/D1/R2, Chromium/WebKit fixture flows,
+      444 repository tests / 43 files, Vite and four fresh ESP-IDF 5.5.3 C3 builds
+      with protected separate-image checks pass. All 158 non-Markdown firmware
+      source hashes remained unchanged across final builds. Local ignored image
+      artifacts and full boundaries are in [chain evidence](../notes/firmware-chain.md).
+      No flash, physical radio/phone/Flash acceptance, v2 deployment or private-source
+      publication is included; hardware, S3 and manual/USB work remains open above.
+
 - [x] Reduce lighting startup work with a bounded two-Worker compiler, scoped
       lamp/actor caches and cropped high-DPI library canvases. Matched warmed-tile
       visible Chromium at1920×1080/DPR2 improved readiness19.9→6.7s, longest
@@ -150,6 +185,17 @@ assignments; firmware and device acceptance remain pending.
       regressions. Physical Safari acceptance remains a separate step. See
       [browser compatibility](../notes/admin-browser-compatibility.md).
 
+- [x] Implement firmware runtime stage A after baseline commit `82549b0`:
+      factory-MAC node identity, portable lifecycle/policy decisions, Passport
+      board boundary, optional peripherals, single-owner UI/input timestamps,
+      and independent diagnostic maintenance/read-only snapshots. Default boot
+      waits for setup/config rather than starting field scanning. C3 normal,
+      diagnostic and headless builds, sanitizer suites and image guards pass;
+      no hardware test, push or cloud integration. See
+      [historical runtime notes](../notes/firmware-runtime.md). Provisioning,
+      transport and durable collection were pending at that snapshot and now
+      have local software implementations; S3/manual/hardware acceptance remains open.
+
 - [x] Fix Safari administrator-page cosmetic-filter collisions by replacing
       generic `ad-` classes, custom properties and animations with `cp-admin-`.
       Preserve account/API behavior and browser protections. The release snapshot
@@ -158,6 +204,22 @@ assignments; firmware and device acceptance remain pending.
       including desktop and 390px overview/account geometry. See
       [browser compatibility](../notes/admin-browser-compatibility.md).
       Controlled Chromium acceptance is separate from live Safari verification.
+
+- [x] Review the imported firmware and record the shared-core/ESP/board/UI
+      boundaries, administrator Web Bluetooth onboarding, policy application
+      recovery and durable local-marker semantics in
+      [firmware platform](firmware-platform.md). Browser/pinned IDF support and
+      source behavior checked; independent read-only reviews and document-link
+      checks passed. Runtime, API and hardware changes remain the P0/P1 work above.
+
+- [x] Import the user-selected AI Passport Radar runtime/BSP from verified
+      upstream `5fb8ab5` on `codex/passport-firmware`. Preserve 3 MiB app/cardid
+      layout, omit credentials/observations, gate calibration exports, correct
+      Appearance endianness and record file fingerprints. C sanitizer checks,
+      nine image guard tests and ESP-IDF 5.5.3/C3 build pass (583,680-byte app).
+      No hardware test or push; local baseline commit authorized before refactoring.
+      Resolve inherited raster-font rights
+      before publication. See [firmware baseline](../notes/firmware-baseline.md).
 
 - [x] Enrich frontend-only simulation with teaching-day, weekend and rainy-day
       profiles for all eight places, independent parking intensity and full-day

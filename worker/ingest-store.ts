@@ -166,7 +166,9 @@ export async function commitBatch(
     }
     // D1 may wrap SQLite trigger failures and omit their message from the
     // top-level Error. The committed interval is the durable source of truth.
-    const overlap = await db.prepare(`SELECT 1 FROM ingestion_batches
+    const crossVersionBatch = await db.prepare('SELECT 1 FROM ingestion_batches_v2 WHERE node_id = ? AND batch_id = ?').bind(batch.node_id, batch.batch_id).first();
+    if (crossVersionBatch) throw new IngestStoreError(409, 'batch_conflict');
+    const overlap = await db.prepare(`SELECT 1 FROM (SELECT node_id,boot_id,stream,seq_first,seq_last FROM ingestion_batches UNION ALL SELECT node_id,boot_id,stream,seq_first,seq_last FROM ingestion_batches_v2)
       WHERE node_id = ? AND boot_id = ? AND stream = ?
         AND seq_first <= ? AND seq_last >= ? LIMIT 1`)
       .bind(batch.node_id, batch.boot_id, batch.stream, seqLast, seqFirst).first();

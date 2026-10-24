@@ -35,7 +35,7 @@ function sameOrigin(request: Request) {
   const origin = request.headers.get('Origin');
   if (origin && origin !== new URL(request.url).origin) throw new IngestError(403, 'origin_rejected', 'Cross-origin requests are not accepted.');
 }
-async function device(request: Request, env: Env): Promise<string> {
+export async function device(request: Request, env: Env): Promise<string> {
   sameOrigin(request);
   const authorization = request.headers.get('Authorization') ?? '';
   if (!/^Bearer [!-~]{16,256}$/.test(authorization)) throw new IngestError(401, 'unauthorized', 'Device credential required.');
@@ -61,7 +61,7 @@ async function configFor(env: Env, node: string, id?: string): Promise<{ config:
   catch { throw new IngestError(503, 'capture_config_invalid', 'Registered capture policy is invalid.'); }
   return { config, row };
 }
-async function archive(env: Env, node: string, batch: string, hash: string, bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+export async function archive(env: Env, node: string, batch: string, hash: string, bytes: Uint8Array<ArrayBuffer>): Promise<string> {
   if (!env.RAW_BUCKET) throw new IngestError(503, 'raw_storage_not_configured', 'Private raw storage is not configured.');
   const key = `ingest/${node}/${batch}/${hash}.json`;
   const object = await env.RAW_BUCKET.put(key, bytes, {
@@ -75,7 +75,7 @@ async function archive(env: Env, node: string, batch: string, hash: string, byte
   }
   return key;
 }
-async function authorizeResearch(request: Request, env: Env) {
+export async function authorizeResearch(request: Request, env: Env) {
   sameOrigin(request);
   if (!env.RESEARCH_TOKEN) throw new IngestError(503, 'research_not_configured', 'Research access is not configured.');
   const [actual, expected] = await Promise.all([

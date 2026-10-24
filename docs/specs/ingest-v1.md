@@ -115,7 +115,7 @@ hash 是**实际 UTF-8 请求体字节**的 SHA-256，不含 HTTP headers；它�
 | --- | --- |
 | `protocol` | 固定字符串 `campuspulse/1` |
 | `batch_id` | 设备生成 UUIDv4，批次落盘时固定；重试保持不变 |
-| `node_id` | 预配置非 MAC 的逻辑 ID，1–64 个 `[a-z0-9_-]`；绑定凭据 |
+| `node_id` | 服务端登记的固定节点 ID，1–64 个 `[a-z0-9_-]`；当前 Passport 固件由本机出厂基础 MAC 规范化派生，绑定独立凭据，不使用被扫描目标或本机临时广播地址 |
 | `boot_id` | 每次启动产生的新 UUIDv4，恢复队列保留旧 boot；不能复用旧启动 ID |
 | `placement_id` / `capture_config_id` | 服务端登记的不可变 ID，字符集同 node_id |
 | `dataset` | `field/controlled_test/demo`，与配置一致 |

@@ -1,6 +1,7 @@
 import type { CreateObservation, Env, Observation, Place, PlaceSummary } from './types';
 import { handleDocs } from './docs';
 import { handleIngestion } from './ingest';
+import { handleDeviceV2 } from './device-v2';
 import { readPublicWindows } from './sensors';
 import { expireIngestion } from './retention';
 import { handleAdmin, readPublicSettings, readRuntimeSettings } from './admin';
@@ -106,6 +107,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
     if (admin) return admin;
     const ingestion = await handleIngestion(request, env);
     if (ingestion) return ingestion;
+    const deviceV2 = await handleDeviceV2(request, env);
+    if (deviceV2) return deviceV2;
     if (url.pathname === '/api/v1/health' && request.method === 'GET') return json({ status: 'ok', ingestion: 'implemented', raw_storage: env.RAW_BUCKET ? 'configured' : 'unconfigured' });
     if (url.pathname === '/api/v1/settings' && request.method === 'GET') return json(await readPublicSettings(env));
     if (url.pathname === '/api/v1/places' && request.method === 'GET') {

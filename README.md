@@ -6,7 +6,8 @@
 CampusPulse aims to bring place activity, e-bike parking observations, and recent
 measured elevator waits onto one campus map. This hackathon project focuses on
 Central China Normal University (CCNU). The first web application and manual
-recording flow are implemented; device sensing is still planned.
+recording flow are implemented. The Passport firmware now implements provisioning,
+policy control, MAC summaries and durable upload; physical acceptance is separate.
 
 ## From related explorations to CCNU's needs
 
@@ -64,7 +65,7 @@ As of 2026-10-24, this repository contains:
 | Time and source | Observation time, validity, history queries, and stale markers implemented for manual records |
 | Simulation | Separate, explicitly labeled synthetic demonstration; does not write field records |
 | Web delivery | First release deployed, with automated checks, cloud delivery, and browser verification recorded |
-| BLE and hardware | Planned: all five devices collect, buffer and upload first; both AI Passports then add interaction, and ePaper adds a place card. Firmware and device acceptance remain pending |
+| BLE and hardware | Passport setup, v2 policy, canonical MAC summaries and durable upload implemented and locally verified; physical acceptance and other board drivers pending. See [firmware chain](docs/notes/firmware-chain.md). |
 | Device API and research archive | Window/raw/status ingestion, per-node auth, D1 receipts, private R2 and research parsing implemented, deployed on Cloudflare and verified with isolated demo uploads; hardware acceptance pending |
 | Administration | `/admin` device/health, deployments, editable policy drafts/publication, settings and audit; first-use account setup, password/Passkey login and account/key management; local acceptance/deployment tracked separately |
 

@@ -1,0 +1,22 @@
+menu "CampusPulse application"
+
+config CP_PASSPORT_DISPLAY
+    bool "Enable the imported Passport display"
+    default y
+    help
+        Optional display; services do not depend on its availability.
+        This profile is ESP32-C3 only. Never use its pins for another board.
+
+config CP_PASSPORT_BUTTONS
+    bool "Enable Passport ADC buttons"
+    default y
+
+config CP_LEGACY_RADAR_DIAGNOSTICS
+    bool "Run the inherited local-only Radar diagnostics"
+    default n
+    help
+        Starts the inherited scanner without cloud enrollment for explicit local
+        diagnostics. It never uploads field data or claims an applied policy.
+        Normal boot waits for runtime provisioning and a compatible policy.
+
+endmenu

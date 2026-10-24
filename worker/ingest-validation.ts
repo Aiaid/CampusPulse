@@ -228,7 +228,7 @@ export function validateCaptureConfig(value: unknown): CaptureConfig {
       warn_pct, raw_pause_pct, critical_pct, resume_pct, overload_action } };
 }
 
-function time(v: unknown, path: string): IngestTime {
+export function time(v: unknown, path: string): IngestTime {
   const o = object(v, path, ['mono_ms', 'utc_ms', 'clock_epoch', 'uncertainty_ms']);
   const utc_ms = o.utc_ms === null ? null : int(o.utc_ms, `${path}.utc_ms`, 1, 8640000000000000);
   const uncertainty_ms = nullableInt(o.uncertainty_ms, `${path}.uncertainty_ms`);
@@ -239,7 +239,7 @@ function time(v: unknown, path: string): IngestTime {
 function base(v: ObjectValue, path: string): BaseItem {
   return { seq: int(v.seq, `${path}.seq`, 1, 0xffffffff), time: time(v.time, `${path}.time`) };
 }
-function windowItem(v: unknown, path: string): BleWindow {
+export function windowItem(v: unknown, path: string): BleWindow {
   const o = object(v, path, ['seq','time','duration_ms','scan_enabled_ms','reports_seen','reports_aggregated','aggregation_drops','adv_reports','scan_response_reports','visible_identifiers','unique_table_capacity','unique_table_overflow','rssi','raw_capture','quality_flags'], ['indices']);
   const b = base(o, path);
   const duration_ms = int(o.duration_ms, `${path}.duration_ms`, 1000, 300000);
@@ -296,7 +296,7 @@ function windowItem(v: unknown, path: string): BleWindow {
     rssi: { samples, min_dbm, max_dbm, mean_dbm }, raw_capture: { mode, selected_reports, intentional_skips, pressure_skips, drops },
     ...(indices === undefined ? {} : { indices }), quality_flags };
 }
-function reportItem(v: unknown, path: string): BleReport {
+export function reportItem(v: unknown, path: string): BleReport {
   const o = object(v, path, ['seq','time','window_seq','identity','rssi_dbm','report_type','report_type_code','format','payload_length','payload_hex']);
   const b = base(o, path);
   const window_seq = int(o.window_seq, `${path}.window_seq`, 1, 0xffffffff);
@@ -328,7 +328,7 @@ function streamCounts(v: unknown, path: string): Record<IngestStream, number> {
   const o = object(v, path, streams.slice());
   return { ble_windows: int(o.ble_windows, `${path}.ble_windows`), ble_reports: int(o.ble_reports, `${path}.ble_reports`), node_status: int(o.node_status, `${path}.node_status`) };
 }
-function statusItem(v: unknown, path: string): NodeStatus {
+export function statusItem(v: unknown, path: string): NodeStatus {
   const o = object(v, path, ['seq','time','uptime_ms','scan_state','wifi_state','free_heap_bytes','queue_pending','queue_capacity','storage_free_bytes','raw_capture_state','loss_totals','buffer_health'], ['battery_mv','wifi_rssi_dbm']);
   const b = base(o, path);
   const uptime_ms = int(o.uptime_ms, `${path}.uptime_ms`);

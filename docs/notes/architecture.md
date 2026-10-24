@@ -2,7 +2,9 @@
 
 Status: the web/API slice and selected frontend migration are implemented.
 BLE ingestion and private raw archival are implemented and deployed with separate
-local/cloud demo acceptance; device firmware remains planned. Recorded
+local/cloud demo acceptance. The Passport firmware now implements protected
+setup, v2 policy control, canonical MAC summaries and durable upload, with local
+software acceptance and separate physical-device/deployment evidence. Recorded
 deployment and verification evidence is in [CI/CD](ci-cd.md) and
 [development notes](development.md).
 The stack below describes the current source. Earlier release verification does
@@ -23,9 +25,9 @@ runtime settings and audit. Its local acceptance and deployment are separate.
 | Persistence | Cloudflare D1, SQL migrations | Implemented: places/manual records, immutable capture/placement policy, sensor windows, status, durable receipts and range exclusion. |
 | Administration | Same-origin `/admin`, Worker API and additive D1 migrations | Device health/credentials, deployments, editable capture drafts and publication, settings/audit; managed administrator account, password/Passkeys and recent reauthentication for sensitive changes. |
 | Development and checks | Node 24, Wrangler, Vitest, Playwright | Configured: local Worker/D1 development, SQLite/API tests, build and browser smoke checks. Follow the linked guides for commands and recorded results. |
-| Device ingestion | HTTPS window/raw/status streams | Server implemented: scoped auth, strict validation, atomic sequence handling and independent stream acknowledgements. Firmware buffering remains planned. See [ingestion implementation](backend-ingestion.md). |
+| Device ingestion | HTTPS windows/address summaries/raw/status | Scoped auth, strict validation, atomic sequence handling and independent stream acknowledgements. Passport buffering and v2 control are locally verified; see [firmware chain](firmware-chain.md) and [ingestion implementation](backend-ingestion.md). |
 | Research raw archive | Private R2 with D1 receipts | Implemented with conditional immutable R2 writes, D1 receipts, private research reads and bounded retention. Production D1/R2 is bound and the server passed isolated demo uploads; firmware and physical-node acceptance remain separate. |
-| Firmware and displays | ESP32 BLE nodes, portable terminals, ePaper | Planned; no firmware is included in this repository. |
+| Firmware and displays | ESP-IDF / FreeRTOS, shared components and board adapters | Passport setup, server-controlled collection and durable upload are implemented under `firmware/`. Physical acceptance and S3 ports remain separate; see [firmware chain](firmware-chain.md). |
 
 ## Frontend rendering
 
@@ -95,6 +97,10 @@ semantics.
 | [`docs/`](../README.md) | Indexed specifications, design, engineering notes, research and explicitly historical material. |
 
 ## Planned hardware roles
+
+The imported [AI Passport baseline](firmware-baseline.md) is the historical
+starting point. The [current Passport chain](firmware-chain.md) implements the
+C3 data path with separate local-software and physical-device acceptance.
 
 These are inventory and proposed assignments, not firmware or device-validation
 claims. Confirm each board revision before choosing drivers or flash layouts.

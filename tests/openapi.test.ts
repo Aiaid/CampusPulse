@@ -14,6 +14,8 @@ const implemented = [
   'POST /api/v1/observations', 'DELETE /api/v1/observations/{id}',
   'POST /api/v1/ingest', 'GET /api/v1/device/config', 'GET /api/v1/research/batches/{id}',
   'GET /api/v1/settings', 'POST /api/v1/device/config/ack',
+  'GET /api/v2/device/config', 'POST /api/v2/device/contact', 'POST /api/v2/device/config/ack',
+  'POST /api/v2/ingest', 'GET /api/v2/research/batches/{id}',
   'GET /api/v1/admin/session', 'POST /api/v1/admin/session', 'DELETE /api/v1/admin/session',
   'GET /api/v1/admin/overview', 'GET /api/v1/admin/devices', 'POST /api/v1/admin/devices',
   'GET /api/v1/admin/devices/{id}', 'PATCH /api/v1/admin/devices/{id}',
@@ -150,8 +152,8 @@ describe('OpenAPI contract and existing authorization', () => {
       const security = operation.security ?? root.security ?? [];
       const publicAdmin = path === '/api/v1/admin/auth/status' || path === '/api/v1/admin/session' && method === 'post' || path.startsWith('/api/v1/admin/passkeys/authentication/');
       const expectedScheme = path.startsWith('/api/v1/admin/') ? publicAdmin ? null : 'AdminSession'
-        : path === '/api/v1/ingest' || path === '/api/v1/device/config' || path === '/api/v1/device/config/ack' ? 'DeviceToken'
-        : path === '/api/v1/research/batches/{id}' ? 'ResearchToken'
+        : path === '/api/v1/ingest' || path === '/api/v1/device/config' || path === '/api/v1/device/config/ack' || path === '/api/v2/ingest' || path.startsWith('/api/v2/device/') ? 'DeviceToken'
+        : path === '/api/v1/research/batches/{id}' || path === '/api/v2/research/batches/{id}' ? 'ResearchToken'
           : method !== 'get' ? 'OperatorToken' : null;
       if (!expectedScheme) expect(security).toEqual([]);
       else {
