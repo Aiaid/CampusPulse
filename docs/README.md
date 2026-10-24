@@ -16,6 +16,7 @@ validation records are not evidence for this implementation.
 
 | Document | Purpose | Status |
 | --- | --- | --- |
+| [Simulation scenarios](notes/simulation.md) | Teaching-day/weekend/rain profiles, full-day replay and separate parking intensity | Locally verified: 198 frontend tests, build, desktop/390px browser isolation; frontend-only synthetic data |
 | [Administrator account and Passkeys / 账号与安全](specs/admin-auth-v1.md) | First-use bootstrap, password login, profile/password changes, Passkey management, reauthentication and session revocation | Locally verified:60 auth/management tests, real CTAP2 browser/workerd, nine deploy-origin cases; production/physical acceptance separate |
 | [Admin v1 / 管理后台](specs/admin-v1.md) | Independent admin session, device health/credentials, deployments, editable capture drafts, runtime settings and audit | Locally verified: 14 admin integration tests, real workerd/browser workflows and phone layout; deployment/device activation separate |
 | [Architecture overview](notes/architecture.md) | Stack, current data flow, source layout and planned hardware roles | Current frontend/API; ingestion server cloud-demo verified, firmware planned |

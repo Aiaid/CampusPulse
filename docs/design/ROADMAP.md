@@ -113,6 +113,14 @@ assignments; firmware and device acceptance remain pending.
 
 ## Completed archive
 
+- [x] Enrich frontend-only simulation with teaching-day, weekend and rainy-day
+      profiles for all eight places, independent parking intensity and full-day
+      variation. Share scene/time selection across maps, details and nine history
+      rows. Build, 198 frontend tests and real Chromium desktop/390px checks
+      passed with zero API writes/page errors; field mode clears synthetic
+      indicators and pauses replay. See [simulation notes](../notes/simulation.md).
+      Local implementation only; no deployment or device validation.
+
 - [x] Upgrade `/admin` authentication to restricted first-use bootstrap, a managed
       account/password and up to20 WebAuthn Passkeys. Add native salted scrypt,
       fresh password/Passkey reauthentication, profile/key management, password

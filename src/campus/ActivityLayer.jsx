@@ -49,12 +49,12 @@ function actorPosition(actor, elapsed) {
   const position = sampleRoute(actor.route, progress);
   return { ...actor, ...position, heading: position.heading + (returning ? 180 : 0) };
 }
-function makeActors(minute, layers) {
+function makeActors(minute, layers, scenarioId) {
   const result = [];
   // Stable IDs and phase keep the same actors in place as density changes.
   for (const route of sceneRoutes) {
     if (route.points.length < 2 || !layers[route.kind === 'walk' ? 'people' : 'bikes']) continue;
-    const metrics = getMetrics(route.placeId, minute);
+    const metrics = getMetrics(route.placeId, minute, scenarioId);
     // Higher peak pedestrian density follows the selected concept in EVERY
     // lighting mode. It is illustrative activity, never a field people count.
     const count = route.kind === 'walk' ? clamp(Math.round(metrics.people / 10), 1, 10) : clamp(Math.round(metrics.bikes / 24), 1, 4);
@@ -67,8 +67,8 @@ function makeActors(minute, layers) {
   }
   // A parking sprite contains no rider and never participates in motion.
   if (layers.bikes) for (const area of parkingAreas) {
-    const metrics = getMetrics(area.placeId, minute);
-    const occupied = Math.max(1, Math.round(area.slots.length * metrics.bikes / 100));
+    const metrics = getMetrics(area.placeId, minute, scenarioId);
+    const occupied = Math.round(area.slots.length * metrics.parking / 100);
     for (const [index, slot] of area.slots.slice(0, occupied).entries()) {
       result.push({ id: `${area.id}-parked-${index}`, kind: 'ride', parked: true, ...slot });
     }
@@ -183,13 +183,13 @@ function drawActorShadows(context, screen, spriteWidth, spriteHeight, mapScale, 
 
 /** Synthetic route animation; speed and density are demonstrations, not tracking. */
 export default function ActivityLayer({ project, scale, translateX, translateY, viewWidth, viewHeight,
-  layers = { people: true, bikes: true }, minute = 1200, isDark = false, xray = false, moving = true,
+  layers = { people: true, bikes: true }, minute = 1200, scenarioId = 'weekday', isDark = false, xray = false, moving = true,
   selectedId = 'library', demo = true, lighting = 'atmospheric', detailView = false,
 }) {
   const canvasRef = useRef(null);
   const current = useRef(null);
   const invalidate = useRef(null);
-  current.current = { project, scale, translateX, translateY, viewWidth, viewHeight, layers, minute, isDark, xray, moving, selectedId, demo, lighting, detailView };
+  current.current = { project, scale, translateX, translateY, viewWidth, viewHeight, layers, minute, scenarioId, isDark, xray, moving, selectedId, demo, lighting, detailView };
 
   useEffect(() => {
     let request = 0;
@@ -242,7 +242,7 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       const context = canvas.getContext('2d');
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
       context.clearRect(0, 0, width, height);
-      const actors = (props.demo ? makeActors(props.minute, props.layers) : []).map((actor) => actorPosition(actor, elapsed)).sort((a, b) => a.y - b.y);
+      const actors = (props.demo ? makeActors(props.minute, props.layers, props.scenarioId) : []).map((actor) => actorPosition(actor, elapsed)).sort((a, b) => a.y - b.y);
       let hiddenCount = 0;
       let visibleCount = 0;
       const campusLighting = props.isDark && props.lighting === 'campus';
@@ -411,6 +411,8 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       }
       context.fill();
       context.restore();
+      canvas.dataset.scenario = props.demo ? props.scenarioId : 'field';
+      canvas.dataset.minute = props.demo ? String(props.minute) : '';
       canvas.dataset.actorCount = String(actors.length);
       canvas.dataset.parkedCount = String(actors.filter((actor) => actor.parked).length);
       canvas.dataset.personCount = String(actors.filter((actor) => actor.kind === 'walk').length);

@@ -16,7 +16,7 @@ const TILE_ORIGIN = (import.meta.env.VITE_GIS_TILE_ORIGIN || 'https://gis.ccnu.e
 /** Independently pannable official remote tiles with registered mock activity. */
 export const CampusMap = forwardRef(function CampusMap({
   selectedId = 'library', onSelect = () => {}, compactSelected = false,
-  layers = { people: true, bikes: true, waits: true }, minute = 1200, isDark = false, onZoomChange, maxZoom = 4, xray = false, moving = true, demo = true, lighting = 'atmospheric',
+  layers = { people: true, bikes: true, waits: true }, minute = 1200, scenarioId = 'weekday', isDark = false, onZoomChange, maxZoom = 4, xray = false, moving = true, demo = true, lighting = 'atmospheric',
 }, ref) {
   const gradeId = useId().replace(/:/g, '');
   const container = useRef(null);
@@ -219,13 +219,13 @@ export const CampusMap = forwardRef(function CampusMap({
           style={{ left: tile.x, top: tile.y, width: tile.size, height: tile.size, visibility: failedTiles.has(tile.key) ? 'hidden' : 'visible' }} />)}
       </div>
       <div className="cp-map__atmosphere" aria-hidden="true" />
-      <ActivityLayer project={project} scale={scale} translateX={translateX} translateY={translateY} viewWidth={size.width} viewHeight={size.height} layers={layers} minute={minute} isDark={isDark} xray={xray} moving={moving} selectedId={selectedId} demo={demo} lighting={lighting} detailView={compactSelected} />
+      <ActivityLayer project={project} scale={scale} translateX={translateX} translateY={translateY} viewWidth={size.width} viewHeight={size.height} layers={layers} minute={minute} scenarioId={scenarioId} isDark={isDark} xray={xray} moving={moving} selectedId={selectedId} demo={demo} lighting={lighting} detailView={compactSelected} />
       <NightLighting project={project} scale={scale} viewWidth={size.width} viewHeight={size.height} isDark={isDark} xray={xray} selectedId={selectedId} lighting={lighting} />
       <MapRegions project={project} viewWidth={size.width} viewHeight={size.height} selectedId={selectedId} xray={xray} />
       <div className="cp-map__landmarks">
         {places.map((place) => {
           const selected = selectedId === place.id;
-          const metrics = getMetrics(place.id, minute);
+          const metrics = demo ? getMetrics(place.id, minute, scenarioId) : null;
           const screen = project(place.x, place.y);
           const compact = compactSelected && selected;
           const visible = compact || (screen.left >= 12 && screen.left <= size.width - 12 && screen.top >= 25 && screen.top <= size.height - 65);

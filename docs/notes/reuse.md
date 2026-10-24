@@ -353,6 +353,14 @@ entire application was created during the hackathon.
   package API (MIT); React/React DOM remain MIT. Their license files remain in
   installed packages. The unused Three.js/Lucide implementation and dependencies
   were removed from the active frontend.
+
+Simulation update (2026-10-24): the current teaching-day/weekend/rain hourly
+curves, independent parking intensity, scenario selector and browser acceptance
+script are newly authored for this repository. The migrated geometry, place
+anchors, renderer, artwork and original provenance remain in use. The old
+`sceneAttribution.scenarios` reference describes historical provenance, not the
+new curve values. No additional source/assets or third-party license were
+introduced. See [simulation scenarios](simulation.md).
 - Final asset metadata: ExifTool inspected and applied an all-metadata removal
   pass to the four destination PNGs. All four were already clean and unchanged;
   the final bytes contain PNG structural/color/alpha information and no embedded

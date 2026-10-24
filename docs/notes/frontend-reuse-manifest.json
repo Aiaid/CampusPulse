@@ -7,19 +7,19 @@
       "source": "local-reference/pre-hackathon/gis-prototype/src/App.jsx",
       "destination": "src/campus/App.jsx",
       "source_sha256": "556ae726df80c65771012cee4f22871da5cd7ede20689c0b4557f483b9f5559e",
-      "destination_sha256": "297fd2e1146b60d7896a559a56e8fcb8a1dbefc7f57d770ed21850252ff6d62e"
+      "destination_sha256": "4b6262cebf2498865b332587187908b71a2544fbbd07a7af226cd0d35bc1b763"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/src/CampusMap.jsx",
       "destination": "src/campus/CampusMap.jsx",
       "source_sha256": "2c89e6d692e0ac0e55d4367b123764d04200ce2a4a76311c505da9a29a9e1a5c",
-      "destination_sha256": "7a0abaa6dc2f42ee95de4517b0afc6ddd03c4ef46cc5b80cd1f6bfddc148c480"
+      "destination_sha256": "058d1b06fb0f0754a581a28076b105544e1c8b1332ccfa7d605b6ecbbe25b5f4"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/src/ActivityLayer.jsx",
       "destination": "src/campus/ActivityLayer.jsx",
       "source_sha256": "b158c98d07c65455bf1162c4bbe496f9ff94084718de31c6757679be24df13ae",
-      "destination_sha256": "cc43f10a9975f85046b851f1309250d713a872103bdb4ae1a2852ffe11da4283"
+      "destination_sha256": "e3ed977b8a53b6544c4c4df7e1895de30229822639e71e7ec656e7a79d3609d6"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/src/NightLighting.jsx",
@@ -37,7 +37,7 @@
       "source": "local-reference/pre-hackathon/gis-prototype/src/scene-data.js",
       "destination": "src/campus/scene-data.js",
       "source_sha256": "77e9b09e0f0e4b8e81bbb889a481da2c69b664c8517b39ebefe5949adc3c5b52",
-      "destination_sha256": "77e9b09e0f0e4b8e81bbb889a481da2c69b664c8517b39ebefe5949adc3c5b52"
+      "destination_sha256": "668a77eecb8486fa4cb60809161750a31df458c743a3d02aa4383f07e937e50e"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/src/spatial-scene.js",
