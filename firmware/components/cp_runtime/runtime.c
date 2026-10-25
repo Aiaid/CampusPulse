@@ -96,6 +96,13 @@ static void publish(void) {
     }
 }
 static void enter_setup(cp_provision_mode_t mode) {
+    cp_pipeline_snapshot_t pipe;
+    cp_pipeline_snapshot(&pipe);
+    if (mode == CP_PROVISION_BLE && pipe.radio_restart_required) {
+        reason("ble_restart_required");
+        publish();
+        return;
+    }
     cp_core_set_setup_active(&s_core, true);
     if (cp_pipeline_stop() != ESP_OK || cp_network_stop() != ESP_OK) {
         reason("previous_owner_stop_failed");
@@ -163,21 +170,30 @@ static void apply_control(void) {
     cp_core_set_network(&s_core, net.network);
     cp_core_set_auth(&s_core, net.auth);
     cp_core_set_clock_trusted(&s_core, net.clock_trusted);
+    esp_err_t maintenance = cp_pipeline_maintain();
+    cp_pipeline_snapshot_t pipe;
+    cp_pipeline_snapshot(&pipe);
+    if (maintenance != ESP_OK || pipe.stop_failed)
+        reason("capture_stop_failed");
     if (net.policy_response_sequence > s_policy_response_seen) {
         s_policy_response_seen = net.policy_response_sequence;
         if (!net.policy_valid) {
             (void)cp_pipeline_stop();
             if (net.policy_rejected || net.policy_expired) {
                 cp_core_mark_apply_failed(&s_core);
+                reason(net.policy_expired ? "collection_lease_expired" : "unsupported_policy");
                 if (net.policy_rejected && net.desired_config_id[0])
                     (void)cp_network_report_activation(net.desired_config_id, false,
                                                        "unsupported_policy");
-            } else
+            } else {
                 cp_core_clear_policy(&s_core);
+                reason("unassigned");
+            }
         }
     }
-    cp_network_policy_t p;
-    if (cp_network_get_policy(&p) && p.request_sequence > s_policy_attempted_sequence) {
+    cp_network_policy_t p = net.policy;
+    if (cp_network_get_policy(&p) && p.request_sequence > s_policy_attempted_sequence &&
+        !net.http_in_flight && maintenance == ESP_OK && !pipe.stop_failed) {
         s_policy_attempted_sequence = p.request_sequence;
         uint64_t current = now_ms();
         uint64_t age = current >= p.fetched_mono_ms ? current - p.fetched_mono_ms : UINT64_MAX;
@@ -189,37 +205,79 @@ static void apply_control(void) {
             (void)cp_pipeline_stop();
             cp_core_mark_apply_failed(&s_core);
             (void)cp_network_report_activation(p.core.config_id, false, "unsupported_policy");
+            reason("unsupported_policy");
         } else if (s_core.policy_state != CP_POLICY_APPLIED) {
             cp_core_set_setup_active(&s_core, false);
-            esp_err_t err = cp_pipeline_apply(&p);
-            if (err == ESP_OK && cp_core_mark_applied(&s_core, p.core.config_id)) {
+            /* A deferred memory recovery stays staged until a fresh policy and
+             * healthy heap permit actual capture. Do not claim activation. */
+            esp_err_t err = pipe.radio_restart_required ? ESP_ERR_INVALID_STATE
+                : pipe.memory_paused && !pipe.memory_restart_ready ? ESP_ERR_NO_MEM
+                : cp_pipeline_apply(&p);
+            cp_pipeline_snapshot(&pipe);
+            cp_network_snapshot_t after_apply;
+            cp_network_snapshot(&after_apply);
+            if (err == ESP_OK && pipe.collecting && cp_core_mark_applied(&s_core, p.core.config_id)) {
                 (void)cp_network_report_activation(p.core.config_id, true, "applied");
                 reason("policy_applied");
+            } else if (pipe.memory_paused && !pipe.radio_restart_required && !pipe.stop_failed) {
+                (void)cp_network_report_activation(p.core.config_id, false, "memory_pressure");
+                reason("memory_pressure");
+            } else if (err != ESP_OK && after_apply.http_in_flight &&
+                       !pipe.radio_restart_required && !pipe.stop_failed) {
+                /* HTTP can start after the earlier admission snapshot. Keep
+                 * this policy staged and wait for the next fresh response. */
+                reason("capture_waiting_for_network");
             } else {
                 cp_core_mark_apply_failed(&s_core);
-                (void)cp_network_report_activation(p.core.config_id, false, "capture_start_failed");
-                reason("capture_start_failed");
+                const char *failure = pipe.stop_failed ? "capture_stop_failed"
+                    : pipe.radio_restart_required ? "ble_restart_required" : "capture_start_failed";
+                (void)cp_network_report_activation(p.core.config_id, false, failure);
+                reason(failure);
             }
         } else
             cp_pipeline_renew_lease(p.fetched_mono_ms + p.lease_ms);
     }
     cp_collection_state_t state = cp_core_decide(&s_core, now_ms());
-    cp_pipeline_snapshot_t pipe;
     cp_pipeline_snapshot(&pipe);
-    if (!cp_collection_allowed(state) && pipe.collecting)
-        (void)cp_pipeline_stop();
+    if (!cp_collection_allowed(state) && pipe.collecting) {
+        if (cp_pipeline_stop() != ESP_OK)
+            reason("capture_stop_failed");
+        cp_pipeline_snapshot(&pipe);
+    }
     if (cp_collection_allowed(state) && !pipe.collecting && pipe.storage_ready &&
+        maintenance == ESP_OK && !pipe.stop_failed && !pipe.radio_restart_required &&
+        !net.http_in_flight && (!pipe.memory_paused || pipe.memory_restart_ready) &&
         cp_network_get_policy(&p) &&
         (!pipe.pressure_paused ||
          pipe.free_slots * 100u >= pipe.capacity_slots * (100u - p.resume_pct))) {
         if (cp_pipeline_apply(&p) != ESP_OK)
             reason("capture_recovery_failed");
+        else
+            reason("policy_applied");
     }
     cp_pipeline_snapshot(&pipe);
+    bool policy_current = net.policy_valid && s_core.policy_state != CP_POLICY_FAILED &&
+        s_core.lease_valid && now_ms() >= p.fetched_mono_ms &&
+        now_ms() - p.fetched_mono_ms < p.lease_ms;
+    if (pipe.stop_failed || maintenance != ESP_OK)
+        reason("capture_stop_failed");
+    else if (state == CP_COLLECTION_LEASE_EXPIRED)
+        reason("collection_lease_expired");
+    else if (net.policy_valid && pipe.radio_restart_required && strcmp(s_reason, "unsupported_policy"))
+        reason("ble_restart_required");
+    else if (policy_current && pipe.memory_paused)
+        reason("memory_pressure");
+    else if (cp_collection_allowed(state) && pipe.memory_raw_paused && p.raw_enabled)
+        reason("memory_raw_pressure");
+    else if (cp_collection_allowed(state) && pipe.collecting &&
+             (!strcmp(s_reason, "memory_pressure") || !strcmp(s_reason, "memory_raw_pressure")))
+        reason("policy_applied");
     cp_network_set_capture_state(cp_collection_allowed(state) && pipe.collecting ? "running"
+                                 : pipe.stop_failed                            ? "failed"
                                  : state == CP_COLLECTION_LEASE_EXPIRED          ? "expired"
                                  : state == CP_COLLECTION_WAIT_POLICY            ? "unassigned"
                                  : state == CP_COLLECTION_POLICY_FAILED          ? "failed"
+                                 : pipe.radio_restart_required                   ? "failed"
                                                                                  : "paused");
 }
 static void runtime_task(void *arg) {

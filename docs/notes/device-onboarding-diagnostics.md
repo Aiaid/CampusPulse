@@ -156,7 +156,60 @@ configuration, activation and upload requests therefore no longer reserve an
 8 KB body buffer during TLS setup. Allocation failure preserves the old buffer
 for cleanup and reports `resource_exhausted`; ASan/UBSan tests inject every growth
 failure and cover size, deadline and cancellation bounds. Device acceptance of
-this memory change is still pending.
+this memory change initially progressed as follows: `cp-6eea874e246c` received
+both contact and desired-config HTTP 200 responses, with a minimum heap of
+11,180 bytes before BLE initialization. BLE host initialization then returned
+`ESP_FAIL`; subsequent TLS attempts reported `MBEDTLS_ERR_SSL_ALLOC_FAILED`
+(`0x7F00`) with a largest free internal block of only 13,312 bytes. This proves
+TLS allocation failure in this post-startup state, rather than a certificate
+rejection. It does not identify the exact failed BLE allocation.
+
+The Passport defaults disable the two Wi-Fi IRAM throughput optimizations so
+their shared D/IRAM becomes available for heap allocations. Three actual pinned
+C3 headless builds measured 11,264 additional bytes with RX optimization off and
+18,944 with both off; data/BSS sizes stayed identical. These are link-map gains,
+not an independently measured throughput or radio-coverage result. BLE startup
+logs retain numeric controller state and before/after free/largest/minimum heap.
+TLS SSL-allocation failures now report `resource_exhausted` and increment a
+boot-lifetime counter, retained through network restarts. Each request clears
+stale HTTP/TLS details before starting so a previous HTTP 200 does not appear as
+the current handshake's result.
+
+### Automatic RAM-pressure protection
+
+The allocation-free guard measures internal byte-addressable free RAM and its
+largest contiguous block, separately from Flash queue pressure. These initial
+Passport thresholds are engineering guardrails, not a measured radio-capacity
+claim:
+
+| Action | Free / largest internal block | Timing |
+| --- | --- | --- |
+| Pause optional raw samples | Below 32 / 18 KiB, either limit | 2 seconds idle |
+| Resume raw samples | At least 36 / 20 KiB, both limits | 10 seconds healthy idle |
+| Stop scan and release BLE | Below 24 / 16 KiB, either limit | 5 seconds idle |
+| Admit BLE startup/recovery | At least 56 / 28 KiB, both limits | Recovery also needs 30-second cooldown and 10 seconds healthy idle |
+
+An in-flight HTTPS request breaks these sustained-pressure/recovery intervals;
+normal TLS temporary allocations therefore do not alone trigger a pause. A new
+explicit network allocation-exhaustion event after client cleanup can force a
+scan pause. Recovery requires a fresh valid desired-policy response after the
+pause and an unexpired lease. The guard preserves the server's desired sampling
+and window configuration rather than silently rewriting it. It seals actual
+partial windows and resumes at a new time origin, leaving the pause visible as
+an observation gap.
+
+`node_status` reports `memory_pressure` or `memory_raw_pressure` as the pause
+reason, and reports raw capture as paused when suppression is active. Paused
+devices continue periodic status attempts and retain frozen batches for normal
+durable ACK handling. The administrator page translates both memory reasons.
+After a failed partial SDK BLE initialization, another BLE initialization is
+blocked for that boot because generic deinitialization is unsafe. USB/AP setup
+remains available; BLE setup reports that a manual restart is required. No
+automatic restart, credential change or Flash erase is introduced.
+
+Host tests exercise pressure duration, fragmentation, TLS exclusion, hysteresis,
+cooldown, fresh-policy/lease boundaries, SDK retry prevention and USB recovery.
+Physical acceptance and tuned threshold performance remain separate.
 
 ### Network authentication modes
 

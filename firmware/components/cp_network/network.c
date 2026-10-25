@@ -13,6 +13,7 @@
 #include "esp_wifi.h"
 #include "esp_eap_client.h"
 #include "esp_tls_errors.h"
+#include "mbedtls/ssl.h"
 #include "freertos/queue.h"
 #include "lwip/dns.h"
 #include "esp_log.h"
@@ -100,6 +101,7 @@ static void log_evidence(net_phase_t phase,esp_err_t error,int socket_errno,
 static void allocation_failed(net_phase_t phase)
 {
     lock();s_snapshot.last_error=ESP_ERR_NO_MEM;
+    if(s_snapshot.resource_exhaustions<UINT32_MAX)++s_snapshot.resource_exhaustions;
     /* Local allocation failed before a trustworthy cloud result exists. End a
      * candidate immediately so its caller cannot replace this with TLS timeout. */
     diagnostic_locked(CP_DIAG_CLOUD_AUTH,CP_DIAG_RESOURCE_EXHAUSTED,ESP_ERR_NO_MEM,true,s_candidate_mode);
@@ -202,7 +204,10 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
     if (!running() || !eligible) return ESP_ERR_INVALID_STATE;
     esp_err_t resolved=resolve_api();
     if(resolved!=ESP_OK)return resolved;
-    diagnostic(CP_DIAG_TLS,CP_DIAG_TLS_CONNECTING,ESP_OK,true,false);
+    lock();
+    s_snapshot.diagnostic.http_status=0;s_snapshot.diagnostic.tls_code=0;s_snapshot.diagnostic.tls_flags=0;
+    diagnostic_locked(CP_DIAG_TLS,CP_DIAG_TLS_CONNECTING,ESP_OK,true,false);
+    unlock();
     response->deadline_ms=now_ms()+12000;
     char url[128], auth[CP_SETTINGS_TOKEN_SIZE+8];
     if (snprintf(url,sizeof(url),"%s%s",s_settings.api_origin,path)>=(int)sizeof(url)) return ESP_ERR_INVALID_SIZE;
@@ -217,6 +222,7 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
     };
     esp_http_client_handle_t client=esp_http_client_init(&config);
     if (!client) { memset(auth,0,sizeof(auth)); allocation_failed(NET_PHASE_CLIENT_INIT); return ESP_ERR_NO_MEM; }
+    lock();s_snapshot.http_in_flight=true;unlock();
     esp_err_t e=esp_http_client_set_header(client,"Authorization",auth);
     memset(auth,0,sizeof(auth));
     if (e==ESP_OK) e=esp_http_client_set_header(client,"Accept","application/json");
@@ -245,19 +251,23 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
     drain_events();
     if (response->abort_reason!=ESP_OK) e=response->abort_reason;
     lock();
+    s_snapshot.http_in_flight=false;
     s_snapshot.last_http_status=*status; s_snapshot.last_error=e;
     s_snapshot.diagnostic.http_status=*status>0&&*status<=599?*status:0;
     s_snapshot.diagnostic.tls_code=tls_code;s_snapshot.diagnostic.tls_flags=(uint32_t)tls_flags;
     if(e!=ESP_OK) {
+        bool memory_error=e==ESP_ERR_NO_MEM || tls_code==MBEDTLS_ERR_SSL_ALLOC_FAILED ||
+            tls_code==-MBEDTLS_ERR_SSL_ALLOC_FAILED;
+        if(memory_error&&s_snapshot.resource_exhaustions<UINT32_MAX)++s_snapshot.resource_exhaustions;
         cp_diag_stage_t stage=s_snapshot.diagnostic.stage;
         cp_diag_code_t code;
-        if(e==ESP_ERR_NO_MEM){stage=CP_DIAG_CLOUD_AUTH;code=CP_DIAG_RESOURCE_EXHAUSTED;}
+        if(memory_error){stage=CP_DIAG_CLOUD_AUTH;code=CP_DIAG_RESOURCE_EXHAUSTED;}
         else if(tls_error==ESP_ERR_ESP_TLS_CANNOT_RESOLVE_HOSTNAME){stage=CP_DIAG_DNS;code=CP_DIAG_DNS_FAILED;}
         else if(tls_flags){stage=CP_DIAG_TLS;code=CP_DIAG_TLS_CERTIFICATE_FAILED;}
         else if(stage==CP_DIAG_WIFI_CONNECT || stage==CP_DIAG_DHCP)code=s_snapshot.diagnostic.code;
         else if(stage==CP_DIAG_TLS)code=e==ESP_ERR_TIMEOUT?CP_DIAG_TLS_TIMEOUT:CP_DIAG_TLS_FAILED;
         else code=e==ESP_ERR_TIMEOUT?CP_DIAG_CLOUD_TIMEOUT:CP_DIAG_HTTP_FAILED;
-        diagnostic_locked(stage,code,e==ESP_ERR_NO_MEM?e:tls_error!=ESP_OK?tls_error:e,true,e==ESP_ERR_NO_MEM&&s_candidate_mode);
+        diagnostic_locked(stage,code,memory_error?ESP_ERR_NO_MEM:tls_error!=ESP_OK?tls_error:e,true,memory_error&&s_candidate_mode);
     } else if(*status==401||*status==403) {
         diagnostic_locked(CP_DIAG_CLOUD_AUTH,CP_DIAG_CLOUD_AUTH_FAILED,ESP_ERR_NOT_ALLOWED,false,true);
     } else if(*status<200||*status>=300) {

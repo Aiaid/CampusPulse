@@ -49,6 +49,7 @@ bool cp_codec_emit_items(cp_codec_t *, const char *stream, struct cJSON *items, 
 typedef struct {
     uint64_t mono_ms, raw_paused_ms;
     bool collecting, connected, raw_enabled;
+    bool raw_paused, memory_paused, memory_raw_paused;
     uint32_t free_heap, queue_pending[4], slots, free_slots;
     /* Recovered slots whose metadata could not yet be parsed (e.g. transient
      * OOM) still occupy durable unacknowledged storage. */

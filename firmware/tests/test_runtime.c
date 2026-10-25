@@ -20,6 +20,7 @@ static cp_provision_snapshot_t provision;
 static esp_err_t load_error=ESP_OK,save_error=ESP_OK,validation_error=ESP_OK;
 static esp_err_t network_stop_error=ESP_OK,pipeline_stop_error=ESP_OK,provision_stop_error=ESP_OK,apply_error=ESP_OK;
 static bool network_started,entropy_enabled,apply_actually_starts=true;
+static bool memory_refuse_start;
 static char capture_state[20],last_report_id[65];static bool last_report_applied;
 static cp_provision_submit_fn submit_callback;static void *submit_context;
 static cp_provision_credential_resolver_fn credential_callback;static void *credential_context;
@@ -118,7 +119,10 @@ esp_err_t cp_network_attempt_save(const cp_network_attempt_t *attempt)
 esp_err_t cp_pipeline_init(const char*node,const char*boot){assert(node&&boot);return ESP_OK;}
 esp_err_t cp_pipeline_stop(void){record(PIPE_STOP);if(pipeline_stop_error==ESP_OK)pipe_state.collecting=false;return pipeline_stop_error;}
 esp_err_t cp_pipeline_apply(const cp_network_policy_t*p)
-{assert(!provision.active&&p->core.collection_enabled);record(PIPE_APPLY);++apply_count;if(apply_error==ESP_OK)pipe_state.collecting=apply_actually_starts;return apply_error;}
+{assert(!provision.active&&p->core.collection_enabled&&!pipe_state.radio_restart_required);record(PIPE_APPLY);++apply_count;
+ if(memory_refuse_start){pipe_state.memory_paused=true;pipe_state.memory_restart_ready=false;return ESP_ERR_NO_MEM;}
+ if(apply_error==ESP_OK){pipe_state.collecting=apply_actually_starts;pipe_state.memory_paused=false;pipe_state.memory_raw_paused=false;}return apply_error;}
+esp_err_t cp_pipeline_maintain(void){return pipe_state.stop_failed?ESP_ERR_TIMEOUT:ESP_OK;}
 void cp_pipeline_snapshot(cp_pipeline_snapshot_t*out){*out=pipe_state;}
 void cp_pipeline_renew_lease(uint64_t deadline){assert(deadline>clock_ms);last_lease_deadline=deadline;++lease_renewals;}
 esp_err_t cp_provision_start(cp_provision_mode_t mode,const char*node,const char*proof,cp_provision_submit_fn fn,void*ctx)
@@ -189,6 +193,32 @@ static void no_actual_scan_tick(unsigned n)
 {if(n==2){pipe_state.collecting=false;pipe_state.pressure_paused=true;pipe_state.free_slots=1;}}
 static void resume_tick(unsigned n)
 {if(n==1)assert(cp_runtime_request_setup(CP_PROVISION_SOFTAP));if(n==2)assert(cp_runtime_request_resume());}
+static void memory_start_tick(unsigned n)
+{
+    if(n==2){assert(apply_count==1&&!last_report_applied&&!strcmp(capture_state,"paused")&&s_core.policy_state==CP_POLICY_STAGED);publish_policy(2,clock_ms,120000);}
+    if(n==3){assert(apply_count==1);memory_refuse_start=false;pipe_state.memory_restart_ready=true;publish_policy(3,clock_ms,120000);}
+}
+static void memory_pause_tick(unsigned n)
+{
+    if(n==2){pipe_state.collecting=false;pipe_state.memory_paused=true;publish_policy(2,clock_ms,120000);}
+    if(n==3){assert(apply_count==1&&!strcmp(capture_state,"paused")&&!strcmp(s_reason,"memory_pressure"));}
+    if(n==4){pipe_state.memory_restart_ready=true;publish_policy(3,clock_ms,120000);}
+}
+static void memory_expired_tick(unsigned n)
+{if(n==2){pipe_state.collecting=false;pipe_state.memory_paused=true;pipe_state.memory_restart_ready=true;clock_ms=15000;}}
+static void memory_invalid_tick(unsigned n)
+{if(n==2){pipe_state.collecting=false;pipe_state.memory_paused=true;pipe_state.memory_restart_ready=true;net.policy_response_sequence=2;net.policy_valid=false;net.policy_rejected=true;}}
+static void memory_stop_failed_tick(unsigned n)
+{if(n==2){pipe_state.collecting=false;pipe_state.memory_paused=true;pipe_state.stop_failed=true;publish_policy(2,clock_ms,120000);}}
+static void init_fault_setup_tick(unsigned n)
+{
+    if(n==1){assert(cp_runtime_request_setup(CP_PROVISION_BLE));}
+    if(n==2){assert(!provision.active&&!provision_start_count&&!apply_count);assert(!strcmp(s_reason,"ble_restart_required"));assert(cp_runtime_request_setup(CP_PROVISION_USB));}
+}
+static void init_fault_repeat_tick(unsigned n)
+{publish_policy(n,clock_ms,120000);}
+static void http_deferral_tick(unsigned n)
+{if(n==2){assert(!apply_count&&!report_count);net.http_in_flight=false;}}
 static void assert_candidate_order(void)
 {const event_t expected[]={PROVISION_STOP,VALIDATE,SAVE,RESTART};assert(event_count-marker==4);
  for(unsigned i=0;i<4;++i)assert(events[marker+i]==expected[i]);}
@@ -226,6 +256,15 @@ static void scenario(const char*name)
     else if(!strcmp(name,"unsupported_policy")){prepare(true);publish_policy(1,9000,120000);assert(run(3,policy_reject_tick)==1);assert(!pipe_state.collecting&&s_core.policy_state==CP_POLICY_FAILED&&report_count==2&&!last_report_applied);assert(!strcmp(last_report_id,"unsupported-policy"));}
     else if(!strcmp(name,"transient_lease_expiry")){prepare(true);publish_policy(1,10000,2000);assert(run(2,transient_tick)==1);assert(s_core.latest_request_sequence==1&&report_count==1&&apply_count==1&&!s_core.lease_valid&&!pipe_state.collecting);assert(!strcmp(capture_state,"expired"));}
     else if(!strcmp(name,"actual_capture_contact")){prepare(true);publish_policy(1,9000,120000);assert(run(2,no_actual_scan_tick)==1);assert(!pipe_state.collecting&&strcmp(capture_state,"running")!=0);}
+    else if(!strcmp(name,"memory_start_recovery")){prepare(true);publish_policy(1,9000,120000);memory_refuse_start=true;assert(run(3,memory_start_tick)==1);assert(apply_count==2&&last_report_applied&&pipe_state.collecting&&!strcmp(capture_state,"running"));}
+    else if(!strcmp(name,"memory_pause_recovery")){prepare(true);publish_policy(1,9000,120000);assert(run(4,memory_pause_tick)==1);assert(apply_count==2&&pipe_state.collecting&&!strcmp(capture_state,"running"));}
+    else if(!strcmp(name,"memory_expired")){prepare(true);publish_policy(1,10000,2000);assert(run(3,memory_expired_tick)==1);assert(apply_count==1&&!pipe_state.collecting&&!strcmp(capture_state,"expired")&&!strcmp(s_reason,"collection_lease_expired"));}
+    else if(!strcmp(name,"memory_invalid_policy")){prepare(true);publish_policy(1,9000,120000);assert(run(3,memory_invalid_tick)==1);assert(apply_count==1&&!pipe_state.collecting&&!strcmp(capture_state,"failed")&&!strcmp(s_reason,"unsupported_policy"));}
+    else if(!strcmp(name,"memory_stop_failure")){prepare(true);publish_policy(1,9000,120000);assert(run(3,memory_stop_failed_tick)==1);assert(apply_count==1&&!strcmp(capture_state,"failed")&&!strcmp(s_reason,"capture_stop_failed"));}
+    else if(!strcmp(name,"init_fault_usb_setup")){prepare(true);pipe_state.radio_restart_required=true;assert(run(3,init_fault_setup_tick)==1);assert(!apply_count&&provision.active&&provision.mode==CP_PROVISION_USB);}
+    else if(!strcmp(name,"init_fault_no_retry")){prepare(true);pipe_state.radio_restart_required=true;assert(run(4,init_fault_repeat_tick)==1);assert(!apply_count&&!last_report_applied&&!strcmp(capture_state,"failed")&&!strcmp(s_reason,"ble_restart_required"));}
+    else if(!strcmp(name,"http_start_deferral")){prepare(true);publish_policy(1,9000,120000);net.http_in_flight=true;assert(run(2,http_deferral_tick)==1);assert(apply_count==1&&last_report_applied&&pipe_state.collecting);}
+    else if(!strcmp(name,"no_false_activation")){prepare(true);publish_policy(1,9000,120000);apply_actually_starts=false;assert(run(2,NULL)==1);assert(apply_count==1&&!last_report_applied&&s_core.policy_state==CP_POLICY_FAILED&&!strcmp(capture_state,"failed"));}
     else if(!strcmp(name,"resume_previous")){prepare(true);assert(run(3,resume_tick)==1);assert(net_start_count==2&&!provision.active&&network_started&&!strcmp(last_network_settings.ssid,"previous-network"));}
     else if(!strcmp(name,"saved_credential_context")){prepare(true);assert_saved_credential(true);assert(!shown_previous&&shown_history_error==ESP_OK);assert(run(3,candidate_usb_tick)==2);assert_saved_credential(true);assert(s_saved_generation==2);}
     else if(!strcmp(name,"foreign_saved_credential")){persisted=settings("foreign-network");strcpy(persisted.node_id,"cp_000000000000");assert(cp_runtime_prepare("cp_aabbccddeeff",&board)==ESP_OK);assert(!s_enrolled);assert_saved_credential(false);assert(run(1,NULL)==1);assert(!net_start_count);}

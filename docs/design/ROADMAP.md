@@ -15,6 +15,11 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
+- [ ] Add automatic RAM-pressure collection protection: suspend optional raw
+      work, pause/release BLE when idle free or contiguous heap is inadequate,
+      resume with hysteresis and cooldown, and report actual pauses without
+      rewriting the desired sampling policy or inventing missing observations.
+
 - [ ] Resolve the physical Passport TLS validation timeout: distinguish TCP/TLS,
       response parsing and memory pressure using bounded diagnostics, preserve
       strict HTTPS checks and all stored data, then verify on the user's newly

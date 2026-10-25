@@ -18,6 +18,7 @@ static unsigned sink_items[4], sink_batches[4], uuid_counter;
 static double expected_uncertainty = 23;
 static bool expect_known = true, expect_null_uncertainty;
 static unsigned expected_unacked_slots;
+static const char *expected_pause, *expected_scan, *expected_raw;
 static void *checked_malloc(size_t bytes) {
     if (!inside_sink && ++allocation_calls == fail_at)
         return NULL;
@@ -142,6 +143,11 @@ static bool sink(void *ctx, const char *body, size_t bytes, const char *stream, 
             if (expected_unacked_slots)
                 assert(field(field(item, "buffer_health"), "unacked_bytes")->valuedouble ==
                        expected_unacked_slots * 12288u);
+            if (expected_pause) {
+                assert(!strcmp(field(field(item, "buffer_health"), "pause_reason")->valuestring, expected_pause));
+                assert(!strcmp(field(item, "scan_state")->valuestring, expected_scan));
+                assert(!strcmp(field(item, "raw_capture_state")->valuestring, expected_raw));
+            }
         }
         if (index != 2 && expect_known && !expect_null_uncertainty)
             assert(field(field(item, "time"), "uncertainty_ms")->valuedouble ==
@@ -336,6 +342,29 @@ static void recovered_unknown_metadata(void) {
     assert(!cp_codec_status(&c, &s, 2));
     assert(live_allocations == 0);
 }
+static void memory_pause_status(void) {
+    reset(0);
+    uint32_t seq = 0;
+    cp_codec_t c = context(&seq);
+    cp_codec_status_t s = status();
+    s.raw_enabled = true;
+    s.memory_raw_paused = true;
+    expected_pause = "memory_raw_pressure";
+    expected_scan = "running";
+    expected_raw = "paused";
+    assert(cp_codec_status(&c, &s, 1));
+    s.memory_paused = true;
+    s.collecting = false;
+    expected_pause = "memory_pressure";
+    expected_scan = "paused";
+    assert(cp_codec_status(&c, &s, 2));
+    s.raw_enabled = false;
+    expected_raw = "off";
+    assert(cp_codec_status(&c, &s, 3));
+    assert(sink_items[0] == 0 && sink_items[1] == 0 && sink_items[2] == 0);
+    assert(!live_allocations);
+    expected_pause = expected_scan = expected_raw = NULL;
+}
 int main(void) {
     cJSON_Hooks hooks = {.malloc_fn = checked_malloc, .free_fn = checked_free};
     cJSON_InitHooks(&hooks);
@@ -349,6 +378,7 @@ int main(void) {
     packed_summaries();
     short_windows();
     recovered_unknown_metadata();
+    memory_pause_status();
     cJSON_InitHooks(NULL);
     printf("Codec OOM checks: %zu window/raw/summary allocation sites, %zu status sites; valid "
            "sinks, exact loss accounting, zero leaks, aged clocks: PASS\n",

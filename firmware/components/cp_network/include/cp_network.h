@@ -32,6 +32,10 @@ typedef struct {
     cp_network_state_t network;
     cp_auth_state_t auth;
     bool clock_trusted, policy_valid, policy_present, activation_confirmed;
+    /* Runtime memory admission ignores temporary TLS working-set pressure. */
+    bool http_in_flight;
+    /* Saturating boot-lifetime count; retained across setup/network restarts. */
+    uint32_t resource_exhaustions;
     /* Only completed desired GET responses advance this sequence. Transient
      * failures retain the previous grant/time; rejected/expired/unassigned
      * responses invalidate policy immediately and must stop the collector. */

@@ -25,7 +25,8 @@ bool cp_codec_status(cp_codec_t *c, const cp_codec_status_t *s, uint32_t seq) {
         cp_codec_number(c, caps, names[i], s->slots);
     }
     cp_codec_number(c, o, "storage_free_bytes", (double)s->free_slots * 12288u);
-    cp_codec_string(c, o, "raw_capture_state", s->raw_enabled ? "sampled" : "off");
+    cp_codec_string(c, o, "raw_capture_state", !s->raw_enabled ? "off"
+        : !s->collecting || s->raw_paused || s->memory_raw_paused ? "paused" : "sampled");
     cJSON *l = cp_codec_object(c, o, "loss_totals");
 #define LOSS(field) cp_codec_number(c, l, #field, s->field)
     LOSS(aggregation_drops);
@@ -56,8 +57,12 @@ bool cp_codec_status(cp_codec_t *c, const cp_codec_status_t *s, uint32_t seq) {
                     : percent >= s->raw_pause_pct ? "high"
                     : percent >= s->warn_pct      ? "warning"
                                                   : "normal");
-    if (percent >= s->critical_pct)
+    if (s->memory_paused)
+        cp_codec_string(c, b, "pause_reason", "memory_pressure");
+    else if (percent >= s->critical_pct)
         cp_codec_string(c, b, "pause_reason", "storage_pressure");
+    else if (s->raw_enabled && s->memory_raw_paused)
+        cp_codec_string(c, b, "pause_reason", "memory_raw_pressure");
     else if (s->raw_enabled && percent >= s->raw_pause_pct)
         cp_codec_string(c, b, "pause_reason", "raw_pressure");
     else

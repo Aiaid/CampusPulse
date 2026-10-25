@@ -2,8 +2,10 @@
 #include "cp_codec.h"
 #include "cp_collect.h"
 #include "cp_journal.h"
+#include "cp_memory_guard.h"
 #include "cp_pipeline.h"
 #include "cp_upload_scheduler.h"
+#include "esp_bt.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_partition.h"
@@ -46,6 +48,11 @@ static uint32_t s_address_overflow_reports;
 static uint32_t s_unpersisted_window_reports, s_status_dropped;
 static uint64_t s_raw_paused_ms;
 static bool s_pressure_paused, s_raw_paused;
+static bool s_memory_paused, s_memory_raw_paused, s_policy_owned, s_stop_failed;
+/* The guard is supervisor-owned; callbacks/workers only read atomic mirrors. */
+static cp_memory_guard_t s_memory;
+static uint64_t s_memory_policy_sequence, s_latest_policy_response, s_idle_status_at, s_idle_pause_tick;
+static uint32_t s_resource_exhaustions_seen;
 static cp_upload_scheduler_t s_upload_scheduler;
 static uint8_t s_own_address;
 static bool s_stop, s_accept, s_initialized;
@@ -140,6 +147,9 @@ static void persist_status(void) {
                                 .collecting = __atomic_load_n(&s_accept, __ATOMIC_ACQUIRE),
                                 .connected = net.network == CP_NETWORK_READY,
                                 .raw_enabled = s_policy.raw_enabled,
+                                .raw_paused = __atomic_load_n(&s_raw_paused, __ATOMIC_ACQUIRE),
+                                .memory_paused = __atomic_load_n(&s_memory_paused, __ATOMIC_ACQUIRE),
+                                .memory_raw_paused = __atomic_load_n(&s_memory_raw_paused, __ATOMIC_ACQUIRE),
                                 .free_heap = esp_get_free_heap_size(),
                                 .slots = s_journal.count,
                                 .free_slots = load(&s_free_slots),
@@ -238,6 +248,7 @@ static void collector_worker(void *arg) {
     (void)arg;
     cp_report_t report;
     uint64_t previous_tick = mono_ms();
+    bool storage_raw_paused = false;
     for (;;) {
         bool got = xQueueReceive(s_reports, &report, pdMS_TO_TICKS(100)) == pdTRUE;
         if (got) {
@@ -257,9 +268,11 @@ static void collector_worker(void *arg) {
             request_stop_at(expiry);
         unsigned used = (s_journal.count - load(&s_free_slots)) * 100 / s_journal.count;
         if (used >= s_policy.raw_pause_pct)
-            __atomic_store_n(&s_raw_paused, true, __ATOMIC_RELEASE);
+            storage_raw_paused = true;
         else if (used <= s_policy.resume_pct)
-            __atomic_store_n(&s_raw_paused, false, __ATOMIC_RELEASE);
+            storage_raw_paused = false;
+        __atomic_store_n(&s_raw_paused, storage_raw_paused ||
+            __atomic_load_n(&s_memory_raw_paused, __ATOMIC_ACQUIRE), __ATOMIC_RELEASE);
         if (s_policy.raw_enabled && __atomic_load_n(&s_raw_paused, __ATOMIC_ACQUIRE))
             s_raw_paused_ms += tick - previous_tick;
         previous_tick = tick;
@@ -359,7 +372,8 @@ static int discovery(struct ble_gap_event *event, void *arg) {
         r.raw = CP_RAW_OFF;
     else if (r.report_seq % s_policy.sample_every_n || b->selected >= s_policy.max_raw_per_window)
         r.raw = CP_RAW_INTENTIONAL;
-    else if (__atomic_load_n(&s_raw_paused, __ATOMIC_ACQUIRE))
+    else if (__atomic_load_n(&s_raw_paused, __ATOMIC_ACQUIRE) ||
+             __atomic_load_n(&s_memory_raw_paused, __ATOMIC_ACQUIRE))
         r.raw = CP_RAW_PRESSURE;
     else {
         r.raw = CP_RAW_SELECTED;
@@ -645,36 +659,105 @@ esp_err_t cp_pipeline_init(const char *node, const char *boot) {
     return ESP_OK;
 }
 esp_err_t cp_pipeline_stop(void) {
+    /* A failed stop leaves ownership uncertain. Re-entering SDK teardown from
+     * the 500 ms supervisor loop is unsafe; retain diagnostics until reboot. */
+    if (s_stop_failed)
+        return ESP_ERR_INVALID_STATE;
     if (!s_initialized)
         return ESP_OK;
     request_stop();
     (void)ble_gap_disc_cancel();
     if (s_worker) {
-        if (xSemaphoreTake(s_worker_done, pdMS_TO_TICKS(10000)) != pdTRUE)
+        if (xSemaphoreTake(s_worker_done, pdMS_TO_TICKS(10000)) != pdTRUE) {
+            s_stop_failed = true;
             return ESP_ERR_TIMEOUT;
+        }
         vTaskDelete(s_worker);
         s_worker = NULL;
     }
     if (s_host) {
-        if (nimble_port_stop() != 0)
+        if (nimble_port_stop() != 0) {
+            s_stop_failed = true;
             return ESP_FAIL;
-        if (xSemaphoreTake(s_host_done, pdMS_TO_TICKS(5000)) != pdTRUE)
+        }
+        if (xSemaphoreTake(s_host_done, pdMS_TO_TICKS(5000)) != pdTRUE) {
+            s_stop_failed = true;
             return ESP_ERR_TIMEOUT;
+        }
         vTaskDelete(s_host);
         s_host = NULL;
     }
     esp_err_t err = nimble_port_deinit();
-    if (err == ESP_OK)
+    if (err == ESP_OK) {
         s_initialized = false;
+        s_idle_pause_tick = mono_ms();
+    }
+    s_stop_failed = err != ESP_OK;
     return err;
 }
-static esp_err_t apply_failed(unsigned phase,esp_err_t error) {
-    s_health.last_error=error;
-    ESP_LOGE(TAG,"phase=%u err=%d internal_free=%u internal_largest=%u free_slots=%u",
-        phase,(int)error,
-        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
-        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
-        (unsigned)load(&s_free_slots));
+static void publish_memory_guard(void) {
+    __atomic_store_n(&s_memory_paused, s_memory.scan_paused, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_memory_raw_paused, s_memory.raw_paused, __ATOMIC_RELEASE);
+}
+esp_err_t cp_pipeline_maintain(void) {
+    if (!s_health.storage_ready)
+        return ESP_OK;
+    if (s_stop_failed)
+        return ESP_ERR_INVALID_STATE;
+    cp_network_snapshot_t net;
+    cp_network_snapshot(&net);
+    uint64_t now = mono_ms();
+    s_latest_policy_response = net.policy_response_sequence;
+    const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    bool collecting = __atomic_load_n(&s_accept, __ATOMIC_ACQUIRE);
+    bool was_paused = s_memory.scan_paused;
+    cp_memory_guard_observe(&s_memory, now, heap_caps_get_free_size(caps),
+                            heap_caps_get_largest_free_block(caps), net.http_in_flight,
+                            collecting);
+    /* Consume failures only after the client has released TLS allocations. A
+     * historical diagnostic must not stop a later successfully resumed scan. */
+    if (!net.http_in_flight && net.resource_exhaustions != s_resource_exhaustions_seen) {
+        s_resource_exhaustions_seen = net.resource_exhaustions;
+        if (collecting)
+            cp_memory_guard_pause(&s_memory, now);
+    }
+    if (!was_paused && s_memory.scan_paused) {
+        s_memory_policy_sequence = net.policy_response_sequence;
+        ESP_LOGW(TAG, "Collection paused for memory: internal_free=%u internal_largest=%u",
+                 (unsigned)heap_caps_get_free_size(caps),
+                 (unsigned)heap_caps_get_largest_free_block(caps));
+    }
+    publish_memory_guard();
+    bool stopped = false;
+    if (s_initialized && (s_memory.scan_paused || __atomic_load_n(&s_stop, __ATOMIC_ACQUIRE))) {
+        esp_err_t err = cp_pipeline_stop();
+        if (err != ESP_OK) {
+            s_health.last_error = err;
+            return err;
+        }
+        stopped = true;
+        now = mono_ms();
+    }
+    if (!s_initialized && s_policy_owned) {
+        if (s_idle_pause_tick && now >= s_idle_pause_tick && s_policy.raw_enabled &&
+            (s_memory.scan_paused || __atomic_load_n(&s_pressure_paused, __ATOMIC_ACQUIRE)))
+            s_raw_paused_ms += now - s_idle_pause_tick;
+        s_idle_pause_tick = now;
+        if (!net.http_in_flight && (stopped || !s_idle_status_at ||
+                                    now - s_idle_status_at >= 30000)) {
+            persist_status();
+            s_idle_status_at = now;
+        }
+    }
+    return ESP_OK;
+}
+static esp_err_t apply_failed(unsigned phase, esp_err_t error) {
+    s_health.last_error = error;
+    ESP_LOGE(TAG, "phase=%u err=%d controller=%u internal_free=%u internal_largest=%u free_slots=%u",
+             phase, (int)error, (unsigned)esp_bt_controller_get_status(),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)load(&s_free_slots));
     return error;
 }
 esp_err_t cp_pipeline_apply(const cp_network_policy_t *p) {
@@ -692,9 +775,32 @@ esp_err_t cp_pipeline_apply(const cp_network_policy_t *p) {
     if (__atomic_load_n(&s_pressure_paused, __ATOMIC_ACQUIRE) &&
         (s_journal.count - load(&s_free_slots)) * 100 / s_journal.count > p->resume_pct)
         return apply_failed(104,ESP_ERR_NO_MEM);
+    if (s_memory.init_fault)
+        return apply_failed(109, ESP_ERR_INVALID_STATE);
+    uint64_t now = mono_ms();
+    if (now < p->fetched_mono_ms || now - p->fetched_mono_ms >= p->lease_ms)
+        return apply_failed(110, ESP_ERR_INVALID_STATE);
+    cp_network_snapshot_t net;
+    cp_network_snapshot(&net);
+    s_policy = *p;
+    s_policy_owned = true;
+    const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    bool was_paused = s_memory.scan_paused;
+    bool admitted = cp_memory_guard_start_allowed(&s_memory, now, heap_caps_get_free_size(caps),
+        heap_caps_get_largest_free_block(caps), net.http_in_flight);
+    if (!was_paused && s_memory.scan_paused)
+        s_memory_policy_sequence = p->request_sequence;
+    publish_memory_guard();
+    if (!admitted || (s_memory.scan_paused && p->request_sequence <= s_memory_policy_sequence)) {
+        s_idle_pause_tick = now;
+        if (!net.http_in_flight && (!s_idle_status_at || now - s_idle_status_at >= 30000)) {
+            persist_status();
+            s_idle_status_at = now;
+        }
+        return apply_failed(111, ESP_ERR_NO_MEM);
+    }
     __atomic_store_n(&s_pressure_paused, false, __ATOMIC_RELEASE);
     __atomic_store_n(&s_raw_paused, false, __ATOMIC_RELEASE);
-    s_policy = *p;
     s_health.last_error=ESP_OK;
     cp_pipeline_renew_lease(p->fetched_mono_ms + p->lease_ms);
     memset(s_losses, 0, sizeof s_losses);
@@ -705,9 +811,26 @@ esp_err_t cp_pipeline_apply(const cp_network_policy_t *p) {
     }
     while (xSemaphoreTake(s_worker_done, 0) == pdTRUE) {
     }
+    /* Keep these numeric diagnostics on the supervisor task. A failed SDK
+     * initialization may already have rolled back the controller while still
+     * retaining partial host allocations; controller state alone is insufficient. */
+    unsigned controller_before = (unsigned)esp_bt_controller_get_status();
+    unsigned internal_before = (unsigned)heap_caps_get_free_size(caps);
+    unsigned largest_before = (unsigned)heap_caps_get_largest_free_block(caps);
     err = nimble_port_init();
-    if (err != ESP_OK)
+    ESP_LOGI(TAG, "ble_init err=%d controller_before=%u controller_after=%u "
+                 "internal_before=%u internal_after=%u largest_before=%u largest_after=%u "
+                 "internal_min=%u",
+             (int)err, controller_before, (unsigned)esp_bt_controller_get_status(),
+             internal_before, (unsigned)heap_caps_get_free_size(caps), largest_before,
+             (unsigned)heap_caps_get_largest_free_block(caps),
+             (unsigned)heap_caps_get_minimum_free_size(caps));
+    if (err != ESP_OK) {
+        /* ESP-IDF can retain partial host state even after controller rollback.
+         * Do not deinit that incomplete state or retry it in this boot. */
+        cp_memory_guard_init_failed(&s_memory);
         return apply_failed(105,err);
+    }
     s_initialized = true;
     ble_svc_gap_init();
     ble_svc_gatt_init();
@@ -715,6 +838,9 @@ esp_err_t cp_pipeline_apply(const cp_network_policy_t *p) {
     ble_hs_cfg.reset_cb = radio_reset;
     if (xTaskCreate(host_task, "cp_nimble", 4096, NULL, configMAX_PRIORITIES - 4, &s_host) !=
         pdPASS) {
+        cp_memory_guard_pause(&s_memory, mono_ms());
+        s_memory_policy_sequence = p->request_sequence;
+        publish_memory_guard();
         (void)cp_pipeline_stop();
         return apply_failed(106,ESP_ERR_NO_MEM);
     }
@@ -725,9 +851,15 @@ esp_err_t cp_pipeline_apply(const cp_network_policy_t *p) {
         return apply_failed(107,s_health.last_error?s_health.last_error:ESP_FAIL);
     }
     if (xTaskCreate(collector_worker, "cp_collect", 8192, NULL, 4, &s_worker) != pdPASS) {
+        cp_memory_guard_pause(&s_memory, mono_ms());
+        s_memory_policy_sequence = p->request_sequence;
+        publish_memory_guard();
         (void)cp_pipeline_stop();
         return apply_failed(108,ESP_ERR_NO_MEM);
     }
+    cp_memory_guard_started(&s_memory);
+    publish_memory_guard();
+    s_idle_pause_tick = s_idle_status_at = 0;
     return ESP_OK;
 }
 void cp_pipeline_snapshot(cp_pipeline_snapshot_t *out) {
@@ -755,4 +887,10 @@ void cp_pipeline_snapshot(cp_pipeline_snapshot_t *out) {
     out->capacity_slots = s_journal.count;
     out->pressure_paused = __atomic_load_n(&s_pressure_paused, __ATOMIC_ACQUIRE);
     out->raw_paused = __atomic_load_n(&s_raw_paused, __ATOMIC_ACQUIRE);
+    out->memory_paused = __atomic_load_n(&s_memory_paused, __ATOMIC_ACQUIRE);
+    out->memory_raw_paused = __atomic_load_n(&s_memory_raw_paused, __ATOMIC_ACQUIRE);
+    out->memory_restart_ready = s_memory.restart_ready &&
+        s_latest_policy_response > s_memory_policy_sequence;
+    out->radio_restart_required = s_memory.init_fault;
+    out->stop_failed = s_stop_failed;
 }

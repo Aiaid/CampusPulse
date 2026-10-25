@@ -33,6 +33,12 @@ CONFIG_LV_MEM_SIZE_KILOBYTES=24
 # --- 系统 ---
 CONFIG_FREERTOS_HZ=1000
 
+# The C3 has no PSRAM: reserve shared D/IRAM for concurrent BLE and verified TLS.
+# This pinned application recovers 18,944 bytes in the headless link map by
+# running these Wi-Fi routines from Flash, at the cost of peak throughput.
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+
 # --- Bluetooth LE / NimBLE ---
 # ESP32-C3 仅支持 BLE；示例只启用单连接 peripheral 所需的最小 host 配置。
 CONFIG_BT_ENABLED=y

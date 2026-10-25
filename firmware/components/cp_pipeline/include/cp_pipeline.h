@@ -5,6 +5,8 @@
 typedef struct {
     bool storage_ready, collecting;
     bool pressure_paused,raw_paused;
+    bool memory_paused, memory_raw_paused, memory_restart_ready;
+    bool radio_restart_required, stop_failed;
     uint32_t capacity_slots;
     uint32_t pending, free_slots, quarantined_slots;
     uint32_t aggregation_drops, summary_drops, raw_drops, storage_drops;
@@ -16,6 +18,9 @@ esp_err_t cp_pipeline_init(const char *node_id, const char *boot_id);
 /* Stop seals/drains the original policy before it can be replaced. */
 esp_err_t cp_pipeline_apply(const cp_network_policy_t *policy);
 esp_err_t cp_pipeline_stop(void);
+/* Supervisor only: monitor idle RAM, release a stopped radio, and retain
+ * periodic status during pauses. Never calls from BLE callbacks. */
+esp_err_t cp_pipeline_maintain(void);
 /* Fresh desired-policy response only; historical reads/upload never call this. */
 void cp_pipeline_renew_lease(uint64_t deadline_mono_ms);
 void cp_pipeline_snapshot(cp_pipeline_snapshot_t *out);
