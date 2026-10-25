@@ -65,6 +65,18 @@ describe('device v2 policies and control',()=>{
 });
 
 describe('private v2 ingestion and durable receipts',()=>{
+ it.each([1000,1488,1880,4999,5000,30000])('commits a %i ms partial summary with its configured 5s bins',async duration=>{
+  const b=batch(), item=b.items[0];
+  item.duration_ms=duration;item.first_offset_ms=0;item.last_offset_ms=duration-1;
+  item.bins=Array(Math.ceil(duration/item.bin_ms)).fill(0);item.bins[0]=item.reports;
+  if(item.bins.length>1){item.bins[0]=1;item.bins[item.bins.length-1]=item.reports-1;}
+  const wrong=structuredClone(b);wrong.batch_id=crypto.randomUUID();wrong.items[0].bin_ms=6000;
+  if(duration<5000)expect((await upload(wrong)).status).toBe(422);
+  const ack=await data(await upload(b));expect(ack).toMatchObject({stream:'address_summaries',accepted_count:1,durability:'committed'});
+  expect(await data(await upload(b))).toEqual(ack);
+  const stored=state.db.prepare("SELECT item_json FROM ingestion_items_v2 WHERE stream='address_summaries'").get();
+  expect(JSON.parse(String(stored?.item_json))).toMatchObject({duration_ms:duration,bin_ms:5000,bins:item.bins});
+ });
  it('commits all default streams and preserves exact retries after expiry',async()=>{
   for(const name of ['address-summaries-v2.request','ble-windows-v2.request','node-status-v2.request']){
    const b=batch(name),ack=await data(await upload(b));expect(ack).toMatchObject({stream:b.stream,accepted_count:b.items.length,durability:'committed'});

@@ -86,7 +86,10 @@ function summaryItem(value: unknown, path: string): AddressSummary {
   const seq = integer(o.seq, `${path}.seq`, 1, 0xffffffff), timestamp = time(o.time, `${path}.time`);
   const window_seq = integer(o.window_seq, `${path}.window_seq`, 1, 0xffffffff);
   const duration_ms = integer(o.duration_ms, `${path}.duration_ms`, 1000, 300000);
-  const bin_ms = integer(o.bin_ms, `${path}.bin_ms`, 1000, duration_ms);
+  // A memory/policy stop can close a window before its configured first bin
+  // ends. Keep that bin width and validate the ceil-sized partial bins below;
+  // validateConfigBatchV2 still requires the exact assigned policy width.
+  const bin_ms = integer(o.bin_ms, `${path}.bin_ms`, 1000, 300000);
   if (timestamp.mono_ms < duration_ms) invalid(`${path}.time`);
   const reports = integer(o.reports, `${path}.reports`, 1, 0xffffffff);
   const adv_reports = integer(o.adv_reports, `${path}.adv_reports`, 0, reports);

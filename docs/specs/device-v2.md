@@ -51,6 +51,9 @@ policy can impose smaller limits.
 The server validates a 1–300 second summary window, 1 second minimum bin size,
 exact whole-window divisibility, at most 60 bins and at most 64 addresses. A
 partially closed item may be shorter and have `ceil(duration_ms/bin_ms)` bins.
+It retains the configured `bin_ms` even when `duration_ms < bin_ms`; that case
+has one partial bin. The server still rejects a bin width that differs from the
+assigned policy. It does not pad the observation interval or invent scan time.
 Control leases are 30–600 seconds. These server bounds are not a claim that every
 board supports every combination; the device rejects unsupported settings and
 reports failed activation. Scan mode, adapter and memory limits are checked by
