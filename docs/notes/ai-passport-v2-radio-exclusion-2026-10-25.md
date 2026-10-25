@@ -121,3 +121,11 @@ UI 栈此前已是直绘（`ui_mini` + OFL 字库，`page_status.c` 不使用 LV
 
 设备验证：屏幕状态页渲染正常（用户确认），2 分钟 0 断言 0 复位、
 11 批上传全部 200 OK。
+
+## CCNU 校园网接入（同日晚，用户确认 MAC 已被无感认证）
+
+通过 USB 用 `wifi_security:"open"` 重配设备到 CCNU（开放网络 + Portal MAC
+记忆）。设备获得校园网地址 10.160.138.199，contact/config/ack/ingest
+全部 200 OK 且连接复用正常，上传约 0.8 秒/批。开放网络支持来自
+main `0a5d3e7`。2 分钟观察零断言零异常复位。原始日志：
+`captures/ai-passport-v2-ccnu-20261025.log`。
