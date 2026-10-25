@@ -8,6 +8,7 @@ import MapRegions, { useBuildingMask } from './MapRegions';
 import { gisTileAvailability, selectTileLevel, visibleGisTiles } from './gis-tiles';
 import { boundedMapView, fitMapFrame, minimumMapZoom } from './map-framing';
 import { scenePointToGisAnchor } from './place-registry';
+import { formatObservationKinds, observationKinds } from '../shared/observation-kinds.js';
 import './campus-map.css';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -252,12 +253,14 @@ export const CampusMap = forwardRef(function CampusMap({
           const metrics = demo ? getMetrics(place.id, minute, scenarioId) : null;
           const screen = project(place.x, place.y);
           const compact = compactSelected && selected;
+          const purposes = !demo ? formatObservationKinds(place) : '';
+          const multiplePurposes = !demo && observationKinds(place).length > 1;
           const visible = compact || (screen.left >= 12 && screen.left <= size.width - 12 && screen.top >= 25 && screen.top <= size.height - 65);
           const labelShift = clamp(screen.left, 75, size.width - 75) - screen.left;
           return <div className={`cp-map__anchor ${selected ? 'cp-map__anchor--selected' : ''} ${compact ? 'cp-map__anchor--compact' : ''}`} key={place.id} style={compact ? { left: size.width - 12, top: 12 } : screen} data-source-id={place.sourceId} aria-hidden={!visible}>
             {selected && !compact && <span className="cp-map__selection" aria-hidden="true"><MapPin size={31} weight="fill" /></span>}
-            <button className="cp-map__label" type="button" tabIndex={visible ? 0 : -1} style={{ left: compact ? 0 : visible ? labelShift : 0 }} onClick={() => onSelect(place.id)} aria-pressed={selected} aria-label={`${place.name}，查看区域活动${selected ? '，已选择' : ''}`}>
-              {selected && <span className="cp-map__label-dot" aria-hidden="true" />}{place.name}
+            <button className={`cp-map__label${multiplePurposes ? ' cp-map__label--multiple' : ''}`} type="button" tabIndex={visible ? 0 : -1} style={{ left: compact ? 0 : visible ? labelShift : 0 }} onClick={() => onSelect(place.id)} aria-pressed={selected} title={purposes ? `${place.name} · ${purposes}` : place.name} aria-label={`${place.name}，${purposes ? `${purposes}，查看现场观测` : '查看区域活动'}${selected ? '，已选择' : ''}`}>
+              {selected && <span className="cp-map__label-dot" aria-hidden="true" />}{multiplePurposes ? <span>{place.name}<small className="cp-map__purposes">{purposes}</small></span> : place.name}
             </button>
             {demo && !compactSelected && layers.waits && metrics.wait !== null && (selected || place.id === 'tianjiabing' || place.id === 'teaching-9') && <span className="cp-map__wait" title="候梯为合成示意，未核实楼栋是否有电梯"><Elevator size={14} aria-hidden="true" /> 候梯 约{metrics.wait}分钟 <small>模拟</small></span>}
           </div>;

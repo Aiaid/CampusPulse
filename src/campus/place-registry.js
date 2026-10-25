@@ -1,4 +1,5 @@
 import { GIS_IMAGE_SIZE, GIS_SCENE_BOUNDS, originalToScenePoint, sceneToOriginalPoint } from './gis-geometry.js';
+import { formatObservationKinds } from '../shared/observation-kinds.js';
 
 // The API stores coordinates normalized against the complete official GIS
 // chart. Keep the authored scene origin while accepting the complete grid.
@@ -27,7 +28,7 @@ export function fieldPlaceRegistry(apiPlaces) {
       unlocatedPlaces.push({ ...place, mapUnavailableReason: place.gis_anchor?.verified === true ? 'outside-map' : 'unverified-gis' });
       continue;
     }
-    mapPlaces.push({ ...place, ...point, subtitle: `${fieldPlaceKinds[place.kind] || '现场观察点'} · 已核验 GIS 锚点` });
+    mapPlaces.push({ ...place, ...point, subtitle: `${formatObservationKinds(place) || '现场观察点'} · 已核验 GIS 锚点` });
   }
   return { mapPlaces, unlocatedPlaces };
 }

@@ -25,7 +25,8 @@ function recordInterval(record) {
     return { from: observed - record.duration_ms, to: observed, source: 'sensor' };
   }
   const until = parsedTime(record.valid_until);
-  if (record.source === 'manual' && record.status === 'active' && Number.isFinite(until) && until > observed) {
+  if (record.source === 'manual' && record.status === 'active' && (record.kind === 'parking' || record.kind === 'elevator')
+    && (record.dataset === undefined || record.dataset === 'field') && Number.isFinite(until) && until > observed) {
     return { from: observed, to: until, source: 'manual' };
   }
   return null;
@@ -35,7 +36,8 @@ function recordInterval(record) {
  * Find recorded coverage, never nearest-neighbour or interpolated values.
  * Sensor windows include both captured endpoints. Manual observations apply
  * from observed_at up to (but excluding) valid_until; return each source apart.
- * Multiple nodes/windows remain distinct and newest records are listed first.
+ * Multiple nodes/windows remain distinct. Select the latest valid manual
+ * result of each purpose independently; newer parking cannot replace elevator.
  */
 export function recordsAtTime(records, time) {
   const sensors = [], manual = [];
@@ -46,8 +48,17 @@ export function recordsAtTime(records, time) {
     (interval.source === 'sensor' ? sensors : manual).push(record);
   }
   const newestFirst = (a, b) => Date.parse(b.observed_at) - Date.parse(a.observed_at) || fieldRecordKey(a).localeCompare(fieldRecordKey(b));
-  sensors.sort(newestFirst); manual.sort(newestFirst);
-  return { sensors, manual, hasRecording: sensors.length + manual.length > 0 };
+  sensors.sort(newestFirst);
+  // Match the public summary's observed_at DESC, id DESC ordering so a
+  // same-time correction selects the same result in live and replay views.
+  manual.sort((a, b) => Date.parse(b.observed_at) - Date.parse(a.observed_at) || b.id.localeCompare(a.id));
+  const latestKinds = new Set();
+  const latestManual = manual.filter(record => {
+    if (latestKinds.has(record.kind)) return false;
+    latestKinds.add(record.kind);
+    return true;
+  });
+  return { sensors, manual: latestManual, hasRecording: sensors.length + latestManual.length > 0 };
 }
 
 /** Sensor intervals are clipped to the axis; manual records remain points. */

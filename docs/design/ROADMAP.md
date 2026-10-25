@@ -152,6 +152,16 @@ collection and durable upload. Final local software verification passed on
 
 ## Completed archive
 
+- [x] Support concurrent activity, parking and elevator observations at one
+      physical place, with independent result validity and backward-compatible
+      migration. Existing devices directly change their place and selected work
+      purposes through immutable deployment/configuration versions, retaining
+      old attribution and explicit device ACK. Verify 669 tests / 60 files,
+      build, real ephemeral D1 desktop/390px browser flows, correction/retry
+      regression and v1/v2 D1/R2 ingestion. Automatic vehicle/elevator inference,
+      hosted release and physical activation remain separate; see
+      [place and device purposes](../specs/place-observation-purposes.md).
+
 - [x] Clarify administrator device diagnostics and uploaded evidence: separate
       contact/capture/config/upload states, show age and boot context, explain
       losses and RAM pauses, and inspect bounded authenticated batch/payload

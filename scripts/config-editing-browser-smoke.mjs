@@ -14,7 +14,7 @@ original.accept_until = new Date(Date.now() + 86400000).toISOString();
 const node = original.node_id;
 const initial = { id: original.capture_config_id, config: original, raw_retention_hours: 24, aggregate_retention_days: 30 };
 const configs = [structuredClone(initial)], drafts = [];
-const placements = [{ id: original.placement_id, node_id: node, place_id: 'library', valid_from_ms: 0, valid_until_ms: null, effective_valid_until_ms: null }];
+const placements = [{ id: original.placement_id, node_id: node, place_id: 'library', observation_kinds: ['activity'], valid_from_ms: 0, valid_until_ms: null, effective_valid_until_ms: null }];
 let desired = initial.id, rejectOnce = true, dropPlacement = true;
 const writes = [], errors = [];
 function device() { return { id: node, name: 'Synthetic configured device', board: 'Synthetic Passport', enabled: true, contact_state: 'recent', config_state: desired === initial.id ? 'applied' : 'pending', desired_config_id: desired, applied_config_id: initial.id, reported_config_id: initial.id }; }
@@ -26,7 +26,7 @@ async function routeCloud(route) {
   else if (path === '/session') result = { authenticated: true, role: 'admin', account: { username: 'synthetic', display_name: 'Synthetic' } };
   else if (path === '/overview') result = { devices_total: 1, devices_enabled: 1, devices_recent: 1, config_pending: 0, server_time: new Date().toISOString() };
   else if (path === '/settings') result = { settings: { default_raw_retention_hours: 24, default_aggregate_retention_days: 30 } };
-  else if (path === '/places') result = { places: [{ id: 'library', name: 'Synthetic library' }, { id: 'gate', name: 'Synthetic gate' }] };
+  else if (path === '/places') result = { places: [{ id: 'library', name: 'Synthetic library', kind: 'activity', observation_kinds: ['activity'] }, { id: 'gate', name: 'Synthetic gate', kind: 'activity', observation_kinds: ['activity', 'parking', 'elevator'] }] };
   else if (path === '/devices') result = { devices: [device()], next_cursor: null };
   else if (path === `/devices/${node}/batches`) result = { batches: [], next_cursor: null };
   else if (path === `/devices/${node}`) result = { device: device(), placements, configs, activation: { current: null, history: [] } };
@@ -74,8 +74,8 @@ try {
   assert.deepEqual(configs[0].config.allowed_streams, ['ble_windows', 'address_summaries', 'node_status']);
   await nav('设备管理'); await page.getByRole('button', { name: `查看设备 ${node}`, exact: true }).click();
   await page.getByText('设备已应用版本', { exact: true }).waitFor(); await page.getByText('等待设备', { exact: true }).first().waitFor();
-  await page.getByRole('button', { name: '修改位置', exact: true }).click();
-  dialog = page.getByRole('dialog', { name: '修改设备位置与采集配置', exact: true });
+  await page.getByRole('button', { name: '修改地点与工作方式', exact: true }).first().click();
+  dialog = page.getByRole('dialog', { name: '修改地点与工作方式', exact: true });
   await dialog.getByRole('button', { name: '保存并发布新版本', exact: true }).waitFor();
   await dialog.getByLabel('目标地点', { exact: true }).selectOption('gate');
   await dialog.getByRole('button', { name: '保存并发布新版本', exact: true }).click();
@@ -88,8 +88,8 @@ try {
   assert.equal(configs[1].config.placement_id, original.placement_id);
   // An explicit unlocated choice must not fall back to the previous place after
   // a partial save; null is an intentional target, not an uninitialized form.
-  await page.getByRole('button', { name: '修改位置', exact: true }).click();
-  dialog = page.getByRole('dialog', { name: '修改设备位置与采集配置', exact: true });
+  await page.getByRole('button', { name: '修改地点与工作方式', exact: true }).first().click();
+  dialog = page.getByRole('dialog', { name: '修改地点与工作方式', exact: true });
   await dialog.getByLabel('目标地点', { exact: true }).selectOption(''); dropPlacement = true;
   await dialog.getByRole('button', { name: '保存并发布新版本', exact: true }).click();
   await dialog.getByRole('alert').waitFor();

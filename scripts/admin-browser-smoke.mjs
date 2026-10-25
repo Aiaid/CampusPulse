@@ -155,7 +155,7 @@ try {
   dialog = page.getByRole('dialog', { name: '新建地点', exact: true });
   await dialog.getByLabel('地点 ID', { exact: true }).fill(place);
   await dialog.getByLabel('地点名称', { exact: true }).fill(placeName);
-  await dialog.getByLabel('观测类型', { exact: true }).selectOption('activity');
+  await dialog.getByRole('checkbox', { name: '活动监测', exact: true }).check();
   await dialog.getByLabel('锚点 x（0–1）', { exact: true }).fill('0.4');
   await dialog.getByLabel('锚点 y（0–1）', { exact: true }).fill('0.6');
   await result(() => dialog.getByRole('button', { name: '保存地点', exact: true }).click(), '/places', 'POST', 201);

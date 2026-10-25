@@ -3,6 +3,7 @@ export interface Place {
   id: string;
   name: string;
   kind: PlaceKind;
+  observation_kinds: PlaceKind[];
   anchor: { x: number; y: number };
   /** Full 24576-square GIS image coordinates normalized to [0,1]. */
   gis_anchor?: { x: number; y: number; verified: boolean };
@@ -26,6 +27,7 @@ export interface PlaceSummary {
   place: Place;
   sensor: null;
   latest_observation: Observation | null;
+  latest_observations: { parking: Observation | null; elevator: Observation | null };
   freshness: 'no_data' | 'fresh' | 'stale';
   as_of: string;
 }

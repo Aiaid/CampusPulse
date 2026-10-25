@@ -123,7 +123,7 @@ describe('authenticated manual observations', () => {
 });
 
 it('marks freshness by observation expiry rather than receive time', () => {
-  const place = { id: 'p', name: 'P', kind: 'parking', anchor: { x: 0, y: 0 }, coverage: 'unconfigured' } as const;
+  const place: Place = { id: 'p', name: 'P', kind: 'parking', observation_kinds: ['parking'], anchor: { x: 0, y: 0 }, coverage: 'unconfigured' };
   const observation = { valid_until: '2026-10-23T00:15:00.000Z' } as Observation;
   expect(summarize(place, observation, Date.parse('2026-10-23T00:15:00.000Z')).freshness).toBe('stale');
   expect(() => validateObservation({ ...body(), observed_at: new Date(Date.now() + 60_000).toISOString() })).toThrow();

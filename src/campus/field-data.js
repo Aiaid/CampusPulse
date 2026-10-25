@@ -15,7 +15,8 @@ function validateRecord(record, source, placeId) {
       || !integer(record.uncertainty_ms) || !integer(record.aggregation_drops) || typeof record.unique_table_overflow !== 'boolean'
       || !Array.isArray(record.quality_flags) || record.quality_flags.some(flag => typeof flag !== 'string')) invalid();
   } else {
-    if (record.place_id !== placeId || record.status !== 'active' || typeof record.id !== 'string') invalid();
+    if (record.place_id !== placeId || record.status !== 'active' || typeof record.id !== 'string'
+      || (record.dataset !== undefined && record.dataset !== 'field')) invalid();
     if (record.kind === 'parking') {
       if (!integer(record.parking_min) || !integer(record.parking_max) || record.parking_min > record.parking_max) invalid();
     } else if (record.kind !== 'elevator' || !integer(record.wait_seconds)) invalid();
@@ -29,6 +30,13 @@ export function recordFreshness(record, now = Date.now()) {
   // fresh because of a different source. Never trust it for an individual card.
   return timestamp(record.valid_until) && timestamp(record.observed_at)
     && Date.parse(record.observed_at) <= now && Date.parse(record.valid_until) > now ? 'fresh' : 'stale';
+}
+
+/** The legacy singleton can only supply its own kind, never the other card. */
+export function latestManualObservations(summary) {
+  if (summary?.latest_observations) return { parking: null, elevator: null, ...summary.latest_observations };
+  const latest = summary?.latest_observation;
+  return { parking: latest?.kind === 'parking' ? latest : null, elevator: latest?.kind === 'elevator' ? latest : null };
 }
 
 export function normalizeFieldResponse(body, { placeId, mode }) {
@@ -47,7 +55,19 @@ export function normalizeFieldResponse(body, { placeId, mode }) {
   if (body.place?.id !== placeId || !timestamp(body.as_of) || !('sensor' in body) || !('latest_observation' in body)) invalid();
   if (body.sensor !== null) validateRecord(body.sensor, 'sensor', placeId);
   if (body.latest_observation !== null) validateRecord(body.latest_observation, 'manual', placeId);
-  return body;
+  if ('latest_observations' in body) {
+    const latest = body.latest_observations;
+    if (!latest || typeof latest !== 'object' || Array.isArray(latest)
+      || Object.keys(latest).some(kind => kind !== 'parking' && kind !== 'elevator')) invalid();
+    for (const kind of ['parking', 'elevator']) {
+      if (!(kind in latest)) invalid();
+      if (latest[kind] !== null) {
+        validateRecord(latest[kind], 'manual', placeId);
+        if (latest[kind].kind !== kind) invalid();
+      }
+    }
+  }
+  return { ...body, latest_observations: latestManualObservations(body) };
 }
 
 export function fieldRecordKey(record) {

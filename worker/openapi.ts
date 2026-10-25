@@ -120,7 +120,7 @@ export function createOpenApiDocument(): Record<string, unknown> {
       '/api/v1/places/{id}/summary': {
         get: {
           operationId: 'getPlaceSummary', tags: ['Public reads'], summary: 'Get latest manual and field sensor summaries',
-          description: 'Sensor is the latest retained field window from the past 24 hours with known UTC and uncertainty <=30 seconds. The entire interval [window start minus uncertainty, window end plus uncertainty] must fit the immutable placement. Only an empty flag list or the documented non-clock quality allowlist is public; unknown flags are withheld. Its valid_until is window UTC minus uncertainty plus 90 seconds. Top-level freshness is fresh when either that sensor window or the latest active manual observation is fresh, stale when at least one exists but neither is fresh, and no_data otherwise. No sensor means null, never zero people.',
+          description: 'Sensor is the latest retained field window from the past 24 hours with known UTC and uncertainty <=30 seconds. The entire interval [window start minus uncertainty, window end plus uncertainty] must fit the immutable placement. Only an empty flag list or the documented non-clock quality allowlist is public; unknown flags are withheld. Its valid_until is window UTC minus uncertainty plus 90 seconds. Top-level freshness is fresh when that sensor window or any latest active manual purpose result is fresh, stale when at least one exists but none is fresh, and no_data otherwise. Each manual purpose retains its own expiry. No sensor means null, never zero people.',
           parameters: [placeIdParameter],
           responses: {
             '200': response('Latest manual and field sensor summaries, including explicit missing-data state.', ref('PlaceSummary')),
@@ -192,7 +192,7 @@ export function createOpenApiDocument(): Record<string, unknown> {
       '/api/v1/observations': {
         post: {
           operationId: 'createObservation', tags: ['Operator writes'], summary: 'Commit a manual observation',
-          description: 'Requires application/json (charset parameters are accepted), no Content-Encoding header, and a body no larger than 8192 bytes (8 KiB). Unknown fields, null numeric values, mixed parking/elevator fields and non-integer values are rejected. Parking minimum must not exceed maximum, and kind must match the registered place. valid_until is observed_at plus the configured observation TTL (15 minutes by default), not reception time; settings changes do not rewrite existing records; an accepted old observation may already be stale. New insertion returns 201; an identical ID/content retry returns 200, including the current cancelled status if already cancelled. Changed content for an existing ID returns 409. Relative timestamp validation is repeated on retries, so retries older than 24 hours are rejected. Confirmation follows the D1 write. Replace the synthetic examples with actual measurements: Try it out creates real records.',
+          description: 'Requires application/json (charset parameters are accepted), no Content-Encoding header, and a body no larger than 8192 bytes (8 KiB). Unknown fields, null numeric values, mixed parking/elevator fields and non-integer values are rejected. Parking minimum must not exceed maximum, and kind must be enabled in the registered place observation_kinds. valid_until is observed_at plus the configured observation TTL (15 minutes by default), not reception time; settings changes do not rewrite existing records; an accepted old observation may already be stale. New insertion returns 201; an identical ID/content retry returns 200, including the current cancelled status if already cancelled, or a purpose disabled since the original write. Changed content for an existing ID returns 409. Relative timestamp validation is repeated on retries, so retries older than 24 hours are rejected. Confirmation follows the D1 write. Replace the synthetic examples with actual measurements: Try it out creates real records.',
           security: [{ OperatorToken: [] }],
           requestBody: {
             required: true,
@@ -262,9 +262,10 @@ export function createOpenApiDocument(): Record<string, unknown> {
           properties: { x: { type: 'number', minimum: 0, maximum: 1 }, y: { type: 'number', minimum: 0, maximum: 1 }, verified: { type: 'boolean', const: true } },
         },
         Place: {
-          type: 'object', additionalProperties: false, required: ['id', 'name', 'kind', 'anchor', 'coverage'],
+          type: 'object', additionalProperties: false, required: ['id', 'name', 'kind', 'observation_kinds', 'anchor', 'coverage'],
           properties: {
             id: ref('PlaceId'), name: { type: 'string' }, kind: { type: 'string', enum: ['activity', 'parking', 'elevator'] },
+            observation_kinds: { type: 'array', minItems: 1, maxItems: 3, uniqueItems: true, items: { type: 'string', enum: ['activity', 'parking', 'elevator'] }, description: 'Concurrent enabled purposes at this physical place; kind remains the legacy primary purpose.' },
             anchor: ref('Anchor'), gis_anchor: ref('GisAnchor'), coverage: { type: 'string', const: 'unconfigured' },
           },
         },
@@ -309,10 +310,13 @@ export function createOpenApiDocument(): Record<string, unknown> {
           properties: { observation: ref('Observation'), durability: { type: 'string', const: 'committed' } },
         },
         PlaceSummary: {
-          type: 'object', additionalProperties: false, required: ['place', 'sensor', 'latest_observation', 'freshness', 'as_of'],
+          type: 'object', additionalProperties: false, required: ['place', 'sensor', 'latest_observation', 'latest_observations', 'freshness', 'as_of'],
           properties: {
             place: ref('Place'), sensor: { oneOf: [ref('PublicSensorWindow'), { type: 'null' }] },
             latest_observation: { oneOf: [ref('Observation'), { type: 'null' }] },
+            latest_observations: { type: 'object', additionalProperties: false, required: ['parking', 'elevator'], properties: {
+              parking: { oneOf: [ref('Observation'), { type: 'null' }] }, elevator: { oneOf: [ref('Observation'), { type: 'null' }] },
+            }, description: 'Latest active record independently per manual purpose, including retained history after a purpose is disabled. Each record keeps its own valid_until; sensor windows remain shared observations and do not predict people or vehicles.' },
             freshness: { type: 'string', enum: ['no_data', 'fresh', 'stale'] }, as_of: timestamp,
           },
         },

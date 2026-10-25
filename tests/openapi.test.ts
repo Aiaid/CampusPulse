@@ -78,7 +78,12 @@ function checkSchema(root: Json, schema: Json | boolean, value: unknown): void {
     if (schema.minimum !== undefined) expect(value).toBeGreaterThanOrEqual(schema.minimum);
     if (schema.maximum !== undefined) expect(value).toBeLessThanOrEqual(schema.maximum);
   }
-  if (Array.isArray(value)) for (const entry of value) if (schema.items) checkSchema(root, schema.items, entry);
+  if (Array.isArray(value)) {
+    if (schema.minItems !== undefined) expect(value.length).toBeGreaterThanOrEqual(schema.minItems);
+    if (schema.maxItems !== undefined) expect(value.length).toBeLessThanOrEqual(schema.maxItems);
+    if (schema.uniqueItems) expect(new Set(value.map(item => JSON.stringify(item))).size).toBe(value.length);
+    for (const entry of value) if (schema.items) checkSchema(root, schema.items, entry);
+  }
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     for (const key of schema.required ?? []) expect(Object.hasOwn(value, key), `Required property ${key}`).toBe(true);
     for (const [key, entry] of Object.entries(value)) {
@@ -240,6 +245,22 @@ describe('OpenAPI contract and existing authorization', () => {
     expect(() => checkSchema(root, root.components.schemas.PublicSensorWindow, { ...sensor, uncertainty_ms: 30001 })).toThrow();
   });
 
+  it('documents concurrent place purposes, independent summaries and versioned placement scope', () => {
+    const root = document();
+    const create = root.paths['/api/v1/admin/places'].post.requestBody.content['application/json'].schema;
+    const base = { id: 'all-purpose', name: 'Shared site', anchor: { x: 0.5, y: 0.5 } };
+    checkSchema(root, create, { ...base, observation_kinds: ['activity','parking','elevator'] });
+    checkSchema(root, create, { ...base, kind: 'parking' });
+    expect(() => checkSchema(root, create, base)).toThrow();
+    for (const kinds of [[], ['parking','parking'], ['unsupported']]) expect(() => checkSchema(root, create, { ...base, observation_kinds: kinds })).toThrow();
+    const deployment = root.paths['/api/v1/admin/devices/{id}/placements'].post.requestBody.content['application/json'].schema;
+    checkSchema(root, deployment, { id: 'new-work', place_id: 'all-purpose', observation_kinds: ['parking','elevator'], valid_from_ms: 1, valid_until_ms: null });
+    expect(root.components.schemas.PlaceSummary.required).toContain('latest_observations');
+    expect(root.components.schemas.PlaceSummary.properties.latest_observations.required).toEqual(['parking','elevator']);
+    expect(root.paths['/api/v1/admin/devices/{id}/placements'].post.description).toContain('separate from firmware capture_config');
+    expect(root.components.schemas.AnyCaptureConfig).toBeDefined();
+  });
+
   it('matches the contract to actual SQLite-backed responses and both request variants', async () => {
     const db = new DatabaseSync(':memory:');
     for (const migration of readdirSync(new URL('../migrations/', import.meta.url)).filter(name => /^\d+.*\.sql$/.test(name)).sort()) {
@@ -294,6 +315,14 @@ describe('OpenAPI contract and existing authorization', () => {
         await request(`/api/v1/places/${data.place_id}/history?minutes=15`, '/api/v1/places/{id}/history');
         await request(`/api/v1/observations/${data.id}`, '/api/v1/observations/{id}', { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
       }
+      db.prepare('UPDATE places SET observation_kinds_json=? WHERE id=?').run('["activity","parking","elevator"]', 'library');
+      for (const value of [
+        { id: crypto.randomUUID(), place_id: 'library', kind: 'parking', observed_at: new Date().toISOString(), parking_min: 0, parking_max: 1 },
+        { id: crypto.randomUUID(), place_id: 'library', kind: 'elevator', observed_at: new Date().toISOString(), wait_seconds: 0 },
+      ]) await request('/api/v1/observations', undefined, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(value) }, 201);
+      await request('/api/v1/places/library/summary', '/api/v1/places/{id}/summary');
+      const summary = await (await fetchWorker('/api/v1/places/library/summary', undefined, env)).json() as Json;
+      expect(summary.latest_observations).toMatchObject({ parking: { kind: 'parking' }, elevator: { kind: 'elevator' } });
     } finally { db.close(); }
   });
 });

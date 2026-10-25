@@ -77,7 +77,11 @@ The previous blanket immutability model becomes an editable management workflow:
 - Moving a device ends the earlier deployment interval and starts another one.
   Old batch placement IDs stay unchanged. A registry write alone does not move
   hardware, split an in-progress capture window or make new firmware run.
-- A place-kind change must not contradict existing manual-record history.
+- A place can enable multiple observation purposes through `observation_kinds`.
+  Existing observations retain their recorded kind even when a purpose is later
+  disabled. Device deployments snapshot their selected work purposes; changing
+  these or their place appends a deployment/configuration version. See
+  [place and device purposes](place-observation-purposes.md).
 
 This is deliberate versioned editing, not an unrestricted database editor.
 References, receipt hashes, old record expiry and historical collection identity

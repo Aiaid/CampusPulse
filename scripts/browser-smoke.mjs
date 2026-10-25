@@ -77,7 +77,7 @@ try {
   await dialog.getByText('记录已获服务端确认',{exact:true}).waitFor();
   await dialog.locator('.observation-value strong').filter({hasText:'2–5 辆'}).waitFor();
   const cancelled = page.waitForResponse(r => r.url().endsWith(`/observations/${receipt.observation.id}`) && r.request().method() === 'DELETE');
-  await dialog.getByRole('button',{name:'撤销最近一条记录',exact:true}).click();
+  await dialog.getByRole('button',{name:'撤销最近一条电动车监控记录',exact:true}).click();
   assert.equal((await cancelled).status(), 200);
   await dialog.getByText('记录已撤销，服务端已确认',{exact:true}).waitFor();
   await dialog.getByRole('button',{name:'关闭记录表单',exact:true}).click();

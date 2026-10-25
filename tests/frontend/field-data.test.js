@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { createFieldReader, fieldReadPath, fieldRecordKey, normalizeFieldResponse, recordFreshness } from '../../src/campus/field-data.js';
+import { createFieldReader, fieldReadPath, fieldRecordKey, latestManualObservations, normalizeFieldResponse, recordFreshness } from '../../src/campus/field-data.js';
 
 const now = Date.parse('2026-10-25T10:00:00.000Z');
 const iso = offset => new Date(now + offset).toISOString();
@@ -40,6 +40,23 @@ describe('public field response semantics', () => {
     expect(recordFreshness(null, now)).toBe('no_data');
   });
 
+  test('keeps both manual purposes and expires them independently of the sensor and each other', () => {
+    const parking = manual(), elevator = manual({ id: 'elevator-1', kind: 'elevator', wait_seconds: 70, observed_at: iso(-10_000), valid_until: iso(10_000) });
+    const data = normalizeFieldResponse(summary({ latest_observation: elevator, latest_observations: { parking, elevator } }), options);
+    expect(latestManualObservations(data)).toEqual({ parking, elevator });
+    expect(recordFreshness(data.latest_observations.parking, now)).toBe('stale');
+    expect(recordFreshness(data.latest_observations.elevator, now)).toBe('fresh');
+    expect(recordFreshness(data.latest_observations.elevator, now + 10_000)).toBe('stale');
+    expect(recordFreshness(data.sensor, now + 10_000)).toBe('fresh');
+  });
+
+  test('normalizes a legacy singleton only to its actual purpose and respects explicit empty cards', () => {
+    expect(normalizeFieldResponse(summary(), options).latest_observations).toEqual({ parking: manual(), elevator: null });
+    expect(normalizeFieldResponse(summary({ latest_observation: null }), options).latest_observations).toEqual({ parking: null, elevator: null });
+    const data = normalizeFieldResponse(summary({ latest_observations: { parking: null, elevator: null } }), options);
+    expect(latestManualObservations(data)).toEqual({ parking: null, elevator: null });
+  });
+
   test('keeps missing sources empty and merges only actual retained historical records', () => {
     const empty = normalizeFieldResponse(summary({ sensor: null, latest_observation: null, freshness: 'no_data' }), options);
     expect(empty.sensor).toBeNull();
@@ -74,6 +91,13 @@ describe('public field response semantics', () => {
     summary({ latest_observation: manual({ source: 'demo' }) }),
     summary({ latest_observation: manual({ status: 'cancelled' }) }),
     summary({ latest_observation: manual({ parking_min: 8, parking_max: 2 }) }),
+    summary({ latest_observations: null }),
+    summary({ latest_observations: [] }),
+    summary({ latest_observations: { parking: manual() } }),
+    summary({ latest_observations: { parking: manual(), elevator: manual() } }),
+    summary({ latest_observations: { parking: manual({ dataset: 'controlled_test' }), elevator: null } }),
+    summary({ latest_observations: { parking: manual({ dataset: 'demo' }), elevator: null } }),
+    summary({ latest_observations: { parking: manual({ place_id: 'other' }), elevator: null } }),
     summary({ as_of: 'invalid' }),
     { place: { id: 'parking' }, as_of: iso(0) },
   ])('rejects malformed or non-field summaries without inventing replacements %#', body => {
@@ -87,6 +111,8 @@ describe('public field response semantics', () => {
     history({ sensor_windows: [sensor({ observed_at: iso(-86_400_001) })] }),
     history({ observations: [manual({ observed_at: iso(1000), valid_until: iso(2000) })] }),
     history({ place_id: 'different' }),
+    history({ observations: [manual({ dataset: 'demo' })] }),
+    history({ observations: [manual({ dataset: 'controlled_test' })] }),
   ])('rejects malformed or out-of-range history %#', body => {
     expect(() => normalizeFieldResponse(body, { ...options, mode: 'replay' })).toThrow('无效记录');
   });

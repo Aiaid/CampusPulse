@@ -164,3 +164,7 @@
     linear-gradient(145deg, #5d82ae14, #1d365503 52%, #050d1829);
   mix-blend-mode: multiply;
 }
+
+/* Multiple uses share one physical GIS anchor. Keep its label compact. */
+.cp-map__label--multiple{max-width:min(240px,calc(100vw - 36px));white-space:normal}
+.cp-map__purposes{display:block;font-size:9px;font-weight:400;line-height:1.45;opacity:.88;margin-top:3px}

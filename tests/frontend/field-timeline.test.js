@@ -48,8 +48,32 @@ describe('actual recording coverage at a continuous cursor', () => {
     const newer = manual({ id: 'manual-2', observed_at: iso(-55_000), valid_until: iso(30_000), parking_min: 0, parking_max: 0 });
     const result = recordsAtTime([older, sensorRecord, newer], now - 45_000);
     expect(result.sensors).toEqual([sensorRecord]);
-    expect(result.manual).toEqual([newer, older]);
+    expect(result.manual).toEqual([newer]);
     expect(result.hasRecording).toBe(true);
+  });
+
+  test('selects the latest valid result per manual purpose at the same place and leaves independent gaps', () => {
+    const older = manual({ valid_until: iso(30_000) });
+    const newer = manual({ id: 'parking-2', observed_at: iso(-55_000), valid_until: iso(-20_000), parking_min: 0, parking_max: 0 });
+    const elevator = manual({ id: 'elevator-1', kind: 'elevator', wait_seconds: 25, observed_at: iso(-100_000), valid_until: iso(-40_000) });
+    const records = [older, newer, elevator];
+    expect(recordsAtTime(records, now - 45_000).manual).toEqual([newer, elevator]);
+    expect(recordsAtTime(records, now - 40_000).manual).toEqual([newer]);
+    expect(recordsAtTime(records, now - 20_000).manual).toEqual([older]);
+    expect(recordsAtTime(records, now + 30_000).manual).toEqual([]);
+    expect(recordsAtTime(records, now - 100_001).manual).toEqual([older]);
+    // A later refresh never introduces future observations into a pinned cursor.
+    const futureElevator = { ...elevator, id: 'elevator-2', observed_at: iso(-35_000), valid_until: iso(100_000) };
+    expect(recordsAtTime([...records, futureElevator], now - 45_000).manual).toEqual([newer, elevator]);
+  });
+
+  test('matches the live summary id-descending tie-break for equal-time manual results', () => {
+    const lower = manual({ id: '00000000-0000-4000-8000-000000000000', observed_at: iso(-60_000), valid_until: iso(30_000), parking_min: 1, parking_max: 1 });
+    const higher = { ...lower, id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', parking_min: 9, parking_max: 9 };
+    const elevator = { ...lower, id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', kind: 'elevator', wait_seconds: 25 };
+    for (const records of [[lower, higher, elevator], [elevator, higher, lower]]) {
+      expect(recordsAtTime(records, now - 45_000).manual).toEqual([higher, elevator]);
+    }
   });
 
   test('does not mutate or fabricate records, including empty and invalid inputs', () => {
@@ -62,7 +86,7 @@ describe('actual recording coverage at a continuous cursor', () => {
   });
 
   test('excludes non-field, cancelled and malformed records from coverage and marks', () => {
-    const badRecords = [sensor({ dataset: 'demo' }), sensor({ duration_ms: -30_000 }), sensor({ observed_at: 'invalid' }), manual({ status: 'cancelled' }), manual({ valid_until: iso(-150_000) }), { source: 'demo' }, null];
+    const badRecords = [sensor({ dataset: 'demo' }), sensor({ dataset: 'controlled_test' }), sensor({ duration_ms: -30_000 }), sensor({ observed_at: 'invalid' }), manual({ dataset: 'demo' }), manual({ dataset: 'controlled_test' }), manual({ kind: 'activity' }), manual({ status: 'cancelled' }), manual({ valid_until: iso(-150_000) }), { source: 'demo' }, null];
     expect(recordsAtTime(badRecords, now - 45_000).hasRecording).toBe(false);
     expect(timelineMarks(badRecords, bounds)).toEqual([]);
   });

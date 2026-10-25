@@ -33,7 +33,8 @@ export function createAdminOpenApi() {
   const draftUpdate = entity({ ...draftBody.properties, revision: integer }, ['config', 'revision']);
   const revision = entity({ revision: integer });
   const anchor = entity({ x: { type: 'number', minimum: 0, maximum: 1 }, y: { type: 'number', minimum: 0, maximum: 1 } });
-  const placeFields = { name: string, kind: { type: 'string', enum: ['activity', 'parking', 'elevator'] }, anchor, gis_anchor: { anyOf: [entity({ ...anchor.properties, verified: { type: 'boolean', const: true } }), { type: 'null' }] } };
+  const observationKinds = { type: 'array', minItems: 1, maxItems: 3, uniqueItems: true, items: { type: 'string', enum: ['activity', 'parking', 'elevator'] } };
+  const placeFields = { name: string, kind: { type: 'string', enum: ['activity', 'parking', 'elevator'], description: 'Legacy primary purpose; must belong to observation_kinds when both are supplied.' }, observation_kinds: observationKinds, anchor, gis_anchor: { anyOf: [entity({ ...anchor.properties, verified: { type: 'boolean', const: true } }), { type: 'null' }] } };
   return {
     tags: [{ name: 'Administration', description: 'One managed administrator account with password/Passkeys, separate from operator/device/research credentials. Initial token login grants setup only and stops after initialization. Sensitive account/key/device-credential changes require fresh verification. All responses are no-store. Device credential registration/rotation returns a secret once; it is never included in list or audit responses.' }],
     securitySchemes: { AdminSession: { type: 'apiKey', in: 'cookie', name: 'cp_admin_session', description: 'Signed, expiring, server-revocable HttpOnly SameSite=Strict session obtained through POST /api/v1/admin/session. Secure on HTTPS. Cookies cannot be entered manually in Swagger; use /admin to log in.' } },
@@ -72,14 +73,14 @@ export function createAdminOpenApi() {
         parameters: [pathId], post: operation('rotateAdminDeviceCredential', 'Invalidate the old device credential and return a new one once', 'post', entity({})),
       },
       '/api/v1/admin/devices/{id}/placements': {
-        parameters: [pathId], post: operation('createAdminPlacement', 'Register a deployment and close an earlier open deployment', 'post', entity({ id, place_id: { type: ['string', 'null'] }, valid_from_ms: { type: 'integer', minimum: 0 }, valid_until_ms: { type: ['integer', 'null'], minimum: 0 } }), 'Keeps old batch placement/config references intact. A registry change alone does not move a physical device or make firmware split capture windows.', '201'),
+        parameters: [pathId], post: operation('createAdminPlacement', 'Register a deployment and close an earlier open deployment', 'post', entity({ id, place_id: { type: ['string', 'null'] }, observation_kinds: observationKinds, valid_from_ms: { type: 'integer', minimum: 0 }, valid_until_ms: { type: ['integer', 'null'], minimum: 0 } }, ['id','place_id','valid_from_ms','valid_until_ms']), 'Selected observation_kinds must be a subset of the target place purposes. Omission selects all target purposes, or activity when unlocated. Every placement response and device placement history returns observation_kinds. Scope is immutable and separate from firmware capture_config JSON; changing place or work purposes requires a new placement and a new published policy. Keeps old batch placement/config references intact. A registry change alone does not move a physical device or make firmware split capture windows.', '201'),
       },
       '/api/v1/admin/places': {
         get: operation('listAdminPlaces', 'List logical places and registered anchors', 'get'),
-        post: operation('createAdminPlace', 'Create a logical place', 'post', entity({ id, ...placeFields }, ['id', 'name', 'kind', 'anchor']), undefined, '201'),
+        post: operation('createAdminPlace', 'Create a logical place', 'post', { ...entity({ id, ...placeFields }, ['id', 'name', 'anchor']), anyOf: [{ required: ['kind'] }, { required: ['observation_kinds'] }] }, 'Provide nonempty unique observation_kinds, or legacy kind for one purpose. An omitted kind uses the first array entry as primary. If both are provided the primary must belong to the array. Responses always include observation_kinds.', '201'),
       },
       '/api/v1/admin/places/{id}': {
-        parameters: [pathId], patch: operation('updateAdminPlace', 'Edit place metadata and anchors', 'patch', entity(placeFields, [])),
+        parameters: [pathId], patch: operation('updateAdminPlace', 'Edit place metadata, observation purposes and anchors', 'patch', entity(placeFields, []), 'observation_kinds replaces enabled purposes; array-only updates select its first entry as primary. A legacy kind-only update selects that single purpose. Disabling a purpose preserves historical observations and placement scope, but rejects new manual entries of that purpose.'),
       },
       '/api/v1/admin/configs': {
         get: { ...operation('listAdminConfigs', 'Read editable drafts and published historical policies', 'get'), parameters: [{ name: 'node_id', in: 'query', required: false, schema: id }] },

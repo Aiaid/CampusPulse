@@ -77,3 +77,37 @@ it('uses the Passport raw ceiling by default and preserves an existing smaller s
   const configured = { ...initial, raw_capture: { mode: 'sampled', sample_every_n: 25, selection: 'seq_mod_n_eq_0', max_reports_per_window: 2 } };
   expect(rawCaptureUpdate(configured, 'sampled').raw_capture).toEqual(configured.raw_capture);
 });
+it('versions a same-place work-purpose change while keeping the firmware policy strict', async () => {
+  await api('/places/library', { method: 'PATCH', body: { observation_kinds: ['activity', 'parking', 'elevator'] } });
+  const body = edit();
+  const original = structuredClone(initial);
+  const placement = { id: 'same-place-new-purposes', place_id: 'library', observation_kinds: ['activity', 'elevator'], valid_from_ms: Date.now(), valid_until_ms: null };
+  body.config.placement_id = placement.id;
+  await publishConfigEdit(api, body, placement);
+  const detail = await api(`/devices/${initial.node_id}`);
+  expect(detail.placements.find((p: any) => p.id === placement.id)).toMatchObject({ observation_kinds: ['activity', 'elevator'] });
+  expect(detail.configs.find((row: any) => row.id === initial.capture_config_id).config).toEqual(original);
+  expect(detail.device).toMatchObject({ desired_config_id: body.config.capture_config_id, applied_config_id: null, config_state: 'pending' });
+  expect(body.config).not.toHaveProperty('observation_kinds');
+  expect(validateAnyCaptureConfig(body.config)).toEqual(body.config);
+  const before = calls.length;
+  await expect(publishConfigEdit(api, body, { ...placement, observation_kinds: ['parking'] })).rejects.toThrow('工作用途');
+  expect(calls.slice(before).every(call => call.method === 'GET')).toBe(true);
+});
+it.each(['draft', 'placement', 'publish'])('retains multi-purpose metadata across a lost %s response', async stage => {
+  await api('/places/library', { method: 'PATCH', body: { observation_kinds: ['activity', 'parking'] } });
+  const body = edit(); const placement = { id: `purposes-lost-${stage}`, place_id: 'library', observation_kinds: ['activity', 'parking'], valid_from_ms: Date.now(), valid_until_ms: null };
+  body.config.placement_id = placement.id;
+  let dropped = false;
+  const flaky = async (path: string, options: any = {}) => {
+    const result = await api(path, options);
+    if (!dropped && options.method === 'POST' && (stage === 'draft' && path === '/configs' || stage === 'placement' && path.endsWith('/placements') || stage === 'publish' && path.endsWith('/publish'))) { dropped = true; throw new Error('Purpose response lost'); }
+    return result;
+  };
+  await expect(publishConfigEdit(flaky, body, placement)).rejects.toThrow('Purpose response lost');
+  await publishConfigEdit(flaky, body, { ...placement, observation_kinds: ['parking', 'activity'] });
+  const detail = await api(`/devices/${initial.node_id}`);
+  expect(detail.placements.filter((p: any) => p.id === placement.id)).toHaveLength(1);
+  expect([...detail.placements.find((p: any) => p.id === placement.id).observation_kinds].sort()).toEqual(['activity', 'parking']);
+  expect(detail.device.config_state).toBe('pending');
+});

@@ -9,7 +9,8 @@ import { handleAdmin, readPublicSettings, readRuntimeSettings } from './admin';
 const MAX_BODY = 8192;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const OBS_COLUMNS = 'id,place_id,kind,source,status,observed_at,valid_until,parking_min,parking_max,wait_seconds';
-interface PlaceRow { id: string; name: string; kind: Place['kind']; anchor_x: number; anchor_y: number; gis_anchor_x: number | null; gis_anchor_y: number | null }
+interface PlaceRow { id: string; name: string; kind: Place['kind']; observation_kinds_json: string; anchor_x: number; anchor_y: number; gis_anchor_x: number | null; gis_anchor_y: number | null }
+const PLACE_COLUMNS = 'id,name,kind,observation_kinds_json,anchor_x,anchor_y,gis_anchor_x,gis_anchor_y';
 
 class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
@@ -20,22 +21,26 @@ function json(value: unknown, status = 200) {
 }
 
 const placeFromRow = (row: PlaceRow): Place => ({
-  id: row.id, name: row.name, kind: row.kind,
+  id: row.id, name: row.name, kind: row.kind, observation_kinds: JSON.parse(row.observation_kinds_json),
   anchor: { x: row.anchor_x, y: row.anchor_y }, coverage: 'unconfigured',
   ...(row.gis_anchor_x !== null && row.gis_anchor_y !== null
     ? { gis_anchor: { x: row.gis_anchor_x, y: row.gis_anchor_y, verified: true } } : {}),
 });
 
 async function findPlace(env: Env, id: string): Promise<Place> {
-  const row = await env.DB.prepare('SELECT id,name,kind,anchor_x,anchor_y,gis_anchor_x,gis_anchor_y FROM places WHERE id = ?').bind(id).first<PlaceRow>();
+  const row = await env.DB.prepare(`SELECT ${PLACE_COLUMNS} FROM places WHERE id = ?`).bind(id).first<PlaceRow>();
   if (!row) throw new ApiError(404, 'place_not_found', 'Unknown place.');
   return placeFromRow(row);
 }
 
-export function summarize(place: Place, observation: Observation | null, now = Date.now()): PlaceSummary {
+export function summarize(place: Place, observation: Observation | null, now = Date.now(), latest: PlaceSummary['latest_observations'] = {
+  parking: observation?.kind === 'parking' ? observation : null,
+  elevator: observation?.kind === 'elevator' ? observation : null,
+}): PlaceSummary {
+  const records = [observation, latest.parking, latest.elevator].filter((row): row is Observation => row !== null);
   return {
-    place, sensor: null, latest_observation: observation,
-    freshness: !observation ? 'no_data' : Date.parse(observation.valid_until) > now ? 'fresh' : 'stale',
+    place, sensor: null, latest_observation: observation, latest_observations: latest,
+    freshness: records.some(row => Date.parse(row.valid_until) > now) ? 'fresh' : records.length ? 'stale' : 'no_data',
     as_of: new Date(now).toISOString(),
   };
 }
@@ -112,17 +117,25 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
     if (url.pathname === '/api/v1/health' && request.method === 'GET') return json({ status: 'ok', ingestion: 'implemented', raw_storage: env.RAW_BUCKET ? 'configured' : 'unconfigured' });
     if (url.pathname === '/api/v1/settings' && request.method === 'GET') return json(await readPublicSettings(env));
     if (url.pathname === '/api/v1/places' && request.method === 'GET') {
-      const result = await env.DB.prepare('SELECT id,name,kind,anchor_x,anchor_y,gis_anchor_x,gis_anchor_y FROM places ORDER BY id').all<PlaceRow>();
+      const result = await env.DB.prepare(`SELECT ${PLACE_COLUMNS} FROM places ORDER BY id`).all<PlaceRow>();
       return json({ places: result.results.map(placeFromRow) });
     }
     const route = /^\/api\/v1\/places\/([a-z0-9_-]{1,64})\/(summary|history)$/.exec(url.pathname);
     if (route && request.method === 'GET') {
       const place = await findPlace(env, route[1]);
       if (route[2] === 'summary') {
-        const latest = await env.DB.prepare(`SELECT ${OBS_COLUMNS} FROM observations WHERE place_id = ? AND status = 'active' ORDER BY observed_at DESC, id DESC LIMIT 1`).bind(place.id).first<Observation>();
+        // One snapshot returns the latest active record independently per manual
+        // purpose, including retained evidence for purposes since disabled.
+        const rows = await env.DB.prepare(`SELECT ${OBS_COLUMNS} FROM (SELECT ${OBS_COLUMNS},
+          ROW_NUMBER() OVER (PARTITION BY kind ORDER BY observed_at DESC,id DESC) AS rank
+          FROM observations WHERE place_id=? AND status='active') WHERE rank=1 ORDER BY observed_at DESC,id DESC`)
+          .bind(place.id).all<Observation>();
+        const latest = rows.results[0] ?? null;
+        const latestByKind = { parking: rows.results.find(row => row.kind === 'parking') ?? null,
+          elevator: rows.results.find(row => row.kind === 'elevator') ?? null };
         const now = Date.now();
         const windows = await readPublicWindows(env, place.id, now - 86_400_000, now);
-        const summary = summarize(place, latest, now);
+        const summary = summarize(place, latest, now, latestByKind);
         const sensor = windows[0] ?? null;
         return json({ ...summary, sensor, freshness: sensor?.freshness === 'fresh' || summary.freshness === 'fresh' ? 'fresh' : sensor || latest ? 'stale' : 'no_data' });
       }
@@ -138,14 +151,23 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
       await authorize(request, env);
       const observation = validateObservation(await readJson(request));
       const place = await findPlace(env, observation.place_id);
-      if (place.kind !== observation.kind) throw new ApiError(422, 'place_kind_mismatch', 'Observation kind must match the place.');
+      const existing = await env.DB.prepare('SELECT id FROM observations WHERE id=?').bind(observation.id).first();
+      if (!existing && !place.observation_kinds.includes(observation.kind)) throw new ApiError(422, 'place_kind_mismatch', 'Observation purpose must be enabled for the place.');
       const settings = await readRuntimeSettings(env);
       const validUntil = new Date(Date.parse(observation.observed_at) + settings.observation_ttl_minutes * 60_000).toISOString();
       const min = observation.parking_min ?? null;
       const max = observation.parking_max ?? null;
       const wait = observation.wait_seconds ?? null;
-      const inserted = await env.DB.prepare('INSERT INTO observations (id,place_id,kind,observed_at,valid_until,received_at,parking_min,parking_max,wait_seconds) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING')
-        .bind(observation.id, observation.place_id, observation.kind, observation.observed_at, validUntil, new Date().toISOString(), min, max, wait).run();
+      let inserted: D1Result;
+      try {
+        inserted = await env.DB.prepare('INSERT INTO observations (id,place_id,kind,observed_at,valid_until,received_at,parking_min,parking_max,wait_seconds) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING')
+          .bind(observation.id, observation.place_id, observation.kind, observation.observed_at, validUntil, new Date().toISOString(), min, max, wait).run();
+      } catch (error) {
+        const messages: string[] = [];
+        for (let cause: unknown = error, depth = 0; cause instanceof Error && depth < 4; cause = cause.cause, depth++) messages.push(cause.message);
+        if (messages.some(message => message.includes('place_kind_conflict'))) throw new ApiError(422, 'place_kind_mismatch', 'Observation purpose must be enabled for the place.');
+        throw error;
+      }
       const stored = await env.DB.prepare(`SELECT ${OBS_COLUMNS} FROM observations WHERE id = ?`).bind(observation.id).first<Observation>();
       if (!stored) throw new Error('Missing committed observation');
       if (stored.place_id !== observation.place_id || stored.kind !== observation.kind || stored.observed_at !== observation.observed_at || stored.parking_min !== min || stored.parking_max !== max || stored.wait_seconds !== wait) {

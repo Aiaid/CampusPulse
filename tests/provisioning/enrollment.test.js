@@ -49,6 +49,29 @@ function settingsApi(initial = null) {
 }
 
 describe('saving editable provisioning settings', () => {
+  it('creates immutable same-place purpose changes without altering BLE capture parameters', async () => {
+    const config = provisionConfig('cp_001122aabbcc', 'existing-placement', 'existing', 'field');
+    config.summary.max_addresses = 18;
+    const state = settingsApi({ id: 'existing', config, raw_retention_hours: 48, aggregate_retention_days: 90 });
+    state.placements[0].observation_kinds = ['activity'];
+    const id = await saveProvisionSettings(state.api, state.node, 'purposes', 'library', 'field', ['activity', 'parking']);
+    expect(state.placements).toHaveLength(2);
+    expect(state.placements[0].observation_kinds).toEqual(['activity']);
+    expect(state.placements[1]).toMatchObject({ place_id: 'library', observation_kinds: ['activity', 'parking'] });
+    expect(state.configs[1].config).toEqual({ ...config, capture_config_id: id, placement_id: `${state.node}-p-purposes` });
+    expect(state.configs[1].config).not.toHaveProperty('observation_kinds');
+  });
+  it('reconciles lost placement purpose writes and rejects conflicting retry metadata', async () => {
+    const state = settingsApi(); state.lose = 'placement';
+    await expect(saveProvisionSettings(state.api, state.node, 'purposeretry', 'library', 'field', ['parking', 'activity'])).rejects.toThrow('Response lost');
+    await expect(saveProvisionSettings(state.api, state.node, 'purposeretry', 'library', 'field', ['activity', 'elevator'])).rejects.toThrow('内容已变化');
+    const id = await saveProvisionSettings(state.api, state.node, 'purposeretry', 'library', 'field', ['activity', 'parking']);
+    expect(state.device.desired_config_id).toBe(id);
+    expect(state.placements).toHaveLength(1);
+    const before = state.writes.length;
+    await expect(saveProvisionSettings((...args) => state.api(...args), state.node, 'purposeretry', 'library', 'field', ['activity'])).rejects.toThrow('不同内容');
+    expect(state.writes).toHaveLength(before);
+  });
   it('makes a second save current while preserving the first immutable config', async () => {
     const state = settingsApi();
     const first = await saveProvisionSettings(state.api, state.node, 'save1', 'library', 'controlled_test');

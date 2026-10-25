@@ -20,3 +20,12 @@
 .admin-root .cp-admin-brand-icon>img{display:block;width:100%;height:100%;object-fit:contain;border-radius:inherit}
 .admin-root .cp-admin-login-decoration>img{display:block;width:54px;height:54px;object-fit:contain;border-radius:14px}
 @media(max-width:500px){.admin-root .cp-admin-login-decoration>img{width:35px;height:35px;border-radius:9px}}
+
+.cp-admin-edit-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.cp-admin-purpose-options { display: flex; flex-wrap: wrap; gap: 12px 24px; }
+.cp-admin-work-purposes .cp-admin-checkbox { margin: 0; }
+.cp-admin-deployment-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.cp-admin-deployment-summary > div { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 16px; border: 1px solid var(--cp-admin-line); border-radius: 10px; overflow-wrap: anywhere; }
+@media (max-width: 640px) { .cp-admin-deployment-summary { grid-template-columns: 1fr; } }
+.cp-admin-capture-details > summary { cursor: pointer; padding: 12px 0; font-weight: 600; }
+.cp-provision fieldset.cp-admin-edit-fields { border: 0; border-radius: 0; padding: 0; }

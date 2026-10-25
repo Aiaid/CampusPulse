@@ -1,3 +1,4 @@
+import { sameWorkPurposes, validateWorkPurposes } from '../work-purposes.js';
 export const NODE_PATTERN = /^cp_[a-f0-9]{12}$/;
 export const TOKEN_PATTERN = /^cpd_[a-f0-9]{64}$/;
 export const DEVICE_API_ORIGIN = 'https://pulse.anend.net';
@@ -30,10 +31,12 @@ export async function assignProvisionConfig(api, node, attempt, place, dataset) 
 // the same operation ID for retries, and use a new ID after editing the form.
 const settingsOperations = new WeakMap();
 const settingsPayload = value => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
-export async function saveProvisionSettings(api, node, operationId, place, dataset) {
+export async function saveProvisionSettings(api, node, operationId, place, dataset, observation_kinds) {
   const suffix = String(operationId || '').replaceAll('-', '');
   if (!NODE_PATTERN.test(node) || !/^[a-z0-9_]{1,44}$/.test(suffix)) throw new Error('保存操作或设备身份无效，请重新读取设备。');
-  const targetPlace = place || null, signature = JSON.stringify([targetPlace, dataset]);
+  if (observation_kinds !== undefined) validateWorkPurposes(observation_kinds);
+  const targetPlace = place || null, signature = JSON.stringify([targetPlace, dataset, observation_kinds ? [...observation_kinds].sort() : null]);
+  const matchesPurposes = placement => observation_kinds === undefined || sameWorkPurposes(placement?.observation_kinds, observation_kinds);
   let operations = settingsOperations.get(api);
   if (!operations) { operations = new Map(); settingsOperations.set(api, operations); }
   const key = `${node}:${suffix}`;
@@ -49,7 +52,7 @@ export async function saveProvisionSettings(api, node, operationId, place, datas
   const saved = published || draft;
   if (saved) {
     const placement = detail.placements?.find(p => p.id === saved.config.placement_id);
-    if (saved.config.node_id !== node || saved.config.capture_config_id !== id || saved.config.dataset !== dataset || !placement || (placement.place_id || null) !== targetPlace) {
+    if (saved.config.node_id !== node || saved.config.capture_config_id !== id || saved.config.dataset !== dataset || !placement || (placement.place_id || null) !== targetPlace || !matchesPurposes(placement)) {
       throw new Error('本次保存操作已有不同内容，请重新读取并使用新的保存操作。');
     }
     if (operation.body && settingsPayload(operation.body) !== settingsPayload({ config: saved.config, raw_retention_hours: saved.raw_retention_hours, aggregate_retention_days: saved.aggregate_retention_days })) {
@@ -65,25 +68,25 @@ export async function saveProvisionSettings(api, node, operationId, place, datas
     throw new Error('当前设备配置已变化，请重新读取后保存。');
   }
   const current = currentProvisionConfig(detail);
-  if (!draft && !operation.body && current && (current.placement.place_id || null) === targetPlace && current.dataset === dataset) return current.id;
+  if (!draft && !operation.body && current && (current.placement.place_id || null) === targetPlace && current.dataset === dataset && matchesPurposes(current.placement)) return current.id;
   if (!draft && !operation.body) {
     const existing = detail.configs?.find(c => c.id === detail.device.desired_config_id);
     if (detail.device.desired_config_id && !existing) throw new Error('未能读取当前采集配置，请刷新后再保存。');
     const now = Date.now();
     const placement = detail.placements?.find(p => p.id === existing?.config?.placement_id);
-    const samePlace = placement && (placement.place_id || null) === targetPlace && placement.valid_from_ms <= now && (placement.effective_valid_until_ms ?? placement.valid_until_ms ?? Infinity) > now;
+    const samePlace = placement && (placement.place_id || null) === targetPlace && matchesPurposes(placement) && placement.valid_from_ms <= now && (placement.effective_valid_until_ms ?? placement.valid_until_ms ?? Infinity) > now;
     const config = existing ? structuredClone(existing.config) : provisionConfig(node, samePlace ? placement.id : placementId, id, dataset, now);
     Object.assign(config, { capture_config_id: id, node_id: node, placement_id: samePlace ? placement.id : placementId, dataset });
     if (!Number.isFinite(Date.parse(config.accept_until)) || Date.parse(config.accept_until) <= now) config.accept_until = new Date(now + 7 * 86400000).toISOString();
     operation.body = { config, raw_retention_hours: existing?.raw_retention_hours ?? 24, aggregate_retention_days: existing?.aggregate_retention_days ?? 30 };
-    operation.placement = samePlace ? null : { id: placementId, place_id: targetPlace, valid_from_ms: now, valid_until_ms: null };
+    operation.placement = samePlace ? null : { id: placementId, place_id: targetPlace, valid_from_ms: now, valid_until_ms: null, ...(observation_kinds === undefined ? {} : { observation_kinds: [...observation_kinds] }) };
     operation.desired = detail.device.desired_config_id;
   }
   if (!draft) {
     if (detail.device.desired_config_id !== operation.desired) throw new Error('当前设备配置已变化，请重新读取后保存。');
     if (operation.placement) {
       const existingPlacement = detail.placements?.find(p => p.id === placementId);
-      if (existingPlacement && ((existingPlacement.place_id || null) !== targetPlace || existingPlacement.valid_from_ms !== operation.placement.valid_from_ms)) throw new Error('本次保存的位置记录已变化，请重新读取后保存。');
+      if (existingPlacement && ((existingPlacement.place_id || null) !== targetPlace || existingPlacement.valid_from_ms !== operation.placement.valid_from_ms || existingPlacement.valid_until_ms !== operation.placement.valid_until_ms || !matchesPurposes(existingPlacement))) throw new Error('本次保存的地点或工作用途记录已变化，请重新读取后保存。');
       if (!existingPlacement) await api(`/devices/${node}/placements`, { method: 'POST', body: operation.placement });
     }
     draft = (await api('/configs', { method: 'POST', body: operation.body })).draft;

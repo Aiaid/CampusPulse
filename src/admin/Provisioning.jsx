@@ -9,6 +9,9 @@ import { diagnosticView, previousDiagnostic, bootEvidence, networkSettingsSaved 
 import { prepareNetworkCredential } from './provisioning/credential-recovery.js';
 import { wifiPayload, supportsWifiMode } from './provisioning/network.js';
 import './provisioning.css';
+import { observationKinds, formatObservationKinds } from '../shared/observation-kinds.js';
+import WorkPurposes from './WorkPurposes.jsx';
+import { availableWorkPurposes, validateWorkPurposes } from './work-purposes.js';
 
 export default function Provisioning({ onClose, initialNodeId = '' }) {
   const { api, sensitiveAction, notify } = useAdmin();
@@ -17,6 +20,8 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
   const [proof, setProof] = useState(''), [identity, setIdentity] = useState(null), [manualNode, setManualNode] = useState(initialNodeId);
   const [lookup, setLookup] = useState('idle'), [lookupError, setLookupError] = useState(null), [detail, setDetail] = useState(null);
   const [name, setName] = useState(''), [place, setPlace] = useState(''), [dataset, setDataset] = useState('controlled_test');
+  const [workPurposes, setWorkPurposes] = useState(['activity']);
+  const [configAttempted, setConfigAttempted] = useState(false);
   const [ssid, setSsid] = useState(''), [password, setPassword] = useState(''), [existingToken, setExistingToken] = useState('');
   const [wifiSecurity, setWifiSecurity] = useState('wpa2'), [eapUsername, setEapUsername] = useState(''), [eapIdentity, setEapIdentity] = useState(''), [eapPassword, setEapPassword] = useState('');
   const [credentialChanged, setCredentialChanged] = useState(false);
@@ -81,11 +86,11 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
     setLookup(result.kind); setLookupError(null); setDetail(result.detail);
     if (result.kind === 'existing') {
       setName(result.detail.device.name || '');
-      if (preparedNode.current !== target || (!configDirty && !submitted)) {
+      if (preparedNode.current !== target || (!configDirty && !submitted && !configAttempted)) {
         const current = currentProvisionConfig(result.detail);
         const desired = result.detail.configs?.find(row => row.id === result.detail.device.desired_config_id);
         const placement = result.detail.placements?.find(row => row.id === desired?.config?.placement_id);
-        setPlace(placement?.place_id || ''); setDataset(desired?.config?.dataset || 'controlled_test');
+        setPlace(placement?.place_id || ''); setWorkPurposes(placement ? observationKinds(placement) : ['activity']); setDataset(desired?.config?.dataset || 'controlled_test');
         setConfigId(current?.id || ''); setConfigDirty(false);
         preparedNode.current = target; configOperation.current = crypto.randomUUID();
       }
@@ -171,7 +176,8 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
     token.current = result.credential; setCredentialMode('provided'); setRegisterUncertain(false); setRotateConsent(false); setMessage('已按明确确认轮换凭证；旧凭证已失效，需要完成现场写入。');
   });
   const changeConfig = (key, value) => {
-    if (key === 'place') setPlace(value); else setDataset(value);
+    if (configAttempted) return;
+    if (key === 'place') { setPlace(value); setWorkPurposes(value ? observationKinds(places.data?.places.find(p => p.id === value) || { kind: 'activity' }) : ['activity']); } else if (key === 'purposes') setWorkPurposes(value); else setDataset(value);
     setConfigDirty(true); setConfigId(''); configOperation.current = crypto.randomUUID();
     if (mode === 'ap' && submitted && !validating) {
       setHandoff(''); setSubmitted(false); started.current = 0; attempt.current = crypto.randomUUID();
@@ -180,8 +186,10 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
   };
   const saveConfig = () => mutation.run(async () => {
     if (!registered || validating) throw new Error('请先确认已登记设备，并等待本次设备写入结束。');
-    const id = await saveProvisionSettings(api, node, configOperation.current, place, dataset);
-    setConfigId(id); setConfigDirty(false);
+    validateWorkPurposes(workPurposes, availableWorkPurposes(places.data?.places.find(p => p.id === place)));
+    setConfigAttempted(true);
+    const id = await saveProvisionSettings(api, node, configOperation.current, place, dataset, workPurposes);
+    setConfigId(id); setConfigDirty(false); setConfigAttempted(false);
     configOperation.current = crypto.randomUUID();
     await inspect(); setMessage('配置已保存，后续以当前设置为准；设备应用状态会单独确认。');
   });
@@ -296,10 +304,11 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
         <ErrorNotice error={lookupError} />
       </section>
       <fieldset disabled={mutation.pending || !registered || validating}><legend>3 · 位置与采集配置</legend>
-        <Field label="部署地点"><Resource resource={places}>{data => <select value={place} onChange={e => changeConfig('place', e.target.value)}><option value="">未定位 / 移动中</option>{data.places.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}</Resource></Field>
+        <fieldset className="cp-admin-edit-fields" disabled={configAttempted}><Field label="部署地点"><Resource resource={places}>{data => <select value={place} onChange={e => changeConfig('place', e.target.value)}><option value="">未定位 / 移动中</option>{data.places.map(p => <option key={p.id} value={p.id}>{p.name} · {formatObservationKinds(p)}</option>)}</select>}</Resource></Field>
+        <WorkPurposes value={workPurposes} allowed={availableWorkPurposes(places.data?.places.find(p => p.id === place))} onChange={value => changeConfig('purposes', value)} />
         <Field label="数据用途"><select value={dataset} onChange={e => changeConfig('dataset', e.target.value)}><option value="controlled_test">受控测试</option><option value="field">现场观测</option></select></Field>
         <p>{currentConfig ? '带入当前设置，修改后保存即可；其余采集参数继续沿用。' : '默认使用 30 秒地址汇总、5 秒分箱、最多 64 个地址。BLE 可见标识不能当作人数。'}</p>
-        <button className="cp-admin-button" onClick={saveConfig} disabled={places.loading || !!places.error}>保存配置</button>
+        </fieldset>{configAttempted && <Notice>本次地点、用途和数据集已固定。请重试核对原保存结果；更改其他内容请关闭后重新读取。</Notice>}<button className="cp-admin-button" onClick={saveConfig} disabled={places.loading || !!places.error || !workPurposes.length}>{configAttempted ? '重试本次保存' : '保存配置'}</button>
         {configDirty ? <p role="status">有尚未保存的配置修改。</p> : configId && <p role="status">当前配置已准备好，仍可继续修改并保存。</p>}
       </fieldset>
       <fieldset disabled={mutation.pending || validating}><legend>4 · 设置 Wi-Fi</legend>

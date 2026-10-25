@@ -48,11 +48,13 @@ separate acceptance step.
 - `GET /api/v1/health`: runtime liveness, reports ingestion implemented and whether raw storage is bound; it does not probe dependencies.
 - `GET /api/v1/settings`: public site name and initial demo/field mode only;
   no administrator settings, credentials or device information.
-- `GET /api/v1/places`: registered logical places, kind, provisional normalized
+- `GET /api/v1/places`: registered logical places, primary legacy kind and enabled
+  `observation_kinds`, provisional normalized
   schematic anchors, an optional verified GIS image anchor (library only in the
   initial seed; editable through the administrator registry), and
   unconfigured sensor coverage.
-- `GET /api/v1/places/:id/summary`: latest active manual observation, source,
+- `GET /api/v1/places/:id/summary`: latest active manual observations per kind in
+  `latest_observations`, the legacy `latest_observation`, source,
   observation time, validity deadline and freshness; an independently sourced eligible field sensor window may also be present.
 - `GET /api/v1/places/:id/history?minutes=15`: active manual observations in
   1/5/15/60/1440 minutes; maximum 200 records and a truncation indicator.
@@ -61,8 +63,8 @@ separate acceptance step.
 An empty summary means no data, never zero people or zero vehicles. Public fields
 exclude device credentials, BLE identifiers and raw payloads. Responses are not cached.
 
-`sensor` and `latest_observation` are independent sources. Top-level `freshness`
-is fresh if either source is fresh; render a manual record against its own
+`sensor` and each record in `latest_observations` are independent sources.
+Top-level `freshness` is fresh if any source is fresh; render a manual record against its own
 `valid_until` and a sensor window against its own freshness, rather than applying
 the combined status to both. Public sensor windows include their node,
 placement/configuration, observation time, validity, scan duration, report count,
@@ -105,7 +107,8 @@ into frontend environment variables. Writes reject a mismatched Origin header.
 
 Use a fresh UUIDv4 and actual UTC observation time. Elevator records instead have
 `kind: "elevator"` and integer `wait_seconds` (0–7200), without parking fields.
-Parking bounds are integers 0–10000 with min ≤ max. Place kind must match.
+Parking bounds are integers 0–10000 with min ≤ max. The kind must be enabled in
+the place's `observation_kinds`; parking and elevator can coexist at one place.
 Only observations within the past 24 hours (up to 30 seconds clock skew ahead)
 are accepted. Validity expires after the configured observation TTL (15 minutes
 by default), measured from observation, not reception. Settings affect new records;

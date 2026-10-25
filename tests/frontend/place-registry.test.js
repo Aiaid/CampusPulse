@@ -28,7 +28,7 @@ describe('field place registry', () => {
       { id: 'outside', kind: 'activity', gis_anchor: { x: 1.1, y: 0.1, verified: true } },
     ];
     const registry = fieldPlaceRegistry(input);
-    expect(registry.mapPlaces).toEqual([{ ...input[0], x: 677, y: 236.375, subtitle: '停车观察点 · 已核验 GIS 锚点' }]);
+    expect(registry.mapPlaces).toEqual([{ ...input[0], x: 677, y: 236.375, subtitle: '电动车监控 · 已核验 GIS 锚点' }]);
     expect(registry.unlocatedPlaces.map(place => [place.id, place.mapUnavailableReason])).toEqual([
       ['schematic-only', 'unverified-gis'], ['unverified', 'unverified-gis'], ['outside', 'outside-map'],
     ]);
@@ -37,6 +37,11 @@ describe('field place registry', () => {
   });
   test('keeps an empty API catalog empty', () => {
     expect(fieldPlaceRegistry([])).toEqual({ mapPlaces: [], unlocatedPlaces: [] });
+  });
+  test('labels multiple purposes while keeping the exact original GIS anchor and primary kind', () => {
+    const place = { id: 'mixed', name: '综合观察点', kind: 'activity', observation_kinds: ['activity', 'parking', 'elevator'], gis_anchor: { x: 15656 / 24576, y: 9059 / 24576, verified: true } };
+    const [mapped] = fieldPlaceRegistry([place]).mapPlaces;
+    expect(mapped).toMatchObject({ ...place, x: 677, y: 236.375, subtitle: '活动监测 · 电动车监控 · 电梯观测 · 已核验 GIS 锚点' });
   });
   test('keeps verified places beyond the former crop reachable without clamping their coordinates', () => {
     const gis = { x: 0.8, y: 0.7, verified: true };

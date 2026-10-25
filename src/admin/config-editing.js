@@ -1,5 +1,6 @@
 // Configuration edits append a version and desired assignment. Historical policy
 // and placement IDs remain attached to already collected/queued observations.
+import { sameWorkPurposes, validateWorkPurposes } from './work-purposes.js';
 export const profileName = config => config.capture_profile === 'address_metrics' ? '地址摘要 + 指标汇总（v2）' : config.capture_profile === 'research_raw' ? '研究原始报告' : '指标汇总';
 export function cloneConfig(seed, now = Date.now()) {
   return { ...structuredClone(seed), capture_config_id: `${seed.node_id.slice(0, 36)}-v-${crypto.randomUUID().slice(0, 12)}`, accept_until: new Date(Math.max(Date.parse(seed.accept_until) || 0, now + 7 * 86400000)).toISOString() };
@@ -28,13 +29,26 @@ const canonical = value => Array.isArray(value) ? value.map(canonical) : value &
 const same = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 // Every retry first reconciles fixed IDs. A lost write response must never cause
 // another location, draft or assignment, or rotate device credentials.
-/** @param {{ id: string, place_id: string | null, valid_from_ms: number, valid_until_ms: number | null } | null} [placement] */
+/** @param {{ id: string, place_id: string | null, valid_from_ms: number, valid_until_ms: number | null, observation_kinds?: string[] } | null} [placement] */
 export async function publishConfigEdit(api, body, placement = null, progress = () => {}) {
   validateConfigForm(body.config);
+  if (placement?.observation_kinds) validateWorkPurposes(placement.observation_kinds);
   const { node_id: node, capture_config_id: id } = body.config;
   const path = `/devices/${encoded(node)}`;
   const listed = await api(`/configs?node_id=${encoded(node)}`);
   const published = listed.configs.find(row => row.id === id);
+  // Reconcile application metadata even after publication. Purpose changes are
+  // immutable deployment changes and must never be hidden by a lost response.
+  const reconcilePlacement = async (create = false) => {
+    if (!placement) return;
+    const detail = await api(path);
+    const existing = detail.placements.find(row => row.id === placement.id);
+    if (existing) {
+      if (existing.place_id !== placement.place_id || existing.valid_from_ms !== placement.valid_from_ms || existing.valid_until_ms !== placement.valid_until_ms || placement.observation_kinds && !sameWorkPurposes(existing.observation_kinds, placement.observation_kinds)) throw new Error('地点或工作用途变更已经登记且内容不同，不能覆盖。请关闭后核对部署历史。');
+    } else if (create) await api(`${path}/placements`, { method: 'POST', body: placement });
+    else if (published) throw new Error('已发布版本缺少本次地点与工作用途部署，请关闭后核对。');
+  };
+  await reconcilePlacement();
   if (published) {
     if (!same(published.config, body.config) || published.raw_retention_hours !== body.raw_retention_hours || published.aggregate_retention_days !== body.aggregate_retention_days) throw new Error('此版本已发布且内容不同；请关闭后重新编辑新版本。');
   } else {
@@ -44,14 +58,17 @@ export async function publishConfigEdit(api, body, placement = null, progress = 
       draft = (await api(`/configs/${encoded(id)}`, { method: 'PUT', body: { ...body, revision: draft.revision } })).draft;
     progress('新版本草稿已保存；尚未发布。');
     if (placement) {
-      const detail = await api(path);
-      const existing = detail.placements.find(row => row.id === placement.id);
-      if (existing) {
-        if (existing.place_id !== placement.place_id || existing.valid_from_ms !== placement.valid_from_ms || existing.valid_until_ms !== placement.valid_until_ms) throw new Error('位置变更已经登记，不能覆盖。请恢复原目标后重试，或关闭后新建变更。');
-      } else await api(`${path}/placements`, { method: 'POST', body: placement });
-      progress('新部署已登记，旧部署区间已关闭；请完成发布。设备尚未确认切换。');
+      await reconcilePlacement(true);
+      progress('地点与工作用途新部署已登记，旧部署区间已关闭；请完成发布。设备尚未确认切换。');
     }
-    await api(`/configs/${encoded(id)}/validate`, { method: 'POST', body: { revision: draft.revision } });
+    try {
+      await api(`/configs/${encoded(id)}/validate`, { method: 'POST', body: { revision: draft.revision } });
+    } catch (error) {
+      // A structured validation rejection is a known outcome, so capture fields
+      // may be corrected. Network/unknown outcomes keep the retry body frozen.
+      if (error?.code) Object.assign(error, { configEditStage: 'validation_rejected' });
+      throw error;
+    }
     await api(`/configs/${encoded(id)}/publish`, { method: 'POST', body: { revision: draft.revision } });
   }
   const detail = await api(path);

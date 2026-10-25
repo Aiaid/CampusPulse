@@ -261,13 +261,14 @@ describe('immutable provenance and editable versioned policy', () => {
     expect((await upload(second)).status).toBe(200); // explicit old policy remains valid for queued records.
   });
 
-  it('protects historical manual kinds while allowing safe place metadata corrections', async () => {
+  it('preserves historical manual evidence when changing enabled place purposes', async () => {
     await login();
     const observed_at = new Date().toISOString();
     await data(await request('/api/v1/observations', { method: 'POST', headers: { Authorization: 'Bearer synthetic-operator-token', 'Content-Type': 'application/json' }, body: JSON.stringify({ id: crypto.randomUUID(), place_id: 'east-parking', kind: 'parking', observed_at, parking_min: 1, parking_max: 2 }) }), 201);
     await data(await admin('/places/east-parking', 'PATCH', { name: 'Corrected name', anchor: { x: 0.5, y: 0.5 } }));
-    expect((await admin('/places/east-parking', 'PATCH', { kind: 'elevator' })).status).toBe(409);
-    expect((await data(await request('/api/v1/places'))).places.find((p: any) => p.id === 'east-parking')).toMatchObject({ kind: 'parking', name: 'Corrected name' });
+    await data(await admin('/places/east-parking', 'PATCH', { kind: 'elevator' }));
+    expect((await data(await request('/api/v1/places'))).places.find((p: any) => p.id === 'east-parking')).toMatchObject({ kind: 'elevator', observation_kinds: ['elevator'], name: 'Corrected name' });
+    expect(state.db.prepare('SELECT kind FROM observations WHERE place_id=?').get('east-parking')?.kind).toBe('parking');
   });
 });
 

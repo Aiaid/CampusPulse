@@ -46,7 +46,7 @@ async function atomic(env: Env, writes: D1PreparedStatement[], action: string, t
   } catch (error) {
     const messages: string[] = [];
     for (let e: unknown = error, depth = 0; e instanceof Error && depth < 4; e = e.cause, depth++) messages.push(e.message);
-    if (/constraint|unique|foreign key|overlap|immutable|place_kind_conflict|config_assignment_owner/i.test(messages.join(' '))) conflict();
+    if (/constraint|unique|foreign key|overlap|immutable|place_kind_conflict|purposes_invalid|config_assignment_owner/i.test(messages.join(' '))) conflict();
     throw error;
   }
 }
@@ -103,9 +103,9 @@ async function requireDevice(env: Env, id: string): Promise<void> {
   if (!await env.DB.prepare('SELECT id FROM device_nodes WHERE id = ?').bind(id).first()) missing('device');
 }
 
-interface PlaceRow { id: string; name: string; kind: PlaceKind; anchor_x: number; anchor_y: number; gis_anchor_x: number | null; gis_anchor_y: number | null }
-const PLACE_COLUMNS = 'id,name,kind,anchor_x,anchor_y,gis_anchor_x,gis_anchor_y';
-const placeFromRow = (p: PlaceRow) => ({ id: p.id, name: p.name, kind: p.kind, anchor: { x: p.anchor_x, y: p.anchor_y },
+interface PlaceRow { id: string; name: string; kind: PlaceKind; observation_kinds_json: string; anchor_x: number; anchor_y: number; gis_anchor_x: number | null; gis_anchor_y: number | null }
+const PLACE_COLUMNS = 'id,name,kind,observation_kinds_json,anchor_x,anchor_y,gis_anchor_x,gis_anchor_y';
+const placeFromRow = (p: PlaceRow) => ({ id: p.id, name: p.name, kind: p.kind, observation_kinds: JSON.parse(p.observation_kinds_json) as PlaceKind[], anchor: { x: p.anchor_x, y: p.anchor_y },
   ...(p.gis_anchor_x !== null && p.gis_anchor_y !== null ? { gis_anchor: { x: p.gis_anchor_x, y: p.gis_anchor_y, verified: true } } : {}) });
 function anchor(value: unknown, field: string, gis = false) {
   const o = object(value, gis ? ['x', 'y', 'verified'] : ['x', 'y']);
@@ -114,6 +114,20 @@ function anchor(value: unknown, field: string, gis = false) {
   return { x: coordinate(o.x), y: coordinate(o.y) };
 }
 const placeKind = (value: unknown): PlaceKind => value === 'activity' || value === 'parking' || value === 'elevator' ? value : fail('kind');
+function observationKinds(value: unknown): PlaceKind[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 3) return fail('observation_kinds');
+  const kinds = value.map(placeKind);
+  if (new Set(kinds).size !== kinds.length) return fail('observation_kinds');
+  return kinds;
+}
+function placePurposes(o: ObjectValue) {
+  const kinds = 'observation_kinds' in o ? observationKinds(o.observation_kinds) : [placeKind(o.kind)];
+  const kind = 'kind' in o ? placeKind(o.kind) : kinds[0];
+  if (!kinds.includes(kind)) fail('kind');
+  return { kind, kinds };
+}
+interface PlacementRow { observation_kinds_json: string; [key: string]: unknown }
+const placementFromRow = ({ observation_kinds_json, ...row }: PlacementRow) => ({ ...row, observation_kinds: JSON.parse(observation_kinds_json) as PlaceKind[] });
 
 interface DraftRow { id: string; node_id: string; config_json: string; raw_retention_hours: number; aggregate_retention_days: number; revision: number; created_at: string; updated_at: string; published_at: string | null }
 const draftFromRow = (r: DraftRow) => ({ id: r.id, config: JSON.parse(r.config_json) as CaptureConfig, raw_retention_hours: r.raw_retention_hours,
@@ -224,12 +238,12 @@ export async function handleAdmin(request: Request, env: Env): Promise<Response 
           env.DB.prepare(`SELECT p.*,COALESCE(c.valid_until_ms,p.valid_until_ms) AS effective_valid_until_ms,c.recorded_at AS closed_at,
             (SELECT COUNT(*) FROM all_sensor_windows w WHERE w.placement_id=p.id AND w.utc_ms IS NOT NULL AND
              (w.utc_ms < p.valid_from_ms OR w.utc_ms+w.duration_ms > COALESCE(c.valid_until_ms,p.valid_until_ms,9223372036854775807))) AS incompatible_window_count
-            FROM placements p LEFT JOIN placement_closures c ON c.placement_id=p.id WHERE p.node_id=? ORDER BY p.valid_from_ms DESC,p.id LIMIT 201`).bind(id).all(),
+            FROM placements p LEFT JOIN placement_closures c ON c.placement_id=p.id WHERE p.node_id=? ORDER BY p.valid_from_ms DESC,p.id LIMIT 201`).bind(id).all<PlacementRow>(),
           env.DB.prepare(`${PUBLISHED_SELECT} WHERE c.node_id = ? ORDER BY c.accept_until_ms DESC,c.id DESC LIMIT 201`).bind(id).all<PublishedRow>(),
           env.DB.prepare(`SELECT a.node_id,a.capture_config_id,a.state,a.message,a.received_at,NULL AS boot_id,NULL AS apply_seq FROM config_activation a JOIN device_desired_configs d ON d.node_id=a.node_id AND d.capture_config_id=a.capture_config_id JOIN capture_configs p ON p.id=d.capture_config_id WHERE a.node_id=? AND json_extract(p.config_json,'$.protocol') IS NOT 'campuspulse/2' UNION ALL SELECT c.node_id,c.activation_config_id,c.activation_state,c.activation_message,c.activation_received_at,c.boot_id,c.apply_seq FROM device_control_v2 c JOIN device_desired_configs d ON d.node_id=c.node_id AND d.capture_config_id=c.activation_config_id WHERE c.node_id=?`).bind(id,id).first(),
           env.DB.prepare(`SELECT id,capture_config_id,state,message,received_at,NULL AS boot_id,NULL AS apply_seq FROM config_activation_events WHERE node_id=? UNION ALL SELECT id,capture_config_id,state,message,received_at,boot_id,apply_seq FROM config_activation_events_v2 WHERE node_id=? ORDER BY received_at DESC,id DESC LIMIT 100`).bind(id,id).all(),
         ]);
-        return json({ device, placements: placements.results.slice(0, 200), configs: configs.results.slice(0, 200).map(publishedFromRow),
+        return json({ device, placements: placements.results.slice(0, 200).map(placementFromRow), configs: configs.results.slice(0, 200).map(publishedFromRow),
           activation: { current: activation, history: events.results }, placements_truncated: placements.results.length > 200, configs_truncated: configs.results.length > 200 });
       }
       if (!action && request.method === 'PATCH') {
@@ -252,20 +266,34 @@ export async function handleAdmin(request: Request, env: Env): Promise<Response 
         return json({ credential });
       }
       if (action === 'placements' && request.method === 'POST') {
-        const o = object(await readBody(request), ['id', 'place_id', 'valid_from_ms', 'valid_until_ms']);
+        const o = object(await readBody(request), ['id', 'place_id', 'valid_from_ms', 'valid_until_ms'], ['observation_kinds']);
         const placementId = identifier(o.id, 'id');
         const place = o.place_id === null ? null : identifier(o.place_id, 'place_id');
         const from = integer(o.valid_from_ms, 'valid_from_ms', 0, 8640000000000000);
         const until = o.valid_until_ms === null ? null : integer(o.valid_until_ms, 'valid_until_ms', from + 1, 8640000000000000);
-        if (place !== null && !await env.DB.prepare('SELECT id FROM places WHERE id=?').bind(place).first()) missing('place');
+        const target = place === null ? null : await env.DB.prepare(`SELECT ${PLACE_COLUMNS} FROM places WHERE id=?`).bind(place).first<PlaceRow>();
+        if (place !== null && !target) missing('place');
+        const allowed = target ? JSON.parse(target.observation_kinds_json) as PlaceKind[] : null;
+        const kinds: PlaceKind[] = 'observation_kinds' in o ? observationKinds(o.observation_kinds) : allowed ?? ['activity'];
+        if (allowed && kinds.some(kind => !allowed.includes(kind))) fail('observation_kinds');
+        // Recheck the target scope in the transaction before closing the prior
+        // placement. A purpose edit racing this write must roll back both.
+        const scope: Assertion[] = place === null ? [] : [{ sql: `EXISTS (SELECT 1 FROM places WHERE id=?) AND NOT EXISTS
+          (SELECT 1 FROM json_each(?) selected WHERE NOT EXISTS
+            (SELECT 1 FROM places p,json_each(p.observation_kinds_json) allowed WHERE p.id=? AND allowed.value=selected.value))`,
+          bindings: [place, JSON.stringify(kinds), place] }];
+        if (target && !('observation_kinds' in o)) scope.push({
+          sql: 'EXISTS (SELECT 1 FROM places WHERE id=? AND observation_kinds_json=?)',
+          bindings: [place, target.observation_kinds_json],
+        });
         const now = new Date().toISOString();
         await transact([
           env.DB.prepare(`INSERT INTO placement_closures(placement_id,node_id,valid_until_ms,recorded_at)
             SELECT p.id,p.node_id,?,? FROM placements p LEFT JOIN placement_closures c ON c.placement_id=p.id
             WHERE p.node_id=? AND p.valid_until_ms IS NULL AND c.placement_id IS NULL AND p.valid_from_ms < ?`).bind(from, now, id, from),
-          env.DB.prepare('INSERT INTO placements(id,node_id,place_id,valid_from_ms,valid_until_ms) VALUES (?,?,?,?,?)').bind(placementId, id, place, from, until),
-        ], 'placement.create', placementId, { node_id: id, place_id: place, valid_from_ms: from, valid_until_ms: until });
-        return json({ placement: { id: placementId, node_id: id, place_id: place, valid_from_ms: from, valid_until_ms: until, effective_valid_until_ms: until, closed_at: null },
+          env.DB.prepare('INSERT INTO placements(id,node_id,place_id,valid_from_ms,valid_until_ms,observation_kinds_json) VALUES (?,?,?,?,?,?)').bind(placementId, id, place, from, until, JSON.stringify(kinds)),
+        ], 'placement.create', placementId, { node_id: id, place_id: place, observation_kinds: kinds, valid_from_ms: from, valid_until_ms: until }, scope);
+        return json({ placement: { id: placementId, node_id: id, place_id: place, observation_kinds: kinds, valid_from_ms: from, valid_until_ms: until, effective_valid_until_ms: until, closed_at: null },
           requires_capture_config: true, requires_firmware_window_split: true }, 201);
       }
     }
@@ -275,23 +303,23 @@ export async function handleAdmin(request: Request, env: Env): Promise<Response 
         return json({ places: rows.results.slice(0, 500).map(placeFromRow), truncated: rows.results.length > 500 });
       }
       if (request.method === 'POST') {
-        const o = object(await readBody(request), ['id', 'name', 'kind', 'anchor'], ['gis_anchor']);
-        const id = identifier(o.id, 'id'), name = label(o.name, 'name', 120), kind = placeKind(o.kind), point = anchor(o.anchor, 'anchor');
+        const o = object(await readBody(request), ['id', 'name', 'anchor'], ['kind', 'observation_kinds', 'gis_anchor']);
+        const id = identifier(o.id, 'id'), name = label(o.name, 'name', 120), { kind, kinds } = placePurposes(o), point = anchor(o.anchor, 'anchor');
         const gis = o.gis_anchor === undefined || o.gis_anchor === null ? null : anchor(o.gis_anchor, 'gis_anchor', true);
-        await transact([env.DB.prepare('INSERT INTO places(id,name,kind,anchor_x,anchor_y,gis_anchor_x,gis_anchor_y) VALUES (?,?,?,?,?,?,?)')
-          .bind(id, name, kind, point.x, point.y, gis?.x ?? null, gis?.y ?? null)], 'place.create', id, { kind });
-        return json({ place: { id, name, kind, anchor: point, ...(gis ? { gis_anchor: { ...gis, verified: true } } : {}) } }, 201);
+        await transact([env.DB.prepare('INSERT INTO places(id,name,kind,observation_kinds_json,anchor_x,anchor_y,gis_anchor_x,gis_anchor_y) VALUES (?,?,?,?,?,?,?,?)')
+          .bind(id, name, kind, JSON.stringify(kinds), point.x, point.y, gis?.x ?? null, gis?.y ?? null)], 'place.create', id, { kind, observation_kinds: kinds });
+        return json({ place: { id, name, kind, observation_kinds: kinds, anchor: point, ...(gis ? { gis_anchor: { ...gis, verified: true } } : {}) } }, 201);
       }
     }
     const placeRoute = /^\/places\/([a-z0-9_-]{1,64})$/.exec(route);
     if (placeRoute && request.method === 'PATCH') {
       const id = placeRoute[1];
       if (!await env.DB.prepare('SELECT id FROM places WHERE id=?').bind(id).first()) missing('place');
-      const o = object(await readBody(request), [], ['name', 'kind', 'anchor', 'gis_anchor']);
+      const o = object(await readBody(request), [], ['name', 'kind', 'observation_kinds', 'anchor', 'gis_anchor']);
       if (!Object.keys(o).length) fail('body');
       const entries: [string, unknown][] = [];
       if ('name' in o) entries.push(['name', label(o.name, 'name', 120)]);
-      if ('kind' in o) entries.push(['kind', placeKind(o.kind)]);
+      if ('kind' in o || 'observation_kinds' in o) { const { kind, kinds } = placePurposes(o); entries.push(['kind', kind], ['observation_kinds_json', JSON.stringify(kinds)]); }
       if ('anchor' in o) { const p = anchor(o.anchor, 'anchor'); entries.push(['anchor_x', p.x], ['anchor_y', p.y]); }
       if ('gis_anchor' in o) { const p = o.gis_anchor === null ? null : anchor(o.gis_anchor, 'gis_anchor', true); entries.push(['gis_anchor_x', p?.x ?? null], ['gis_anchor_y', p?.y ?? null]); }
       await transact([env.DB.prepare(`UPDATE places SET ${entries.map(([key]) => `${key}=?`).join(',')} WHERE id=?`).bind(...entries.map(([, value]) => value), id)],
