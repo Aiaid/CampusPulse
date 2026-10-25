@@ -104,21 +104,111 @@ Only observation points with verified map positions are marked; buildings on
 the base map do not imply installed sensors. Records for unlocated places remain
 available in the data selector.
 
+## Managing devices and data
+
+CampusPulse includes an [administrator workspace](https://pulse.anend.net/admin)
+for operating the observation network alongside the public map. Its pages and
+APIs cover the device lifecycle:
+
+- **Register and deploy:** register devices, enable or disable access, rotate
+  device credentials, assign places and retain deployment history. The setup
+  wizard supports browser BLE, desktop USB and a device-hosted Wi-Fi setup page,
+  subject to device and browser capabilities. Existing devices can change their
+  network settings without being registered again.
+- **Configure collection:** edit versioned drafts, check their limits and publish
+  an immutable capture policy. The console distinguishes the desired policy,
+  the version referenced by uploads and the version explicitly acknowledged by
+  the device. Publishing alone does not mean a device has applied it.
+- **Assign observation purposes:** a place can support activity, parking and
+  elevator observations together. Changing an existing device's place or work
+  purposes creates a new deployment/configuration version, preserves historical
+  attribution and waits for explicit device activation. Selecting a purpose does
+  not by itself implement its recognition or estimation algorithm.
+- **Diagnose operation:** inspect control contact, upload reception and device
+  status separately, including scan state, memory, queue pressure, storage and
+  loss/failure counters. Missing measurements stay unknown; old-boot or delayed
+  status is labelled rather than presented as current health.
+- **Inspect received data:** browse paginated upload receipts and normalized
+  stored entries. Where a retained request body exists, the backend verifies its
+  SHA-256 before showing the original bytes. Public map queries expose aggregate
+  observations; address summaries and raw advertisements require authentication.
+- **Maintain the site:** manage settings, review administrative audit records,
+  and use an administrator account with password or Passkey authentication.
+  Sensitive actions require recent identity verification.
+
+![Administrator workspace with synthetic device contact and configuration states](docs/images/admin-overview.png)
+
+*Actual local administrator interface with browser-local sample data. Device
+names and the administrator are labelled “样例” (sample); this is not a production
+fleet or evidence of hardware acceptance.*
+
+The cloud backend authenticates each device, validates batches against its
+assigned policy and returns durable, idempotent receipts. Windows, address
+summaries, optional raw advertisements and device status have independent
+streams. D1 stores structured records and receipts; private R2 holds retained
+research payloads. A retry can reuse its committed receipt, and firmware keeps
+queued data until it has processed a matching acknowledgement.
+
+See [administrator operations](docs/specs/admin-v1.md),
+[account security](docs/specs/admin-auth-v1.md) and
+[device diagnostics](docs/design/device-diagnostics-panel.md).
+
+## Shared firmware and board adapters
+
+Firmware separates the collection/upload pipeline from hardware through a board
+adapter (`cp_board`). The shared core handles capture policy, BLE aggregation,
+bounded buffering, a durable Flash journal, upload and acknowledgements. The
+adapter supplies the board identity, capabilities and resource limits, and maps
+its battery, buttons and display into the runtime. Optional screen rendering
+does not own collection timing.
+
+This lets board ports reuse the same data contract and cloud services while
+keeping pins, drivers, power behavior and Flash layouts specific to each board.
+The target inventory is two AI Passports, two LILYGO T-Energy-S3 boards and one
+Waveshare 1.54-inch ESP32-S3 ePaper board. Each is intended to collect, buffer and
+upload directly; Passport interaction and ePaper presentation build on that path.
+
+CCNU's existing campus Wi-Fi provides the upload connection. Once provisioned
+and able to reach the cloud service, devices upload observations directly over
+HTTPS. Local buffering and retries retain unacknowledged data across temporary
+network interruptions.
+
+| Board family | Available source and verification status |
+| --- | --- |
+| FoloToy AI Passport / ESP32-C3 | Board adapter and collection/upload runtime present. Display/headless and normal/diagnostic builds share the same core. A bounded physical upload check is recorded; broader field acceptance remains open. |
+| LILYGO T-Energy-S3 / ESP32-S3 | Target board family. Its adapter and build/physical acceptance records are not present in the source refs reviewed here; these still need a source link before support can be confirmed. |
+| Waveshare ESP32-S3-ePaper-1.54 V2 | The [S3 collector branch](https://github.com/Aiaid/CampusPulse/tree/463269d7e3bf4109cf8f3f07a7630fe7dba8be43/firmware/epaper-collector) adds a board adapter and 200 × 200 SSD1681 status card, sharing the collector and v2 upload core. Its records report an ESP-IDF build and one board's PEAP/TLS, applied-policy, scan, ACKed upload and display check. Power measurement and fixed-place field acceptance remain open. This port is not yet merged into main. |
+
+![Device diagnostic panels with synthetic status, storage and queue measurements](docs/images/admin-device-diagnostics.png)
+
+*Sample diagnostic data in the actual interface. Queue sizes, memory values and
+counters here are illustrative, not measurements from a physical board.*
+
+Build variants are separate from board support. Each port needs its own build
+and physical checks, including radio behavior, memory, network access and safe
+storage recovery. The Passport's protected data and partition layout must be
+preserved; its layout is not a template for the S3 boards. See the
+[firmware guide](firmware/README.md), [runtime architecture](docs/notes/firmware-runtime.md)
+and [hardware/network verification record](docs/notes/device-onboarding-diagnostics.md).
+
 ## Current progress
 
 Passport firmware includes automatic Bluetooth e-bike identification,
 provisioning, policy control, BLE aggregation and buffered upload. The web app
 provides map exploration, the shared live/history axis, supplementary manual
-records and a separate simulation. Cloud services provide device ingestion,
-durable receipts and private research storage.
+records and a separate simulation. The administrator workspace connects device
+registration, provisioning, deployment, policy publication and diagnostics;
+cloud services provide authenticated ingestion, durable receipts and private
+research storage.
 
-The frontend revision shown in these screenshots currently displays overall BLE
-windows; it has not yet connected the device's vehicle classifications to map
-details. Device identification and web presentation have separate implementation
-boundaries. Automatic elevator-lobby event detection is implemented on the
-[elevator development branch](https://github.com/Aiaid/CampusPulse/tree/codex/elevator-cohort-events);
-it is not yet merged into the revision shown here and does not yet predict wait
-durations in seconds.
+The earlier field screenshots show aggregate BLE windows. Current main also
+connects compact vehicle evidence to rule-based candidate categories and shows
+historical elevator-wait references from completed manual observations. Map
+diagrams identify their sources; their glyph counts and arrangement are
+illustrative. Current inferences stay separate from historical-cursor records.
+BLE visibility events remain experimental and do not establish boarding or
+predict a current wait. See [automatic observations](docs/specs/automatic-observations.md)
+for evidence requirements, unavailable states and calibration limits.
 
 Next we need to check collection, network access and upload on site, then see
 whether the saved records support a useful replay. Preparation is in the
@@ -165,5 +255,6 @@ ESP-IDF/FreeRTOS. GitHub hosts source and CI; Cloudflare hosts the application.
 
 - [Architecture](docs/notes/architecture.md) and [API documentation](docs/specs/web-api-v0.md)
 - [Administrator setup](docs/specs/admin-auth-v1.md) and [firmware chain](docs/notes/firmware-chain.md)
+- [Device management](docs/specs/admin-v1.md), [board adapters](docs/notes/firmware-runtime.md) and [provisioning](docs/specs/local-provisioning-v2.md)
 - [CI/CD and deployment](docs/notes/ci-cd.md)
 - [Source provenance and reuse boundaries](docs/notes/reuse.md), [contributor rules](AGENTS.md) and [full documentation index](docs/README.md)

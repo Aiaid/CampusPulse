@@ -74,3 +74,36 @@ metadata. Visible dates belong to the fixed synthetic scenario, not a claim of
 real capture time. Orientation, colors, complete map loading, readable source
 labels and the desktop/mobile layouts were visually checked after processing.
 The capture runs finished with zero API writes and zero page script errors.
+
+## Administrator workspace screenshots · 2026-10-25
+
+The additional bilingual README images use the actual local administrator UI:
+
+| Image | View | Data shown |
+| --- | --- | --- |
+| [Administrator overview](../images/admin-overview.png) | 1440 × 1000 desktop | Two invented Passport registry entries and sample contact/configuration states |
+| [Device diagnostics](../images/admin-device-diagnostics.png) | 1440 × 1000 desktop, scrolled to diagnostics | Synthetic contact/status evidence, memory and storage; further queue/counter panels continue below |
+
+Reproduce with the local frontend above and
+`node scripts/capture-readme-admin.mjs`. The script accepts `README_URL` and
+`README_ORIGINALS`, and optionally `CHROMIUM_PATH`. It intercepts all API reads
+inside an isolated browser, supplies a sample session without any real login or
+credential, rejects API writes and external requests, and checks for script
+errors and missing fixture routes. It does not use the production backend.
+Device names and the administrator are visibly labelled “样例”. Values derive
+from the repository's synthetic v2 status example and are not hardware results.
+
+The screenshots show the working-copy UI, not deployment acceptance. The capture
+script preserves originals outside the repository, strips nonessential PNG
+chunks, re-reads the final files and reports dimensions, chunk types and hashes.
+Visual checks and final metadata results are recorded after capture below.
+
+Both final PNGs were visually checked for readable labels, correct colors and
+complete painted viewports, and decoded with ImageMagick. Their only chunks are
+`IHDR`, `IDAT` and `IEND`: no embedded EXIF/GPS, XMP, IPTC, MakerNotes, thumbnail,
+comment, author/contact, capture-time, device or path metadata remains. The
+visible clock is fixed sample data. The final run had zero page errors, API
+writes or unmatched API routes. SHA-256 of the reviewed final copies:
+
+- `admin-overview.png`: `047d0e0a38e967da7eace8e1c8fe7f819c726e39c47dc54add65560046379fee`
+- `admin-device-diagnostics.png`: `3e13c92bddbd4d0fcfb475469dc66601dbc320a2ad1f8f879ad7875e9d112f7e`

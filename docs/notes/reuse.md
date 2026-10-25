@@ -59,6 +59,14 @@ ancillary metadata removed and are re-inspected and visually checked before use.
 See the [capture recipe](readme-screenshots.md). The script and synthetic fixture
 are new project code and add no runtime dependency or external implementation.
 
+Two additional administrator screenshots (`admin-overview.png` and
+`admin-device-diagnostics.png`) use the actual local application with new
+browser-local synthetic session, registry and status fixtures. Their capture
+helper is `scripts/capture-readme-admin.mjs`; no real administrator session,
+credential, field observation or BLE identity is used. These views include no
+GIS tiles or new third-party artwork. They follow the same original-preservation,
+metadata-removal and final visual-check process documented in the capture recipe.
+
 ## 2026-10-25 — Short PIN and USB provisioning
 
 The revised local BLE flow uses the installed Apache-2.0 ESP-IDF 5.5.3
