@@ -13,8 +13,9 @@ const binary = process.env.CHROMIUM_PATH || (existsSync(chromium.executablePath(
 const browser = await chromium.launch({ headless: true, executablePath: binary });
 function fixture(existing = false) {
   const placement = { id: 'existing-placement', place_id: 'synthetic-place', valid_from_ms: Date.now() - 60000, effective_valid_until_ms: null };
-  return { registered: existing, placement: existing ? placement : null, config: existing ? provisionConfig(TEST_NODE, placement.id, 'existing-config') : null,
-    contact: false, ack: false, registrations: 0, rotations: 0, placements: 0, configs: 0, bodies: [], dropRegistration: false, conflictRegistration: false,
+  const config = existing ? provisionConfig(TEST_NODE, placement.id, 'existing-config') : null;
+  return { registered: existing, placement: existing ? placement : null, config, published: config ? [config] : [], drafts: [], placementHistory: existing ? [placement] : [],
+    contact: false, ack: false, registrations: 0, rotations: 0, placements: 0, configs: 0, publishes: 0, bodies: [], dropRegistration: false, conflictRegistration: false,
     candidate: null, usbState: 'waiting', nonce: TEST_NONCE, savedCredential: existing, wifiModes: 7, operations: [], dropConfigure: false, configureCalls: 0 };
 }
 async function setup(context, state) {
@@ -25,7 +26,7 @@ async function setup(context, state) {
     if (path === '/auth/status') result = { initialized: true, passkeys_enabled: false };
     else if (path === '/session') result = { authenticated: true, role: 'admin', account: { username: 'synthetic', display_name: 'Synthetic test' } };
     else if (path === '/overview') result = { devices_total: 0, devices_enabled: 0, devices_recent: 0, devices_stale: 0, config_pending: 0, server_time: new Date().toISOString() };
-    else if (path === '/places') result = { places: [{ id: 'synthetic-place', name: 'Synthetic location' }] };
+    else if (path === '/places') result = { places: [{ id: 'synthetic-place', name: 'Synthetic location' }, { id: 'synthetic-alternate', name: 'Synthetic alternate location' }] };
     else if (path === '/devices' && request.method() === 'POST') {
       state.registrations++; state.registered = true;
       if (state.dropRegistration) { state.dropRegistration = false; return route.abort('failed'); }
@@ -33,17 +34,25 @@ async function setup(context, state) {
       else result = { device: { id: TEST_NODE }, credential: TEST_TOKEN };
     } else if (path === '/devices') result = { devices: [], next_cursor: null };
     else if (path.endsWith('/rotate-credential')) { state.rotations++; result = { credential: TEST_TOKEN }; }
-    else if (path.endsWith('/placements')) { state.placements++; state.placement = body; result = { placement: body }; }
+    else if (path.endsWith('/placements')) {
+      state.placements++; state.placement = structuredClone(body); state.placementHistory.push(state.placement); result = { placement: state.placement };
+    }
     else if (path === `/devices/${TEST_NODE}`) {
       if (!state.registered) { status = 404; result = { error: { code: 'device_not_found' } }; }
       else result = { device: { id: TEST_NODE, name: 'Synthetic existing node', enabled: true, desired_config_id: state.config?.capture_config_id || null,
         applied_config_id: state.config?.capture_config_id || null, config_state: state.config ? 'applied' : 'unassigned', latest_control: state.contact ? { received_at: new Date().toISOString(), boot_id: 'test-boot', capture_state: 'scanning' } : null },
-        placements: state.placement ? [state.placement] : [], configs: state.config ? [{ id: state.config.capture_config_id, config: state.config }] : [],
+        placements: state.placementHistory, configs: state.published.map(config => ({ id: config.capture_config_id, config, raw_retention_hours: 24, aggregate_retention_days: 30 })),
         activation: { current: state.config ? { capture_config_id: state.config.capture_config_id, state: 'applied', boot_id: 'test-boot', received_at: new Date(state.ack ? Date.now() : Date.now() - 86400000).toISOString() } : null } };
-    } else if (path === '/configs' && request.method() === 'POST') { state.configs++; state.config = body.config; result = { draft: { id: state.config.capture_config_id, revision: 1 } }; }
-    else if (path === '/configs') result = { drafts: [], configs: [] };
+    } else if (path === '/configs' && request.method() === 'POST') {
+      state.configs++; const draft = { ...structuredClone(body), id: body.config.capture_config_id, revision: 1 }; state.drafts.push(draft); result = { draft };
+    }
+    else if (path === '/configs') result = { drafts: state.drafts, configs: state.published.map(config => ({ id: config.capture_config_id, config, raw_retention_hours: 24, aggregate_retention_days: 30 })) };
     else if (path.endsWith('/validate')) result = { valid: true };
-    else if (path.endsWith('/publish')) result = { desired_config_id: state.config.capture_config_id };
+    else if (path.endsWith('/publish')) {
+      const id = path.split('/')[2], draft = state.drafts.find(draft => draft.id === id); assert(draft, 'Published an unknown draft');
+      state.publishes++; state.config = structuredClone(draft.config); state.published.push(state.config); state.drafts = state.drafts.filter(draft => draft.id !== id);
+      result = { desired_config_id: id };
+    }
     else throw Error(`Unexpected synthetic API path ${path}`);
     return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(result) });
   });
@@ -58,22 +67,22 @@ async function installBle(context, state) {
   const peer = createPeer(request => { state.candidate = request; state.contact = true; state.ack = true; });
   await context.exposeBinding('syntheticGatt', (_, kind, bytes) => peer(kind, bytes));
   await context.addInitScript(() => {
-    let connected = false; const replies = new Map(), device = new EventTarget(); window.syntheticGesture = false; device.id = 'opaque-browser-id';
+    let connected = false; const replies = new Map(), device = new EventTarget(); window.syntheticGesture = false; window.syntheticBleRequests = 0; device.id = 'opaque-browser-id';
     device.gatt = { get connected() { return connected; }, disconnect() { connected = false; device.dispatchEvent(new Event('gattserverdisconnected')); }, async connect() { connected = true; return { getPrimaryService: async () => ({ getCharacteristic: async uuid => ({ writeValueWithResponse: async bytes => { replies.set(uuid, await window.syntheticGatt(uuid, Array.from(bytes))); }, readValue: async () => new DataView(Uint8Array.from(replies.get(uuid)).buffer) }) }) }; } };
-    Object.defineProperty(navigator, 'bluetooth', { value: { requestDevice() { window.syntheticGesture = navigator.userActivation.isActive; return Promise.resolve(device); } } });
+    Object.defineProperty(navigator, 'bluetooth', { value: { requestDevice() { window.syntheticBleRequests++; window.syntheticGesture = navigator.userActivation.isActive; return Promise.resolve(device); } } });
   });
 }
 async function installUsb(context, state, disableBle = true) {
   await context.exposeBinding('syntheticUsb', (_, bytes) => {
     const text = new TextDecoder().decode(Uint8Array.from(bytes)); assert(text.startsWith('\x1eCPSETUP/1 '));
     const id = text.slice(11, 47), request = JSON.parse(text.slice(48)); state.operations.push(request.op); let result;
-    if (request.op === 'begin') result = { v: 1, ok: true, state: 'starting' };
+    if (request.op === 'begin') { state.usbState = 'waiting'; result = { v: 1, ok: true, state: 'starting' }; }
     else if (request.op === 'info') result = { v: 1, ok: true, node_id: TEST_NODE, board: 'Synthetic headless board', transport: 'usb', security: 'physical-usb', nonce: state.nonce, state: state.usbState, has_saved_credential: state.savedCredential, ...(state.wifiModes === undefined ? {} : { wifi_modes: state.wifiModes }) };
     else if (request.op === 'configure') {
       assert.equal(request.nonce, state.nonce); state.configureCalls++; state.candidate = request; state.usbState = 'testing';
       if (state.dropConfigure) { state.dropConfigure = false; return []; }
       result = { v: 1, ok: true, state: 'testing', attempt_id: request.attempt_id };
-    } else if (request.op === 'status') result = { v: 1, ok: true, node_id: TEST_NODE, state: state.usbState, attempt_id: state.candidate?.attempt_id,
+    } else if (request.op === 'status') result = { v: 1, ok: true, node_id: TEST_NODE, state: state.usbState, attempt_id: state.statusAttempt || state.candidate?.attempt_id,
       has_saved_credential: state.savedCredential, diagnostic: { stage: state.usbState === 'failed' ? 'wifi_connect' : 'clock', code: state.usbState === 'failed' ? 'wifi_auth_failed' : 'clock_wait', esp_err: state.usbState === 'failed' ? 263 : 0, http_status: 0, wifi_reason: state.usbState === 'failed' ? 202 : 0, elapsed_ms: 12000, retryable: true, ssid: 'MUST-NOT-EXPOSE', password: 'MUST-NOT-EXPOSE', eap_username: 'MUST-NOT-EXPOSE', eap_identity: 'MUST-NOT-EXPOSE', eap_password: 'MUST-NOT-EXPOSE' } };
     else throw Error('Unexpected synthetic USB operation');
     return Array.from(new TextEncoder().encode('unrelated boot log\n' + `\x1eCPSETUP/1 ${id} ${JSON.stringify(result)}\n`));
@@ -91,10 +100,15 @@ async function firstRegistration(page) {
   await page.getByRole('button', { name: '首次登记并取得设备凭证' }).click();
   await page.getByText('设备凭证已准备，仅保留于当前向导。').waitFor();
 }
+async function saveSettings(page) {
+  await page.getByRole('button', { name: '保存配置', exact: true }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent === '保存配置' && !button.matches(':disabled')));
+  assert.equal(await page.getByRole('alert').count(), 0, 'Saving settings failed');
+}
 async function existingUsbNetwork(state = fixture(true)) {
   const context = await browser.newContext(); await setup(context, state); await installUsb(context, state);
   const page = await openWizard(context); await page.getByRole('button', { name: '选择 USB 设备并开始配网' }).click();
-  await page.getByText('已登记设备 · Synthetic existing node').waitFor(); await page.getByRole('button', { name: '保留当前配置并继续' }).click();
+  await page.getByText('已登记设备 · Synthetic existing node').waitFor(); await saveSettings(page);
   return { context, page, state };
 }
 async function assertNetworkSecretsLocal(page, state, secrets) {
@@ -107,22 +121,111 @@ try {
   const newState = fixture(), bleContext = await browser.newContext(); await setup(bleContext, newState); await installBle(bleContext, newState);
   const ble = await openWizard(bleContext); await ble.getByLabel('设备屏幕上的配网码', { exact: true }).fill('99999999'); await ble.getByRole('button', { name: '选择蓝牙设备并验证' }).click(); await ble.getByRole('alert').waitFor(); assert.equal(await ble.getByLabel('设备屏幕上的配网码', { exact: true }).inputValue(), '');
   await ble.getByLabel('设备屏幕上的配网码', { exact: true }).fill(TEST_PROOF); await ble.getByRole('button', { name: '选择蓝牙设备并验证' }).click(); await ble.getByText('（已验证身份）', { exact: false }).waitFor(); assert.equal(await ble.evaluate(() => window.syntheticGesture), true);
-  await firstRegistration(ble); await ble.getByLabel('部署地点').selectOption('synthetic-place'); await ble.getByRole('button', { name: '登记位置并发布配置' }).click();
+  await firstRegistration(ble); await ble.getByLabel('部署地点').selectOption('synthetic-place'); await ble.getByRole('button', { name: '保存配置' }).click();
   await ble.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-ssid'); await ble.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-password'); await ble.getByRole('button', { name: '加密发送给设备' }).click(); await ble.getByRole('button', { name: '完成并返回设备目录' }).waitFor({ timeout: 15000 });
-  assert.equal(newState.candidate.device_token, TEST_TOKEN); assert.equal(newState.registrations, 1); assert.equal(newState.rotations, 0); assert(!JSON.stringify(newState.bodies).includes('synthetic-password')); assert(!JSON.stringify(newState.bodies).includes(TEST_TOKEN)); await bleContext.close();
+  assert.equal(newState.candidate.device_token, TEST_TOKEN); assert.equal(newState.registrations, 1); assert.equal(newState.rotations, 0); assert(!JSON.stringify(newState.bodies).includes('synthetic-password')); assert(!JSON.stringify(newState.bodies).includes(TEST_TOKEN));
+  const bleRequests = await ble.evaluate(() => window.syntheticBleRequests); await ble.getByRole('button', { name: '重新配置网络', exact: true }).click();
+  await ble.getByText('请在设备上开始新配网，输入新显示的配网码后连接同一台设备。', { exact: true }).waitFor();
+  assert.equal(await ble.getByLabel('设备屏幕上的配网码', { exact: true }).inputValue(), ''); assert.equal(await ble.evaluate(() => window.syntheticBleRequests), bleRequests);
+  assert.equal(await ble.getByLabel('Wi-Fi SSID', { exact: true }).isEnabled(), true); assert.equal(await ble.getByRole('button', { name: '加密发送给设备', exact: true }).isDisabled(), true);
+  await bleContext.close();
+  // Prepared settings remain ordinary editable fields. Each changed save moves
+  // desired configuration forward while retaining every immutable old config;
+  // saving unchanged values performs no placement/draft/publish writes.
+  const editableNetwork = await existingUsbNetwork(), editable = editableNetwork.page, editableState = editableNetwork.state;
+  const originalConfig = structuredClone(editableState.config), originalPlacement = structuredClone(editableState.placement);
+  assert.equal(await editable.getByLabel('部署地点', { exact: true }).inputValue(), 'synthetic-place');
+  assert.equal(await editable.getByLabel('数据用途', { exact: true }).inputValue(), 'controlled_test');
+  assert.equal(await editable.locator('input[name="config-choice"]').count(), 0);
+  assert.equal(await editable.getByRole('button', { name: '登记位置并发布配置', exact: true }).count(), 0);
+  assert.equal(editableState.configs, 0); assert.equal(editableState.publishes, 0); assert.equal(editableState.placements, 0);
+  await editable.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-edit-ssid'); await editable.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-edit-secret');
+  await editable.getByLabel('部署地点', { exact: true }).selectOption('synthetic-alternate'); await editable.getByLabel('数据用途', { exact: true }).selectOption('field');
+  assert.equal(await editable.getByRole('button', { name: '通过 USB 发送给设备', exact: true }).isDisabled(), true);
+  await saveSettings(editable); const firstEditedId = editableState.config.capture_config_id;
+  assert.notEqual(firstEditedId, originalConfig.capture_config_id); assert.equal(editableState.config.dataset, 'field');
+  assert.equal(editableState.placement.place_id, 'synthetic-alternate'); assert.equal(editableState.config.placement_id, editableState.placement.id);
+  assert.deepEqual(editableState.published[0], originalConfig); assert.deepEqual(editableState.placementHistory[0], originalPlacement);
+  assert.equal(editableState.configs, 1); assert.equal(editableState.publishes, 1);
+  await saveSettings(editable); assert.equal(editableState.configs, 1); assert.equal(editableState.publishes, 1); assert.equal(editableState.placements, 1);
+  const firstEditedConfig = structuredClone(editableState.config);
+  await editable.getByLabel('数据用途', { exact: true }).selectOption('controlled_test');
+  assert.equal(await editable.getByRole('button', { name: '通过 USB 发送给设备', exact: true }).isDisabled(), true);
+  await saveSettings(editable); assert.notEqual(editableState.config.capture_config_id, firstEditedId); assert.equal(editableState.config.dataset, 'controlled_test');
+  assert.deepEqual(editableState.published[1], firstEditedConfig); assert.equal(editableState.published.length, 3); assert.equal(editableState.publishes, 2);
+  const afterEdits = { configs: editableState.configs, placements: editableState.placements, publishes: editableState.publishes };
+  await saveSettings(editable); for (const key of Object.keys(afterEdits)) assert.equal(editableState[key], afterEdits[key]);
+  assert.equal(await editable.getByRole('button', { name: '通过 USB 发送给设备', exact: true }).isEnabled(), true);
+  const externalConfig = { ...structuredClone(editableState.config), capture_config_id: 'external-current-config', dataset: 'field' };
+  editableState.config = externalConfig; editableState.published.push(externalConfig);
+  await editable.getByRole('button', { name: '重新检查登记状态', exact: true }).click(); await editable.locator('.cp-provision[aria-busy="false"]').waitFor();
+  assert.equal(await editable.getByLabel('数据用途', { exact: true }).inputValue(), 'field');
+  await saveSettings(editable); assert.equal(editableState.config.capture_config_id, 'external-current-config'); assert.equal(editableState.publishes, afterEdits.publishes);
+  await editable.getByLabel('数据用途', { exact: true }).selectOption('controlled_test');
+  await editable.getByRole('button', { name: '重新检查登记状态', exact: true }).click(); await editable.locator('.cp-provision[aria-busy="false"]').waitFor();
+  assert.equal(await editable.getByLabel('数据用途', { exact: true }).inputValue(), 'controlled_test'); assert.equal(await editable.getByRole('button', { name: '通过 USB 发送给设备', exact: true }).isDisabled(), true);
+  assert.equal(editableState.registrations, 0); assert.equal(editableState.rotations, 0); await editableNetwork.context.close();
+  // A missing device credential blocks transmission only: registration lookup,
+  // placement/dataset edits, saving and local Wi-Fi entry remain usable.
+  const missingState = fixture(true); missingState.savedCredential = false;
+  const missingContext = await browser.newContext(); await setup(missingContext, missingState); await installUsb(missingContext, missingState);
+  const missing = await openWizard(missingContext); await missing.getByRole('button', { name: '选择 USB 设备并开始配网' }).click(); await missing.getByText('已登记设备 · Synthetic existing node').waitFor();
+  await missing.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-missing-ssid'); await missing.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-missing-secret');
+  await missing.getByLabel('部署地点', { exact: true }).selectOption('synthetic-alternate'); await missing.getByLabel('数据用途', { exact: true }).selectOption('field'); await saveSettings(missing);
+  assert.equal(missingState.config.dataset, 'field'); assert.equal(missingState.placement.place_id, 'synthetic-alternate');
+  await missing.getByText('发送前请在上方准备设备凭证；现在仍可编辑配置和 Wi-Fi。', { exact: true }).waitFor();
+  assert.equal(await missing.getByRole('button', { name: '通过 USB 发送给设备', exact: true }).isDisabled(), true);
+  assert.equal(missingState.configureCalls, 0); assert.equal(missingState.registrations, 0); assert.equal(missingState.rotations, 0);
+  for (const secret of ['synthetic-missing-ssid', 'synthetic-missing-secret']) assert(!JSON.stringify(missingState.bodies).includes(secret));
+  await missingContext.close();
+  // An expired desired policy still supplies the editable form. Saving renews
+  // it while preserving its selected use and placement rather than defaults.
+  const expiredState = fixture(true); expiredState.config.dataset = 'field'; expiredState.config.accept_until = new Date(Date.now() - 60000).toISOString(); expiredState.placement.place_id = 'synthetic-alternate';
+  const expiredContext = await browser.newContext(); await setup(expiredContext, expiredState); await installUsb(expiredContext, expiredState);
+  const expired = await openWizard(expiredContext); await expired.getByRole('button', { name: '选择 USB 设备并开始配网' }).click(); await expired.getByText('已登记设备 · Synthetic existing node').waitFor();
+  assert.equal(await expired.getByLabel('部署地点', { exact: true }).inputValue(), 'synthetic-alternate'); assert.equal(await expired.getByLabel('数据用途', { exact: true }).inputValue(), 'field');
+  assert.equal(await expired.getByRole('button', { name: '通过 USB 发送给设备', exact: true }).isDisabled(), true);
+  await saveSettings(expired); assert.equal(expiredState.config.dataset, 'field'); assert.equal(expiredState.config.placement_id, 'existing-placement'); assert(Date.parse(expiredState.config.accept_until) > Date.now());
+  assert.equal(expiredState.publishes, 1); await expiredContext.close();
   // Existing USB node: preserve identity, saved credential, placement and config.
   const saved = fixture(true), usbContext = await browser.newContext(); saved.dropConfigure = true; await setup(usbContext, saved); await installUsb(usbContext, saved);
   const usb = await openWizard(usbContext); await usb.getByRole('button', { name: '选择 USB 设备并开始配网' }).click(); await usb.getByText('已登记设备 · Synthetic existing node').waitFor(); assert.equal(await usb.evaluate(() => window.syntheticUsbGesture), true);
   assert.equal(await usb.getByRole('button', { name: '首次登记并取得设备凭证' }).count(), 0); assert.equal(await usb.getByRole('radio', { name: /保留设备内现有凭证/ }).isChecked(), true);
-  await usb.getByRole('button', { name: '保留当前配置并继续' }).click(); await usb.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-usb-ssid'); await usb.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-usb-password'); await usb.getByRole('button', { name: '通过 USB 发送给设备' }).click();
+  await saveSettings(usb); await usb.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-usb-ssid'); await usb.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-usb-password'); await usb.getByRole('button', { name: '通过 USB 发送给设备' }).click();
+  // The write has left the browser but its reply is intentionally lost. Until
+  // status resolves it, settings and network secrets cannot be changed.
+  assert.equal(await usb.getByLabel('Wi-Fi SSID', { exact: true }).isDisabled(), true);
+  assert.equal(await usb.getByLabel('部署地点', { exact: true }).isDisabled(), true);
   await usb.getByRole('alert').waitFor({ timeout: 15000 }); await usb.getByText('设备正在验证', { exact: true }).waitFor(); assert.equal(saved.configureCalls, 1); assert.equal(saved.candidate.device_token, undefined); assert.equal(saved.candidate.reuse_saved_credential, true);
+  assert.equal(await usb.getByLabel('Wi-Fi SSID', { exact: true }).isDisabled(), true); assert.equal(await usb.getByLabel('数据用途', { exact: true }).isDisabled(), true);
+  // An old attempt's terminal status cannot authorize editing or a new write
+  // while the current lost-response attempt remains uncertain.
+  saved.statusAttempt = '00000000-0000-4000-8000-000000000001'; saved.usbState = 'failed';
+  await usb.getByRole('button', { name: '读取设备阶段与诊断', exact: true }).click(); await usb.locator('.cp-provision[aria-busy="false"]').waitFor();
+  assert.equal(await usb.getByLabel('Wi-Fi SSID', { exact: true }).isDisabled(), true); assert.equal(await usb.getByLabel('部署地点', { exact: true }).isDisabled(), true);
+  assert.equal(await usb.getByRole('button', { name: '使用修正后的 Wi-Fi 重试', exact: true }).count(), 0);
+  saved.statusAttempt = null; saved.usbState = 'testing';
   const previousAttempt = saved.candidate.attempt_id; saved.usbState = 'failed'; saved.nonce = 'cd'.repeat(16);
   await usb.getByText('本次验证失败', { exact: true }).waitFor(); await usb.getByText('Wi-Fi 认证失败', { exact: true }).waitFor(); assert.equal(await usb.getByLabel('Wi-Fi SSID', { exact: true }).inputValue(), 'synthetic-usb-ssid');
   await usb.getByText('安全诊断详情', { exact: true }).click(); assert(!(await usb.locator('.cp-provision-diagnostic').textContent()).includes('MUST-NOT-EXPOSE'));
   await usb.getByLabel('Wi-Fi 密码', { exact: true }).fill('corrected-password'); await usb.getByRole('button', { name: '使用修正后的 Wi-Fi 重试' }).click(); await usb.getByText('设备正在验证', { exact: true }).waitFor(); assert.notEqual(saved.candidate.attempt_id, previousAttempt); assert.equal(saved.candidate.nonce, saved.nonce); assert.equal(saved.candidate.reuse_saved_credential, true);
   assert.equal(saved.registrations, 0); assert.equal(saved.rotations, 0); assert.equal(saved.placements, 0); assert.equal(saved.configs, 0);
   saved.contact = true; await usb.getByRole('button', { name: '检查云端状态', exact: true }).click(); assert.equal(await usb.getByRole('button', { name: '完成并返回设备目录' }).count(), 0);
-  saved.ack = true; await usb.getByRole('button', { name: '检查云端状态', exact: true }).click(); await usb.getByRole('button', { name: '完成并返回设备目录' }).waitFor();
+  saved.usbState = 'saved'; saved.savedCredential = true; saved.ack = true; await usb.getByRole('button', { name: '检查云端状态', exact: true }).click(); await usb.getByRole('button', { name: '完成并返回设备目录' }).waitFor();
+  assert.equal(await usb.getByLabel('部署地点', { exact: true }).isEnabled(), true); assert.equal(await usb.getByLabel('Wi-Fi SSID', { exact: true }).isEnabled(), true);
+  await usb.getByLabel('部署地点', { exact: true }).selectOption('synthetic-alternate'); await usb.getByLabel('数据用途', { exact: true }).selectOption('field');
+  assert.equal(await usb.getByLabel('Wi-Fi SSID', { exact: true }).isEnabled(), true); await saveSettings(usb);
+  assert.equal(await usb.getByLabel('部署地点', { exact: true }).isEnabled(), true); assert.equal(await usb.getByLabel('Wi-Fi SSID', { exact: true }).isEnabled(), true);
+  assert.equal(saved.config.dataset, 'field'); assert.equal(saved.placement.place_id, 'synthetic-alternate');
+  const savedConfigAfterApplied = saved.config.capture_config_id;
+  const completedAttempt = saved.candidate.attempt_id, beginCalls = saved.operations.filter(op => op === 'begin').length;
+  saved.ack = false; saved.contact = false; saved.nonce = 'ef'.repeat(16);
+  await usb.getByRole('button', { name: '重新配置网络', exact: true }).click();
+  await usb.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-reconfigured-ssid'); await usb.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-reconfigured-secret');
+  await usb.getByRole('button', { name: '通过 USB 发送给设备', exact: true }).click(); await usb.getByText('设备正在验证', { exact: true }).waitFor();
+  assert.equal(saved.operations.filter(op => op === 'begin').length, beginCalls + 1); assert.notEqual(saved.candidate.attempt_id, completedAttempt);
+  assert.equal(saved.candidate.nonce, saved.nonce); assert.equal(saved.configureCalls, 3); assert.equal(saved.candidate.reuse_saved_credential, true);
+  assert.equal(saved.registrations, 0); assert.equal(saved.rotations, 0); assert.equal(saved.configs, 1); assert.equal(saved.publishes, 1); assert.equal(saved.config.capture_config_id, savedConfigAfterApplied);
   const storage = await usb.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } })); assert(!storage.includes(TEST_TOKEN)); assert(!storage.includes('corrected-password')); await usbContext.close();
   // Explicit open choice clears the old personal password and sends no EAP
   // fields. An empty personal password cannot silently become an open network.
@@ -151,10 +254,16 @@ try {
     const diagnostic = await enterprise.locator('.cp-provision-diagnostic').textContent(); assert(!diagnostic.includes('MUST-NOT-EXPOSE')); assert(!diagnostic.includes('eap_'));
     await assertNetworkSecretsLocal(enterprise, enterpriseNetwork.state, ['synthetic-enterprise-ssid', 'synthetic-enterprise-user', 'synthetic-enterprise-secret', ...(outerIdentity ? [outerIdentity] : [])]); await enterpriseNetwork.context.close();
   }
-  // A legacy info reply without wifi_modes permits only WPA2 personal mode.
+  // A legacy info reply without wifi_modes permits only WPA2 transmission.
+  // Unsupported modes can still be edited, with a visible submission reason.
   const legacyState = fixture(true); legacyState.wifiModes = undefined; const legacyNetwork = await existingUsbNetwork(legacyState); const legacy = legacyNetwork.page;
   assert.equal(await legacy.getByLabel('Wi-Fi 认证方式', { exact: true }).inputValue(), 'wpa2');
-  assert.equal(await legacy.getByRole('option', { name: '开放网络（无密码）', exact: true }).isDisabled(), true); assert.equal(await legacy.getByRole('option', { name: /企业网络 · PEAP/ }).isDisabled(), true);
+  for (const mode of ['open', 'enterprise']) {
+    await legacy.getByLabel('Wi-Fi 认证方式', { exact: true }).selectOption(mode); await legacy.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-unsupported-ssid');
+    assert.equal(await legacy.getByRole('button', { name: '通过 USB 发送给设备', exact: true }).isDisabled(), true);
+    await legacy.getByText('当前固件未报告支持此认证方式，请升级固件或选择受支持的网络。', { exact: true }).waitFor();
+  }
+  await legacy.getByLabel('Wi-Fi 认证方式', { exact: true }).selectOption('wpa2');
   await legacy.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-legacy-ssid'); await legacy.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-legacy-secret'); await legacy.getByRole('button', { name: '通过 USB 发送给设备' }).click(); await legacy.getByText('设备正在验证', { exact: true }).waitFor();
   assert.equal(legacyState.candidate.wifi_security, 'wpa2'); assert.equal(legacyState.candidate.password, 'synthetic-legacy-secret'); await assertNetworkSecretsLocal(legacy, legacyState, ['synthetic-legacy-ssid', 'synthetic-legacy-secret']); await legacyNetwork.context.close();
   // Read-only USB diagnosis sends status only, preserves uncertainty across a
@@ -175,12 +284,17 @@ try {
   const apSavedState = fixture(true), apSavedContext = await browser.newContext(); await setup(apSavedContext, apSavedState); await unsupported(apSavedContext); const apSaved = await openWizard(apSavedContext);
   await apSaved.getByLabel('设备屏幕上的工厂节点 ID', { exact: true }).fill(TEST_NODE); await apSaved.getByText('已登记设备 · Synthetic existing node').waitFor();
   const apReuse = apSaved.getByRole('radio', { name: /保留设备内现有凭证/ }); assert.equal(await apReuse.isChecked(), false); await apReuse.check();
-  await apSaved.getByRole('button', { name: '保留当前配置并继续' }).click(); await apSaved.getByRole('button', { name: '显示本地配网交接内容' }).click();
-  const reuseHandoff = JSON.parse(await apSaved.getByLabel('复制到设备本地页面的交接内容', { exact: true }).inputValue()); assert.equal(reuseHandoff.reuse_saved_credential, true); assert.equal(reuseHandoff.device_token, undefined); assert.equal(apSavedState.registrations, 0); assert.equal(apSavedState.rotations, 0); await apSavedContext.close();
+  await apSaved.getByRole('button', { name: '保存配置' }).click(); await apSaved.getByRole('button', { name: '显示本地配网交接内容' }).click();
+  const reuseHandoff = JSON.parse(await apSaved.getByLabel('复制到设备本地页面的交接内容', { exact: true }).inputValue()); assert.equal(reuseHandoff.reuse_saved_credential, true); assert.equal(reuseHandoff.device_token, undefined); assert.equal(apSavedState.registrations, 0); assert.equal(apSavedState.rotations, 0);
+  // Producing a handoff is not an observed device write. Settings remain
+  // editable, and changing them removes the stale handoff until saved again.
+  assert.equal(await apSaved.getByLabel('部署地点', { exact: true }).isEnabled(), true); await apSaved.getByLabel('数据用途', { exact: true }).selectOption('field');
+  assert.equal(await apSaved.getByLabel('复制到设备本地页面的交接内容', { exact: true }).count(), 0); await saveSettings(apSaved);
+  await apSaved.getByRole('button', { name: '显示本地配网交接内容', exact: true }).click(); assert.equal(apSavedState.config.dataset, 'field'); await apSavedContext.close();
   // Unsupported browser + exact embedded page in WebKit; local page validation
   // is distinct from transport or physical network acceptance.
   const apState = fixture(), apContext = await browser.newContext(); await setup(apContext, apState); await unsupported(apContext); const ap = await openWizard(apContext); await ap.getByText('此浏览器没有可用的 Web Bluetooth', { exact: false }).waitFor();
-  await ap.getByLabel('设备屏幕上的工厂节点 ID', { exact: true }).fill(TEST_NODE); await firstRegistration(ap); await ap.getByRole('button', { name: '登记位置并发布配置' }).click(); await ap.getByRole('button', { name: '显示本地配网交接内容' }).click(); const handoff = JSON.parse(await ap.getByLabel('复制到设备本地页面的交接内容', { exact: true }).inputValue()); assert.equal(handoff.device_token, TEST_TOKEN); await apContext.close();
+  await ap.getByLabel('设备屏幕上的工厂节点 ID', { exact: true }).fill(TEST_NODE); await firstRegistration(ap); await ap.getByRole('button', { name: '保存配置' }).click(); await ap.getByRole('button', { name: '显示本地配网交接内容' }).click(); const handoff = JSON.parse(await ap.getByLabel('复制到设备本地页面的交接内容', { exact: true }).inputValue()); assert.equal(handoff.device_token, TEST_TOKEN); await apContext.close();
   const header = readFileSync(new URL('../firmware/components/cp_provision/setup_page.h', import.meta.url), 'utf8'); const part = name => header.split(`static const char ${name}[] =`)[1].split(';\n')[0].match(/"(?:[^"\\]|\\.)*"/g).map(s => JSON.parse(s)).join(''); const html = part('CP_SETUP_HEAD') + TEST_NODE + part('CP_SETUP_MID') + 'b'.repeat(32) + part('CP_SETUP_END');
   let safari = 'WebKit not installed';
   if (existsSync(webkit.executablePath())) {
@@ -208,5 +322,5 @@ try {
     }
     await wk.close(); safari = 'WebKit embedded page token/reuse, open and enterprise optional-identity branches passed';
   }
-  console.log(`Provisioning browser mock passed: new/existing lookup, visible 409, lost registration recovery, saved-credential reuse, preserved config, safe stage diagnostics, corrected Wi-Fi nonce retry, explicit open/enterprise modes, legacy capability gate, local-only network secrets, fresh applied ACK, read-only USB, Security2 wrong PIN; ${safari}. No physical USB/BLE/network acceptance.`);
+  console.log(`Provisioning browser mock passed: editable prepared/expired settings, repeated save/no-op with immutable config history, clean/dirty external refresh, missing-credential Wi-Fi entry, uncertain/testing write lock, stale-attempt failure rejection, applied-to-fresh USB attempt, BLE fresh-PIN restart, editable AP handoff, new/existing lookup, visible 409, lost registration recovery, saved-credential reuse, preserved config, safe stage diagnostics, corrected Wi-Fi nonce retry, explicit open/enterprise modes, legacy capability gate, local-only network secrets, fresh applied ACK, read-only USB, Security2 wrong PIN; ${safari}. No physical USB/BLE/network acceptance.`);
 } finally { await browser.close(); await server.close(); }

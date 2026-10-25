@@ -56,6 +56,35 @@ older applied ACK into proof of the current reconfiguration.
 
 ## Direct position and policy edits
 
+### Prepared settings stay editable
+
+The setup wizard now behaves as a settings form: it loads the desired location
+and dataset, including values from an expired policy, and keeps them editable
+after Save. Saving changed values makes them the current desired settings;
+unchanged valid values cause no write. Existing scan, raw-capture, summary,
+upload, identity and retention choices survive location/dataset edits. The
+server keeps historical references internally without making the operator
+choose a version-management workflow.
+
+Cloud settings can be saved without a device credential, and Wi-Fi can be
+entered before credentials or a physical connection are ready. Only sending
+to the device requires its matching identity, usable credential and currently
+valid saved configuration. Missing prerequisites have visible explanations.
+An in-flight or uncertain device submission temporarily locks changes; an old
+failure with another attempt ID cannot unlock it. After confirmed completion,
+the operator can modify settings again and explicitly start another network
+write. USB refreshes the same port; BLE asks for the new on-device PIN.
+Generating an AP handoff alone does not claim that the device accepted it or
+lock the form; editing its configuration clears the generated handoff.
+
+Local Chromium/WebKit regression covers repeated edits/saves, no-op saves,
+editing before credential readiness, expired-policy renewal, external changes,
+lost replies, stale status correlation and editing after applied confirmation.
+This is browser acceptance with synthetic peers, not another physical-network
+acceptance claim.
+
+### Full capture configuration editor
+
 The UI adds direct editing and publishing of a new version, including v2 address
 summary/control fields, bounded raw capture, and a device-detail entry for
 Wi-Fi reconfiguration. Existing values prefill the form; history and already

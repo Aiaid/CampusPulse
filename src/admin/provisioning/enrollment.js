@@ -25,6 +25,75 @@ export async function assignProvisionConfig(api, node, attempt, place, dataset) 
   }
   detail = await api(`/devices/${node}`); if (detail.device.desired_config_id !== id) throw new Error('配置已存在，但目前分配已变化；请到设备详情核对。'); return id;
 }
+
+// A save operation owns its immutable payload until its outcome is known. Keep
+// the same operation ID for retries, and use a new ID after editing the form.
+const settingsOperations = new WeakMap();
+const settingsPayload = value => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+export async function saveProvisionSettings(api, node, operationId, place, dataset) {
+  const suffix = String(operationId || '').replaceAll('-', '');
+  if (!NODE_PATTERN.test(node) || !/^[a-z0-9_]{1,44}$/.test(suffix)) throw new Error('保存操作或设备身份无效，请重新读取设备。');
+  const targetPlace = place || null, signature = JSON.stringify([targetPlace, dataset]);
+  let operations = settingsOperations.get(api);
+  if (!operations) { operations = new Map(); settingsOperations.set(api, operations); }
+  const key = `${node}:${suffix}`;
+  let operation = operations.get(key);
+  if (operation && operation.signature !== signature) throw new Error('本次保存的内容已变化，请使用新的保存操作。');
+  if (!operation) { operation = { signature }; operations.set(key, operation); }
+  const id = `${node}-c-${suffix}`, placementId = `${node}-p-${suffix}`;
+  let detail = await api(`/devices/${node}`);
+  if (detail?.device?.id !== node) throw new Error('云端返回了不同的设备身份，请停止操作并刷新。');
+  const configs = await api(`/configs?node_id=${node}`);
+  const published = configs.configs.find(c => c.id === id) || detail.configs?.find(c => c.id === id);
+  let draft = configs.drafts.find(c => c.id === id);
+  const saved = published || draft;
+  if (saved) {
+    const placement = detail.placements?.find(p => p.id === saved.config.placement_id);
+    if (saved.config.node_id !== node || saved.config.capture_config_id !== id || saved.config.dataset !== dataset || !placement || (placement.place_id || null) !== targetPlace) {
+      throw new Error('本次保存操作已有不同内容，请重新读取并使用新的保存操作。');
+    }
+    if (operation.body && settingsPayload(operation.body) !== settingsPayload({ config: saved.config, raw_retention_hours: saved.raw_retention_hours, aggregate_retention_days: saved.aggregate_retention_days })) {
+      throw new Error('本次保存的配置已被修改，请重新读取后保存。');
+    }
+  }
+  if (published) {
+    if (detail.device.desired_config_id !== id) throw new Error('配置已保存，但目前分配已变化；请重新读取设备。');
+    if (currentProvisionConfig(detail)?.id !== id) throw new Error('本次保存的位置或配置已失效，请重新读取并再次保存。');
+    return id;
+  }
+  if (draft && operation.body && detail.device.desired_config_id !== operation.desired) {
+    throw new Error('当前设备配置已变化，请重新读取后保存。');
+  }
+  const current = currentProvisionConfig(detail);
+  if (!draft && !operation.body && current && (current.placement.place_id || null) === targetPlace && current.dataset === dataset) return current.id;
+  if (!draft && !operation.body) {
+    const existing = detail.configs?.find(c => c.id === detail.device.desired_config_id);
+    if (detail.device.desired_config_id && !existing) throw new Error('未能读取当前采集配置，请刷新后再保存。');
+    const now = Date.now();
+    const placement = detail.placements?.find(p => p.id === existing?.config?.placement_id);
+    const samePlace = placement && (placement.place_id || null) === targetPlace && placement.valid_from_ms <= now && (placement.effective_valid_until_ms ?? placement.valid_until_ms ?? Infinity) > now;
+    const config = existing ? structuredClone(existing.config) : provisionConfig(node, samePlace ? placement.id : placementId, id, dataset, now);
+    Object.assign(config, { capture_config_id: id, node_id: node, placement_id: samePlace ? placement.id : placementId, dataset });
+    if (!Number.isFinite(Date.parse(config.accept_until)) || Date.parse(config.accept_until) <= now) config.accept_until = new Date(now + 7 * 86400000).toISOString();
+    operation.body = { config, raw_retention_hours: existing?.raw_retention_hours ?? 24, aggregate_retention_days: existing?.aggregate_retention_days ?? 30 };
+    operation.placement = samePlace ? null : { id: placementId, place_id: targetPlace, valid_from_ms: now, valid_until_ms: null };
+    operation.desired = detail.device.desired_config_id;
+  }
+  if (!draft) {
+    if (detail.device.desired_config_id !== operation.desired) throw new Error('当前设备配置已变化，请重新读取后保存。');
+    if (operation.placement) {
+      const existingPlacement = detail.placements?.find(p => p.id === placementId);
+      if (existingPlacement && ((existingPlacement.place_id || null) !== targetPlace || existingPlacement.valid_from_ms !== operation.placement.valid_from_ms)) throw new Error('本次保存的位置记录已变化，请重新读取后保存。');
+      if (!existingPlacement) await api(`/devices/${node}/placements`, { method: 'POST', body: operation.placement });
+    }
+    draft = (await api('/configs', { method: 'POST', body: operation.body })).draft;
+  }
+  await api(`/configs/${id}/validate`, { method: 'POST', body: { revision: draft.revision } });
+  await api(`/configs/${id}/publish`, { method: 'POST', body: { revision: draft.revision } });
+  detail = await api(`/devices/${node}`);
+  if (detail.device.desired_config_id !== id) throw new Error('配置已保存，但目前分配已变化；请重新读取设备。');
+  return id;
+}
 export function cloudProgress(detail, configId, since) {
   const d = detail?.device; if (!d) return { contact: false, applied: false };
   const fresh = Date.parse(d.latest_control?.received_at || d.last_seen_at || '') >= since;

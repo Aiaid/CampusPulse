@@ -4,7 +4,7 @@ import { Dialog, ErrorNotice, Field, Notice, Resource, useAdmin, useMutation, us
 import { bluetoothSupport, connectProvisioning, selectProvisioningDevice } from './provisioning/bluetooth.js';
 import { PIN_PATTERN } from './provisioning/security2.js';
 import { serialSupport, selectProvisioningPort, connectSerialProvisioning, connectSerialDiagnostics } from './provisioning/serial.js';
-import { assignProvisionConfig, cloudProgress, inspectEnrollment, currentProvisionConfig, NODE_PATTERN, TOKEN_PATTERN } from './provisioning/enrollment.js';
+import { saveProvisionSettings, cloudProgress, inspectEnrollment, currentProvisionConfig, NODE_PATTERN, TOKEN_PATTERN } from './provisioning/enrollment.js';
 import { diagnosticView, previousDiagnostic, bootEvidence } from './provisioning/diagnostics.js';
 import { wifiPayload, supportsWifiMode } from './provisioning/network.js';
 import './provisioning.css';
@@ -19,13 +19,15 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
   const [ssid, setSsid] = useState(''), [password, setPassword] = useState(''), [existingToken, setExistingToken] = useState('');
   const [wifiSecurity, setWifiSecurity] = useState('wpa2'), [eapUsername, setEapUsername] = useState(''), [eapIdentity, setEapIdentity] = useState(''), [eapPassword, setEapPassword] = useState('');
   const [credentialChanged, setCredentialChanged] = useState(false);
-  const [credentialMode, setCredentialMode] = useState(''), [configId, setConfigId] = useState(''), [configChoice, setConfigChoice] = useState('new');
+  const [credentialMode, setCredentialMode] = useState(''), [configId, setConfigId] = useState(''), [configDirty, setConfigDirty] = useState(false);
   const [registerUncertain, setRegisterUncertain] = useState(false), [rotateConsent, setRotateConsent] = useState(false);
+  const [writeComplete, setWriteComplete] = useState(false);
   const [submitted, setSubmitted] = useState(false), [handoff, setHandoff] = useState(''), [message, setMessage] = useState('');
   const [localStatus, setLocalStatus] = useState(null), [lastDiagnostic, setLastDiagnostic] = useState(null), [localError, setLocalError] = useState('');
   const [bootChanged, setBootChanged] = useState(false);
   const knownBoot = useRef(null);
   const [disconnected, setDisconnected] = useState(false), [debugAttached, setDebugAttached] = useState(false), [cloudError, setCloudError] = useState('');
+  const preparedNode = useRef(''), configOperation = useRef(crypto.randomUUID()), selectedConnection = useRef(null);
   const client = useRef(null), diagnosticClient = useRef(null), diagnosticPort = useRef(null), token = useRef('');
   const attempt = useRef(crypto.randomUUID()), started = useRef(0), mounted = useRef(true), selectedNode = useRef('');
   const mutation = useMutation(), places = useResource('/places');
@@ -39,10 +41,27 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
   const currentConfig = currentProvisionConfig(detail);
   const progress = submitted ? cloudProgress(detail, configId, started.current) : { contact: false, applied: false };
   const diagnosis = diagnosticView(localStatus), previous = previousDiagnostic(localStatus), boot = bootEvidence(localStatus);
-  const validating = submitted && ['received', 'testing', 'saved'].includes(localStatus?.state);
+  const validating = submitted && !diagnosis.failed && !writeComplete && !progress.applied &&
+    (mode !== 'ap' || ['sending', 'received', 'testing', 'saved'].includes(localStatus?.state));
+  const submitReason = validating ? '设备正在处理本次设置，等待明确结果后可继续修改。'
+    : writeComplete ? '本次配网已完成。再次发送前，点击重新配置网络。'
+      : !registered ? '请先确认设备的云端登记。'
+        : !physicalReady || disconnected ? '发送前请连接同一台现场设备。'
+          : !credentialReady ? '发送前请在上方准备设备凭证；现在仍可编辑配置和 Wi-Fi。'
+            : configDirty || !configId ? '位置或采集设置尚未保存，请先点击保存配置。'
+              : currentConfig?.id !== configId ? '云端当前配置已变化或失效，请重新检查并保存配置。'
+              : detail?.device?.enabled === false ? '此设备已停用，请先在设备详情启用。'
+                : mode !== 'ap' && !supportsWifiMode(identity, wifiSecurity) ? '当前固件未报告支持此认证方式，请升级固件或选择受支持的网络。' : '';
   const acceptStatus = status => {
     if (!status) return;
     if (status.node_id && status.node_id !== selectedNode.current) throw new Error('USB 返回了另一台设备的身份，已停止读取。');
+    const staleAttempt = submitted && !writeComplete &&
+      ((status.attempt_id && status.attempt_id !== attempt.current) ||
+        (['failed', 'stop_failed'].includes(status.state) && status.attempt_id !== attempt.current));
+    if (staleAttempt) {
+      setLocalError('收到的状态属于其他尝试，仍在等待本次设备结果。');
+      return;
+    }
     const evidence = bootEvidence(status);
     if (evidence) { if (knownBoot.current && knownBoot.current !== evidence.boot_id) setBootChanged(true); knownBoot.current = evidence.boot_id; }
     setLocalStatus(status);
@@ -58,7 +77,14 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
     setLookup(result.kind); setLookupError(null); setDetail(result.detail);
     if (result.kind === 'existing') {
       setName(result.detail.device.name || '');
-      if (!configId) setConfigChoice(currentProvisionConfig(result.detail) ? 'keep' : 'new');
+      if (preparedNode.current !== target || (!configDirty && !submitted)) {
+        const current = currentProvisionConfig(result.detail);
+        const desired = result.detail.configs?.find(row => row.id === result.detail.device.desired_config_id);
+        const placement = result.detail.placements?.find(row => row.id === desired?.config?.placement_id);
+        setPlace(placement?.place_id || ''); setDataset(desired?.config?.dataset || 'controlled_test');
+        setConfigId(current?.id || ''); setConfigDirty(false);
+        preparedNode.current = target; configOperation.current = crypto.randomUUID();
+      }
     }
   };
   const inspect = async (target = node) => {
@@ -76,6 +102,7 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
     const expected = initialNodeId || identity?.node_id || (NODE_PATTERN.test(manualNode) ? manualNode : null);
     if (expected && connected.identity.node_id !== expected) { await connected.client.close(); throw new Error('现场设备与所选云端节点不同。请连接同一台设备，原凭证未发送。'); }
     if (!mounted.current) { await connected.client.close(); return; }
+    selectedConnection.current = selected;
     client.current = connected.client; setIdentity(connected.identity); setMode(targetMode); setDisconnected(false); setDebugAttached(false);
     const evidence = bootEvidence(connected.identity);
     if (evidence) { if (knownBoot.current && knownBoot.current !== evidence.boot_id) setBootChanged(true); knownBoot.current = evidence.boot_id; }
@@ -139,22 +166,42 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
     if (!TOKEN_PATTERN.test(result.credential)) throw new Error('未收到新凭证，请先查询状态，勿自动重复轮换。');
     token.current = result.credential; setCredentialMode('provided'); setRegisterUncertain(false); setRotateConsent(false); setMessage('已按明确确认轮换凭证；旧凭证已失效，需要完成现场写入。');
   });
-  const keepConfig = () => mutation.run(async () => {
-    const result = await inspect(); const keep = currentProvisionConfig(result.detail);
-    if (!keep) throw new Error('当前配置或部署已失效，请在设备详情更新配置后重新读取。');
-    setConfigId(keep.id); setMessage('保留当前地点和采集配置，本次仅更改设备网络。');
+  const changeConfig = (key, value) => {
+    if (key === 'place') setPlace(value); else setDataset(value);
+    setConfigDirty(true); setConfigId(''); configOperation.current = crypto.randomUUID();
+    if (mode === 'ap' && submitted && !validating) {
+      setHandoff(''); setSubmitted(false); started.current = 0; attempt.current = crypto.randomUUID();
+      setMessage('配置已修改，保存后请重新生成本地配网交接内容。');
+    }
+  };
+  const saveConfig = () => mutation.run(async () => {
+    if (!registered || validating) throw new Error('请先确认已登记设备，并等待本次设备写入结束。');
+    const id = await saveProvisionSettings(api, node, configOperation.current, place, dataset);
+    setConfigId(id); setConfigDirty(false);
+    configOperation.current = crypto.randomUUID();
+    await inspect(); setMessage('配置已保存，后续以当前设置为准；设备应用状态会单独确认。');
   });
-  const assign = () => mutation.run(async () => { setConfigId(await assignProvisionConfig(api, node, attempt.current, place, dataset)); setMessage('新的位置和采集配置已发布，等待设备确认。'); });
+  const restartNetwork = () => {
+    attempt.current = crypto.randomUUID(); started.current = 0;
+    token.current = ''; setCredentialMode(''); setCredentialChanged(false); setRegisterUncertain(false);
+    setSubmitted(false); setWriteComplete(false); setHandoff(''); setPassword(''); setEapPassword('');
+    setLocalStatus(null); setCloudError('');
+    if (mode === 'usb') connect(mode, selectedConnection.current);
+    else if (mode === 'ble') {
+      setManualNode(node); void client.current?.close(); client.current = null; setIdentity(null); setDisconnected(true);
+      setMessage('请在设备上开始新配网，输入新显示的配网码后连接同一台设备。');
+    }
+  };
   const transmit = () => mutation.run(async () => {
     if (!client.current || disconnected) throw new Error('请连接同一台现场设备后再提交。');
-    if (!credentialReady) throw new Error('请先选择有效的设备凭证来源。');
+    if (submitReason) throw new Error(submitReason);
     if (detail?.device?.enabled === false) throw new Error('此云端节点已停用，请先在设备详情启用，再重新检查登记状态。');
     if (!supportsWifiMode(identity, wifiSecurity)) throw new Error('当前设备固件未报告此认证方式，请先升级固件。');
     const network = wifiPayload({ mode: wifiSecurity, ssid, password, username: eapUsername, identity: eapIdentity, enterprisePassword: eapPassword });
     if (localStatus?.state === 'failed' || (submitted && localStatus?.state === 'waiting')) attempt.current = crypto.randomUUID();
     const body = { op: 'configure', node_id: node, attempt_id: attempt.current, ...network, ...(credentialMode === 'saved' ? { reuse_saved_credential: true } : { device_token: token.current }) };
     const wasSubmitted = submitted, previousStarted = started.current, previousStatus = localStatus;
-    started.current = Date.now(); setSubmitted(true); setLocalError(''); setCloudError('');
+    started.current = Date.now(); setWriteComplete(false); setSubmitted(true); setLocalError(''); setCloudError('');
     setLocalStatus({ state: 'sending' });
     try {
       const result = await client.current.request(body);
@@ -166,7 +213,7 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
       throw error;
     }
   });
-  const prepareAp = () => { started.current = Date.now(); setHandoff(JSON.stringify({ v: 1, node_id: node, attempt_id: attempt.current, ...(credentialMode === 'saved' ? { reuse_saved_credential: true } : { device_token: token.current }) })); setSubmitted(true); };
+  const prepareAp = () => { if (submitReason) return; started.current = Date.now(); setHandoff(JSON.stringify({ v: 1, node_id: node, attempt_id: attempt.current, ...(credentialMode === 'saved' ? { reuse_saved_credential: true } : { device_token: token.current }) })); setSubmitted(true); };
   const readStatus = async () => {
     const source = diagnosticClient.current || client.current;
     if (!source) throw new Error('请先连接 USB 诊断或现场设备。');
@@ -184,15 +231,15 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
     const poll = async () => { try { const source = diagnosticClient.current || client.current; const status = await source?.request({ op: 'status' }); if (active) acceptStatus(status); } catch { if (active) setLocalError('USB 状态暂时不可读，已保留最后一次诊断；请检查数据线或串口占用，并继续检查云端。'); } if (active) timer = setTimeout(poll, 1500); };
     timer = setTimeout(poll, 300); return () => { active = false; clearTimeout(timer); };
   }, [submitted, mode, disconnected, debugAttached, mutation.pending, progress.applied]);
-  useEffect(() => { if (progress.applied) { token.current = ''; setCredentialMode(''); setHandoff(''); setPassword(''); setEapPassword(''); } }, [progress.applied]);
+  useEffect(() => { if (progress.applied && !writeComplete) { setWriteComplete(true); token.current = ''; setCredentialMode(''); setHandoff(''); setPassword(''); setEapPassword(''); } }, [progress.applied, writeComplete]);
   return <Dialog title={initialNodeId ? '重新配置设备网络' : '连接并部署设备'} onClose={close} pending={mutation.pending} wide>
     <div className="cp-provision" aria-busy={mutation.pending}>
-      <p>先核对现场节点与云端身份，再选择凭证和采集配置，最后验证 Wi-Fi。已登记的设备可以保留身份、位置和采集配置，仅重新配置网络。</p>
+      <p>已登记设备会带入当前设置。位置、采集配置和 Wi-Fi 可以继续修改，保存后以新设置为准；发送到设备前再核对连接和设备凭证。</p>
       <div className="cp-provision-modes">{[['ble', '蓝牙配网', Bluetooth, available], ['usb', 'USB 配网', Usb, usbAvailable], ['ap', '设备热点配网', WifiHigh, true]].map(([key, label, Icon, supported]) => <button key={key} type="button" className={`cp-admin-button ${mode === key ? 'cp-admin-primary' : ''}`} disabled={!supported || !!identity || submitted || mutation.pending} onClick={() => setMode(key)}><Icon />{label}</button>)}</div>
       {(!available || !usbAvailable) && <Notice>此浏览器{!available ? '没有可用的 Web Bluetooth' : ''}{!available && !usbAvailable ? '，也' : ''}{!usbAvailable ? '没有可用的 Web Serial' : ''}。iPhone / iPad 使用设备热点页面；无屏幕设备可用支持 Web Serial 的桌面 Chrome / Edge 连接 USB。</Notice>}
       <section><h3>1 · 确认现场设备</h3>
-        {mode === 'ble' ? <><Field label="设备屏幕上的配网码" hint="8 位数字，保留开头的 0；5 分钟有效，累计 5 次失败锁定本次配网。"><input type="password" inputMode="numeric" pattern="[0-9]{8}" autoComplete="off" maxLength={8} value={proof} onChange={e => setProof(e.target.value)} /></Field><button type="button" className="cp-admin-button" disabled={mutation.pending || !PIN_PATTERN.test(proof)} onClick={() => connect()}>{identity ? '重新连接同一设备' : '选择蓝牙设备并验证'}</button></>
-          : mode === 'usb' ? <><p>连接数据线并关闭其他串口程序。开始配网会暂停采集，无需屏幕或配网码。</p><button type="button" className="cp-admin-button" disabled={mutation.pending} onClick={() => connect()}>{identity ? '重新连接同一 USB 设备' : '选择 USB 设备并开始配网'}</button></>
+        {mode === 'ble' ? <><Field label="设备屏幕上的配网码" hint="8 位数字，保留开头的 0；5 分钟有效，累计 5 次失败锁定本次配网。"><input type="password" inputMode="numeric" pattern="[0-9]{8}" autoComplete="off" maxLength={8} value={proof} onChange={e => setProof(e.target.value)} /></Field><button type="button" className="cp-admin-button" disabled={mutation.pending || validating || !PIN_PATTERN.test(proof)} onClick={() => connect()}>{identity ? '重新连接同一设备' : '选择蓝牙设备并验证'}</button></>
+          : mode === 'usb' ? <><p>连接数据线并关闭其他串口程序。开始配网会暂停采集，无需屏幕或配网码。</p><button type="button" className="cp-admin-button" disabled={mutation.pending || validating} onClick={() => connect()}>{identity ? '重新连接同一 USB 设备' : '选择 USB 设备并开始配网'}</button></>
             : <><Notice>先保持互联网完成云端核对，再加入设备屏幕显示的热点，使用 12 位热点密码打开 http://192.168.4.1。本地页面核对 8 位配网码并接收 Wi-Fi 密码。</Notice><Field label="设备屏幕上的工厂节点 ID"><input value={manualNode} onChange={e => setManualNode(e.target.value.trim().toLowerCase())} disabled={!!initialNodeId || registered || registerUncertain} pattern="cp_[a-f0-9]{12}" autoComplete="off" placeholder="cp_001122aabbcc" /></Field></>}
         {identity && <p className="cp-admin-mono">{node} · {identity.board} {disconnected ? '（本机连接已断开）' : mode === 'usb' ? '（USB 工厂身份已读取）' : '（已验证身份）'}</p>}
         {initialNodeId && !identity && <p>已选择云端节点。写入前仍需核对同一台现场设备。</p>}
@@ -211,21 +258,22 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
         {NODE_PATTERN.test(node) && <button className="cp-admin-button" disabled={mutation.pending || lookup === 'checking'} onClick={() => mutation.run(() => inspect())}>重新检查登记状态</button>}
         <ErrorNotice error={lookupError} />
       </section>
-      <fieldset disabled={mutation.pending || !registered || !credentialReady || !!configId}><legend>3 · 位置与采集配置</legend>
-        {currentConfig && <label className="cp-provision-option"><input type="radio" name="config-choice" checked={configChoice === 'keep'} onChange={() => setConfigChoice('keep')} /><span><strong>保留当前地点和采集配置</strong><small>{currentConfig.placement.place_name || currentConfig.placement.place_id || '未定位 / 移动中'} · {currentConfig.dataset === 'field' ? '现场观测' : '受控测试'} · {currentConfig.id}</small></span></label>}
-        {currentConfig && <label className="cp-provision-option"><input type="radio" name="config-choice" checked={configChoice === 'new'} onChange={() => setConfigChoice('new')} /><span>另建部署并发布新采集配置</span></label>}
-        {configChoice === 'keep' && currentConfig ? <button className="cp-admin-button" onClick={keepConfig}>保留当前配置并继续</button> : <>
-          {registered && !currentConfig && <p>没有可直接保留的有效配置。可在设备详情修改配置后重新检查，或在这里创建新部署。</p>}
-          <Field label="部署地点"><Resource resource={places}>{data => <select value={place} onChange={e => setPlace(e.target.value)}><option value="">未定位 / 移动中</option>{data.places.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}</Resource></Field><Field label="数据用途"><select value={dataset} onChange={e => setDataset(e.target.value)}><option value="controlled_test">受控测试</option><option value="field">现场观测</option></select></Field><p>新配置有效 7 天：30 秒地址汇总、5 秒分箱、最多 64 个地址。BLE 可见标识不能当作人数；地址汇总保留 24 小时，窗口和状态保留 30 天。</p><button className="cp-admin-button" onClick={assign} disabled={places.loading || !!places.error}>登记位置并发布配置</button>
-        </>}{configId && <p className="cp-admin-mono">本次沿用 / 已发布 {configId}</p>}
+      <fieldset disabled={mutation.pending || !registered || validating}><legend>3 · 位置与采集配置</legend>
+        <Field label="部署地点"><Resource resource={places}>{data => <select value={place} onChange={e => changeConfig('place', e.target.value)}><option value="">未定位 / 移动中</option>{data.places.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}</Resource></Field>
+        <Field label="数据用途"><select value={dataset} onChange={e => changeConfig('dataset', e.target.value)}><option value="controlled_test">受控测试</option><option value="field">现场观测</option></select></Field>
+        <p>{currentConfig ? '带入当前设置，修改后保存即可；其余采集参数继续沿用。' : '默认使用 30 秒地址汇总、5 秒分箱、最多 64 个地址。BLE 可见标识不能当作人数。'}</p>
+        <button className="cp-admin-button" onClick={saveConfig} disabled={places.loading || !!places.error}>保存配置</button>
+        {configDirty ? <p role="status">有尚未保存的配置修改。</p> : configId && <p role="status">当前配置已准备好，仍可继续修改并保存。</p>}
       </fieldset>
-      <fieldset disabled={mutation.pending || !physicalReady || !credentialReady || !configId || detail?.device?.enabled === false || progress.applied}><legend>4 · 设置 Wi-Fi</legend>
+      <fieldset disabled={mutation.pending || validating}><legend>4 · 设置 Wi-Fi</legend>
         <p>支持 2.4 GHz WPA2、开放网络和 PEAP/MSCHAPv2 企业认证。企业认证不校验服务器证书；云端 HTTPS 仍严格验证。网页登录 / Portal 需要另行处理。</p>
         {mode !== 'ap' ? <form onSubmit={e => { e.preventDefault(); transmit(); }}>
-          <Field label="Wi-Fi 认证方式"><select value={wifiSecurity} disabled={validating} onChange={e => { setWifiSecurity(e.target.value); setPassword(''); setEapPassword(''); }}><option value="wpa2">WPA2 个人网络</option><option value="open" disabled={!supportsWifiMode(identity, 'open')}>开放网络（无密码）</option><option value="enterprise" disabled={!supportsWifiMode(identity, 'enterprise')}>企业网络 · PEAP/MSCHAPv2（不校验证书）</option></select></Field><Field label="Wi-Fi SSID"><input value={ssid} onChange={e => setSsid(e.target.value)} required autoComplete="off" disabled={validating} /></Field>{wifiSecurity === 'enterprise' && <><Field label="企业认证用户名"><input value={eapUsername} onChange={e => setEapUsername(e.target.value)} required autoComplete="off" disabled={validating} /></Field><Field label="外层身份（可选）" hint="留空使用用户名。"><input value={eapIdentity} onChange={e => setEapIdentity(e.target.value)} autoComplete="off" disabled={validating} /></Field><Field label="企业认证密码"><input type="password" value={eapPassword} onChange={e => setEapPassword(e.target.value)} required autoComplete="new-password" disabled={validating} /></Field></>}{wifiSecurity === 'open' && <p>开放网络不发送 Wi-Fi 密码；设备凭据仍只在严格验证的 HTTPS 连接中使用。</p>}{wifiSecurity === 'wpa2' && <Field label="Wi-Fi 密码" hint={diagnosis.failed ? '修改密码后重试。设备凭证和已选云端配置继续保留。' : '仅经本机连接发往设备，不发送给云端 API。'}><input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8} autoComplete="new-password" disabled={validating} /></Field>}
-          <button type="submit" className="cp-admin-button cp-admin-primary" disabled={disconnected || validating}>{diagnosis.failed ? '使用修正后的 Wi-Fi 重试' : mode === 'usb' ? '通过 USB 发送给设备' : '加密发送给设备'}</button>{validating && <p role="status">设备正在处理本次设置，请先查看下方阶段；尚未确认失败前不重复改写。</p>}
-        </form> : <><button className="cp-admin-button cp-admin-primary" onClick={prepareAp}>显示本地配网交接内容</button>{handoff && <Field label="复制到设备本地页面的交接内容" hint={credentialMode === 'saved' ? '仅请求设备使用内部已有凭证；本地页面还会核对节点和能力。' : '包含独立设备凭证；仅粘贴到现场设备页面。'}><textarea readOnly rows={5} value={handoff} autoComplete="off" spellCheck={false} onFocus={e => e.target.select()} /></Field>}<p>本地页面接收后热点会关闭以测试网络。恢复互联网后回到这里查看云端确认；热点消失不代表已联网。</p></>}
+          <Field label="Wi-Fi 认证方式"><select value={wifiSecurity} disabled={validating} onChange={e => { setWifiSecurity(e.target.value); setPassword(''); setEapPassword(''); }}><option value="wpa2">WPA2 个人网络</option><option value="open">开放网络（无密码）</option><option value="enterprise">企业网络 · PEAP/MSCHAPv2（不校验证书）</option></select></Field><Field label="Wi-Fi SSID"><input value={ssid} onChange={e => setSsid(e.target.value)} required autoComplete="off" disabled={validating} /></Field>{wifiSecurity === 'enterprise' && <><Field label="企业认证用户名"><input value={eapUsername} onChange={e => setEapUsername(e.target.value)} required autoComplete="off" disabled={validating} /></Field><Field label="外层身份（可选）" hint="留空使用用户名。"><input value={eapIdentity} onChange={e => setEapIdentity(e.target.value)} autoComplete="off" disabled={validating} /></Field><Field label="企业认证密码"><input type="password" value={eapPassword} onChange={e => setEapPassword(e.target.value)} required autoComplete="new-password" disabled={validating} /></Field></>}{wifiSecurity === 'open' && <p>开放网络不发送 Wi-Fi 密码；设备凭据仍只在严格验证的 HTTPS 连接中使用。</p>}{wifiSecurity === 'wpa2' && <Field label="Wi-Fi 密码" hint={diagnosis.failed ? '修改密码后重试。设备凭证和已选云端配置继续保留。' : '仅经本机连接发往设备，不发送给云端 API。'}><input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8} autoComplete="new-password" disabled={validating} /></Field>}
+          <button type="submit" className="cp-admin-button cp-admin-primary" disabled={!!submitReason}>{diagnosis.failed ? '使用修正后的 Wi-Fi 重试' : mode === 'usb' ? '通过 USB 发送给设备' : '加密发送给设备'}</button>{validating && <p role="status">设备正在处理本次设置，请先查看下方阶段；尚未确认失败前不重复改写。</p>}
+        </form> : <><button className="cp-admin-button cp-admin-primary" disabled={!!submitReason} onClick={prepareAp}>显示本地配网交接内容</button>{handoff && <Field label="复制到设备本地页面的交接内容" hint={credentialMode === 'saved' ? '仅请求设备使用内部已有凭证；本地页面还会核对节点和能力。' : '包含独立设备凭证；仅粘贴到现场设备页面。'}><textarea readOnly rows={5} value={handoff} autoComplete="off" spellCheck={false} onFocus={e => e.target.select()} /></Field>}<p>本地页面接收后热点会关闭以测试网络。恢复互联网后回到这里查看云端确认；热点消失不代表已联网。</p></>}
+        {submitReason && <p role="status">{submitReason}</p>}
       </fieldset>
+      {writeComplete && <button className="cp-admin-button" disabled={mutation.pending} onClick={restartNetwork}>重新配置网络</button>}
       {(submitted || localStatus?.state === 'failed' || debugAttached) && <section className={`cp-provision-result ${diagnosis.failed ? 'is-failed' : ''}`} aria-live="polite"><h3>5 · 设备验证与云端确认</h3>
         <div className="cp-provision-stage"><strong>{diagnosis.state}</strong>{diagnosis.stage && <span>最后报告阶段：{diagnosis.stage}</span>}</div>
         {bootChanged && <Notice>已观察到设备启动标识变化，说明设备发生过重启。当前等待状态不代表上次故障已解决；请查看历史记录与本次云端确认。</Notice>}
@@ -238,7 +286,7 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
         {lastDiagnostic && <details><summary>安全诊断详情</summary><pre className="cp-provision-diagnostic">{JSON.stringify(lastDiagnostic, null, 2)}</pre><small>这是最后一次收到的安全诊断，开始新尝试后保留至设备更新。仅含阶段、固定错误代码和数值，不包含网络名称、密码或设备凭证。</small></details>}
         <ol className="cp-provision-checks"><li>云端身份：{registered ? '沿用已登记节点' : '尚未确认'}</li><li>期望配置：{configId || '尚未选择'}</li><li>本次云端联系：{progress.contact ? '已收到' : '尚未收到'}</li><li>本次配置应用确认：{progress.applied ? '已收到当前配置新的 applied ACK' : '尚未收到新的 applied ACK，历史确认不计入本次'}</li></ol>
         <div className="cp-provision-actions"><button className="cp-admin-button" disabled={mutation.pending} onClick={() => mutation.run(async () => { setDetail(await api(`/devices/${node}`)); setCloudError(''); })}>检查云端状态</button>{(mode === 'usb' || debugAttached) && <button className="cp-admin-button" disabled={mutation.pending} onClick={() => mutation.run(readStatus)}>读取设备阶段与诊断</button>}</div>{cloudError && <p role="status">{cloudError}</p>}
-        {progress.applied && <button className="cp-admin-button cp-admin-primary" onClick={() => { notify('设备已重新联系云端并确认应用配置。'); close(); }}>完成并返回设备目录</button>}
+        {writeComplete && <button className="cp-admin-button cp-admin-primary" onClick={() => { notify(progress.applied ? '设备已重新联系云端并确认应用配置。' : '本次配网已完成；最新采集配置的应用状态请在设备目录查看。'); close(); }}>完成并返回设备目录</button>}
       </section>}
       {usbAvailable && !(mode === 'usb' && client.current && !disconnected) && <section><h3>USB 排查</h3><p>只读模式不发送开始配网或配置命令。部分 USB 驱动打开串口时可能触发设备复位，RAM 中的旧故障可能丢失；不能用重启后的等待状态推断此前没有故障。连接同一台设备的数据线。</p><button className="cp-admin-button" disabled={mutation.pending} onClick={attachDiagnostics}>连接 USB 只读诊断</button>{debugAttached && <button className="cp-admin-button" disabled={mutation.pending} onClick={() => connect('usb', diagnosticPort.current)}>在同一 USB 设备上开始重配</button>}</section>}
       {message && <p role="status" className="cp-provision-status">{message}</p>}<ErrorNotice error={mutation.error} />

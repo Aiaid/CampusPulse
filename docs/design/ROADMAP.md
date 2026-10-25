@@ -143,6 +143,15 @@ collection and durable upload. Final local software verification passed on
 
 ## Completed archive
 
+- [x] Keep prepared device settings editable after Save. Load current values,
+      save edits as the current desired settings, preserve capture/retention
+      choices, and allow configuration/Wi-Fi entry before device credentials.
+      Explain send prerequisites and bound in-flight/uncertain writes to their
+      attempt. Verify repeated saves, expiry, stale responses and post-success
+      edits with 515 unit tests, production build and Chromium/WebKit synthetic
+      peers. Physical-network acceptance remains separate. See
+      [onboarding diagnostics](../notes/device-onboarding-diagnostics.md).
+
 - [x] Publish the selected firmware integration with redistributable OFL fonts,
       inspect/back up the original 8 MiB Passport and preserve its protected
       layout while updating only the app. The original legacy queue reset was
