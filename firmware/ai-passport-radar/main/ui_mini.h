@@ -2,7 +2,7 @@
 //
 // 设计取向：这个设备的界面是"低频更新的仪表盘"（两个大数字 + 几行状态，
 // 数据 400ms 才变一次），用不上 LVGL 的保留模式组件树。本库全部 RAM 只有
-// 两块 240x16 横带缓冲（15KB，乒乓防 DMA 串带，见 ui_mini.c 头注释），
+// 两块 240x4 横带缓冲（共 3,840 字节，乒乓防 DMA 串带，见 ui_mini.c 头注释），
 // 无堆分配、无定时器，脏了才画、只画脏的。
 //
 // 用法：
@@ -43,7 +43,7 @@ esp_err_t ui_init(esp_lcd_panel_handle_t panel);
 typedef struct { int16_t x, y, w, h; } ui_rect_t;
 typedef void (*ui_paint_fn)(void *user);
 
-// 把 region 分成若干 16 行横带，逐带调 paint 再推上屏（DMA 异步，乒乓缓冲
+// 把 region 分成若干 4 行横带，逐带调 paint 再推上屏（DMA 异步，乒乓缓冲
 // 保证 paint 不会覆盖仍在传输的带）。region 会被裁剪到屏幕内；w/h<=0 直接返回。
 void ui_render(ui_rect_t region, ui_paint_fn paint, void *user);
 

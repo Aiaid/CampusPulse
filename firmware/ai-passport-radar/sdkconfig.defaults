@@ -38,6 +38,13 @@ CONFIG_FREERTOS_HZ=1000
 # running these Wi-Fi routines from Flash, at the cost of peak throughput.
 CONFIG_ESP_WIFI_IRAM_OPT=n
 CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+# Retain the default dynamic RX/TX limits; reduce only the always-resident RX
+# pool (10 -> 6 buffers, approximately 6.4 KB saved after Wi-Fi init).
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+# Pinned IDF releases enterprise TLS handshake certificate/key material after
+# its final use. This is independent of the general mbedTLS record-buffer mode;
+# actual PEAP savings depend on which certificate/key material was allocated.
+CONFIG_ESP_WIFI_ENT_FREE_DYNAMIC_BUFFER=y
 
 # --- Bluetooth LE / NimBLE ---
 # ESP32-C3 仅支持 BLE；示例只启用单连接 peripheral 所需的最小 host 配置。
@@ -51,6 +58,16 @@ CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 CONFIG_BT_NIMBLE_HOST_BASED_PRIVACY=n
 CONFIG_BT_NIMBLE_NVS_PERSIST=n
+# Bound preallocated pools for an observer or one provisioning connection.
+# Keep packet sizes/MTU and all eight advertising-report event buffers intact.
+# Reduced counts still require real scan-burst and Security 2 acceptance.
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=6
+CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=8
+CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=6
+CONFIG_BT_NIMBLE_TRANSPORT_EVT_COUNT=12
+CONFIG_BT_NIMBLE_TRANSPORT_EVT_DISCARD_COUNT=8
+# At most one scan, or one peripheral connection plus advertising.
+CONFIG_BT_CTRL_BLE_MAX_ACT=3
 CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_0=n
 CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1=n
 CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2=y
@@ -58,6 +75,14 @@ CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_HAVE_TIME=y
 CONFIG_MBEDTLS_HAVE_TIME_DATE=y
 CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y
+# Release idle TLS record buffers for both enterprise Wi-Fi and HTTPS. Retain
+# full incoming records and the existing outgoing limit: the pinned enterprise
+# adapter does not retry partial writes. Preserve CA/key ownership and checks.
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=16384
+CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
+CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=n
+CONFIG_MBEDTLS_DYNAMIC_FREE_CA_CERT=n
 
 # Observer does not pair; disable unused NimBLE security manager.
 CONFIG_BT_NIMBLE_SECURITY_ENABLE=n

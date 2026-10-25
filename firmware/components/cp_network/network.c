@@ -284,8 +284,9 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
         !strcmp(path,"/api/v2/device/config")?2u:
         !strcmp(path,"/api/v2/device/config/ack")?3u:
         !strcmp(path,"/api/v2/ingest")?4u:0u;
-    ESP_LOGI("cp_network","http request_kind=%u error=%ld http=%d response_bytes=%lu response_capacity=%lu",
-        request_kind,(long)e,*status,(unsigned long)response->used,(unsigned long)response->capacity);
+    ESP_LOGI("cp_network","http request_kind=%u error=%ld http=%d response_bytes=%lu response_capacity=%lu stack_free=%lu",
+        request_kind,(long)e,*status,(unsigned long)response->used,(unsigned long)response->capacity,
+        (unsigned long)uxTaskGetStackHighWaterMark(NULL));
     return e;
 }
 static char *contact_body(uint64_t seq)

@@ -189,8 +189,10 @@ claim:
 | Stop scan and release BLE | Below 24 / 16 KiB, either limit | 5 seconds idle |
 | Admit BLE startup/recovery | At least 56 / 24 KiB, both limits | Recovery also needs 30-second cooldown and 10 seconds healthy idle |
 
-An in-flight HTTPS request breaks these sustained-pressure/recovery intervals;
-normal TLS temporary allocations therefore do not alone trigger a pause. A new
+An in-flight HTTPS request breaks sustained low-pressure intervals and pauses
+healthy-idle recovery accounting; normal TLS temporary allocations therefore do
+not alone trigger a pause. Healthy idle time accumulates across requests, while
+an unhealthy idle sample resets it. A new
 explicit network allocation-exhaustion event after client cleanup can force a
 scan pause. Recovery requires a fresh valid desired-policy response after the
 pause and an unexpired lease. The guard preserves the server's desired sampling
@@ -224,6 +226,27 @@ HTTP completion evidence identifies only numeric request kinds and bounded
 response sizes, enabling contact/config/activation/ingestion to be distinguished
 without logging their content or credentials. This correction still requires
 its own physical acceptance.
+
+The `cp-d4204cafe753` run established the next boundary: BLE initialization
+succeeded with 72,864 internal bytes available, but consumed 60,060 bytes before
+host/collector task stacks. The collector task allocation failed and normal
+teardown restored about 73 KB, followed by successful contact/config/activation
+and ingestion HTTP 200 responses. This proves status delivery and safe pressure
+teardown, not successful observation collection.
+
+The subsequent fixed-budget correction reduces two display DMA stripes from
+15,360 to 3,840 bytes and uses smaller single-connection NimBLE pools, three
+controller activities and six static Wi-Fi RX buffers. Advertising-report event
+capacity and packet sizes remain unchanged. The pinned SDK's global dynamic TLS
+record buffers are enabled for enterprise Wi-Fi and HTTPS, retaining full 16 KB
+incoming and 4 KB outgoing limits; certificate/key ownership and verification
+remain unchanged. The independent enterprise handshake cleanup option releases
+used CA/DHM/key data where applicable, not the record buffers by itself. Task
+stack sizes are retained, and numeric high-watermarks provide evidence for any
+later stack tuning. The idle recovery timer now accumulates healthy idle time
+across HTTP requests so frequent cloud work cannot indefinitely prevent recovery.
+An actual-raster ASan/UBSan regression also catches an existing cross-call DMA
+buffer reuse problem, preserving ping-pong phase across odd-stripe renders.
 
 ### Network authentication modes
 

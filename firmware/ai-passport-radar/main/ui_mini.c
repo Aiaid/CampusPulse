@@ -23,10 +23,13 @@
 
 #define UI_SWAP_BYTES 1
 
-#define BAND_LINES 16
+// Four rows keep the two DMA buffers at 3,840 bytes on the 240 px display.
+// Smaller stripes trade more SPI transactions for 11,520 bytes less fixed RAM;
+// the two-buffer ownership and global-coordinate clipping stay unchanged.
+#define BAND_LINES 4
 
 static esp_lcd_panel_handle_t s_panel;
-static DMA_ATTR uint16_t s_buf[2][UI_W * BAND_LINES];   // 2x7.5KB，全库唯一的 RAM
+static DMA_ATTR uint16_t s_buf[2][UI_W * BAND_LINES];   // 2 x 1,920 bytes, no heap
 static uint8_t s_cur;
 
 // 当前带：图元按全局坐标画，落进 [s_rx0,s_rx1) x [s_ry0,s_ry0+s_lines) 才生效。
@@ -66,7 +69,8 @@ void ui_render(ui_rect_t region, ui_paint_fn paint, void *user)
 
     s_rx0 = region.x;
     s_rw  = region.w;
-    s_cur = 0;
+    // Keep alternating across render calls too: the last stripe can still be
+    // in DMA when the next (possibly one-stripe) region starts painting.
     for (int y = region.y; y < region.y + region.h; y += BAND_LINES) {
         s_ry0   = (int16_t)y;
         s_lines = (int16_t)((region.y + region.h - y < BAND_LINES)

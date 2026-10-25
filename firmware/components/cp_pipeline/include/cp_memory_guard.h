@@ -21,11 +21,14 @@ typedef struct {
     bool raw_paused, scan_paused, restart_ready;
     bool raw_low, scan_low, healthy;
     bool init_fault;
-    uint64_t raw_since, scan_since, healthy_since, paused_at;
+    bool sample_seen, http_busy;
+    uint32_t healthy_idle_ms;
+    uint64_t raw_since, scan_since, paused_at, last_sample;
 } cp_memory_guard_t;
 
-/* Supervisor-owned state, no allocation or IO. In-flight HTTP samples break
- * sustained-pressure/recovery intervals, but do not clear an existing pause. */
+/* Supervisor-owned state, no allocation or IO. In-flight HTTP samples reset
+ * pressure intervals and pause healthy-idle recovery accounting. Unhealthy idle
+ * samples reset recovery; HTTP never clears an existing pause. */
 void cp_memory_guard_observe(cp_memory_guard_t *, uint64_t now_ms, uint32_t free_bytes,
                              uint32_t largest_bytes, bool http_busy, bool collecting);
 void cp_memory_guard_pause(cp_memory_guard_t *, uint64_t now_ms);

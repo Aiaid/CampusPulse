@@ -62,6 +62,10 @@ static void show_status(const cp_runtime_snapshot_t *runtime) {
     snprintf(view.collection, sizeof view.collection, "%s",
              s_runtime_error != ESP_OK           ? "RUNTIME ERROR"
              : !runtime->pipeline.storage_ready  ? "JOURNAL UNAVAILABLE"
+             : runtime->pipeline.stop_failed     ? "CAPTURE STOP FAILED"
+             : runtime->pipeline.radio_restart_required ? "BLE NEEDS RESTART"
+             : runtime->pipeline.memory_paused   ? "MEMORY PAUSED"
+             : runtime->pipeline.memory_raw_paused ? "RAW MEMORY PAUSED"
              : runtime->pipeline.pressure_paused ? "STORAGE PAUSED"
              : cp_collection_allowed(runtime->collection) && !runtime->pipeline.collecting
                  ? "CAPTURE STOPPED"
@@ -75,6 +79,13 @@ static void show_status(const cp_runtime_snapshot_t *runtime) {
     snprintf(view.setup_state, sizeof view.setup_state, "%s", runtime->provision.state);
 #endif
     cp_board_present(&view);
+#if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
+    static bool stack_reported;
+    if (!stack_reported && runtime->pipeline.collecting) {
+        ESP_LOGI("cp_app","supervisor_stack_free=%u",(unsigned)uxTaskGetStackHighWaterMark(NULL));
+        stack_reported=true;
+    }
+#endif
 }
 static void supervisor(void *context) {
     (void)context;

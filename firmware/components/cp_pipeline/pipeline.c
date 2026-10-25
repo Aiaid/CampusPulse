@@ -212,6 +212,7 @@ static void close_window(uint32_t duration) {
     __atomic_add_fetch(&s_address_overflow_reports, s_window.summary_drops, __ATOMIC_RELAXED);
     __atomic_add_fetch(&s_health.summary_drops, c.summaries_dropped, __ATOMIC_RELAXED);
     __atomic_add_fetch(&s_health.raw_drops, s_window.raw_drops, __ATOMIC_RELAXED);
+    ESP_LOGI(TAG,"collector_stack_free=%lu",(unsigned long)uxTaskGetStackHighWaterMark(NULL));
     __atomic_add_fetch(&s_raw_pressure_skips, s_window.pressure, __ATOMIC_RELAXED);
     __atomic_add_fetch(&s_unpersisted_window_reports, c.unpersisted_window_reports,
                        __ATOMIC_RELAXED);
@@ -820,11 +821,12 @@ esp_err_t cp_pipeline_apply(const cp_network_policy_t *p) {
     err = nimble_port_init();
     ESP_LOGI(TAG, "ble_init err=%d controller_before=%u controller_after=%u "
                  "internal_before=%u internal_after=%u largest_before=%u largest_after=%u "
-                 "internal_min=%u",
+                 "internal_min=%u stack_free=%u",
              (int)err, controller_before, (unsigned)esp_bt_controller_get_status(),
              internal_before, (unsigned)heap_caps_get_free_size(caps), largest_before,
              (unsigned)heap_caps_get_largest_free_block(caps),
-             (unsigned)heap_caps_get_minimum_free_size(caps));
+             (unsigned)heap_caps_get_minimum_free_size(caps),
+             (unsigned)uxTaskGetStackHighWaterMark(NULL));
     if (err != ESP_OK) {
         /* ESP-IDF can retain partial host state even after controller rollback.
          * Do not deinit that incomplete state or retry it in this boot. */

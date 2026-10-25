@@ -54,10 +54,85 @@ static void http_and_hysteresis(void) {
     sample(&g, 90000, 70, 40, true, false);
     assert(!g.restart_ready);
     sample(&g, 91000, 70, 40, false, false);
-    sample(&g, 100999, 70, 40, false, false);
+    assert(g.restart_ready); /* Healthy idle before HTTP still counts. */
+}
+static void recovery_accumulates_idle_only(void) {
+    cp_memory_guard_t g = {0};
+    cp_memory_guard_pause(&g, 0);
+    sample(&g, 0, 70, 40, false, false);
+    sample(&g, 4000, 10, 8, true, false);
+    sample(&g, 23999, 10, 8, true, false);
+    assert(!g.restart_ready && g.healthy_idle_ms == 4000);
+    sample(&g, 24000, 70, 40, false, false);
+    assert(!g.restart_ready && g.healthy_idle_ms == 4000);
+    sample(&g, 29999, 70, 40, false, false);
     assert(!g.restart_ready);
-    sample(&g, 101000, 70, 40, false, false);
+    sample(&g, 30000, 70, 40, false, false);
+    assert(g.restart_ready); /* 4s idle + 20s HTTP + 6s idle, 30s cooldown. */
+    sample(&g, 30001, 10, 8, true, false);
+    assert(!g.restart_ready);
+    assert(!cp_memory_guard_start_allowed(&g, 50000, 70*1024, 40*1024, true));
+    sample(&g, 50000, 70, 40, false, false);
+    assert(g.restart_ready); /* A ready recovery is only deferred during HTTP. */
+
+    cp_memory_guard_started(&g);
+    sample(&g, 0, 30, 17, false, true);
+    sample(&g, 2000, 30, 17, false, true);
+    assert(g.raw_paused && !g.scan_paused);
+    sample(&g, 3000, 40, 24, false, true);
+    sample(&g, 7000, 10, 8, true, true);
+    sample(&g, 26999, 10, 8, true, true);
+    assert(g.raw_paused && !g.scan_paused && g.healthy_idle_ms == 4000);
+    sample(&g, 27000, 40, 24, false, true);
+    sample(&g, 32999, 40, 24, false, true);
+    assert(g.raw_paused && !g.scan_paused);
+    sample(&g, 33000, 40, 24, false, true);
+    assert(!g.raw_paused && !g.scan_paused);
+}
+static void unhealthy_idle_restarts_recovery(void) {
+    cp_memory_guard_t g = {0};
+    cp_memory_guard_pause(&g, 0);
+    sample(&g, 0, 70, 40, false, false);
+    sample(&g, 4000, 10, 8, true, false);
+    sample(&g, 24000, 70, 40, false, false);
+    sample(&g, 25000, 55, 40, false, false);
+    assert(g.healthy_idle_ms == 0 && !g.restart_ready);
+    sample(&g, 26000, 70, 40, false, false);
+    sample(&g, 35999, 70, 40, false, false);
+    assert(!g.restart_ready);
+    sample(&g, 36000, 70, 40, false, false);
     assert(g.restart_ready);
+
+    cp_memory_guard_started(&g);
+    g.raw_paused = true;
+    sample(&g, 40000, 40, 24, false, true);
+    sample(&g, 44000, 10, 8, true, true);
+    sample(&g, 64000, 40, 24, false, true);
+    sample(&g, 65000, 40, 19, false, true);
+    sample(&g, 66000, 40, 24, false, true);
+    sample(&g, 75999, 40, 24, false, true);
+    assert(g.raw_paused);
+    sample(&g, 76000, 40, 24, false, true);
+    assert(!g.raw_paused);
+}
+static void recovery_timestamp_limits(void) {
+    cp_memory_guard_t g = {.raw_paused = true};
+    sample(&g, 10000, 40, 24, false, true);
+    sample(&g, 14000, 40, 24, false, true);
+    sample(&g, 18000, 10, 8, true, true);
+    assert(g.healthy_idle_ms == 8000);
+    sample(&g, 1000, 10, 8, true, true); /* Clock rollback discards progress. */
+    sample(&g, 2000, 40, 24, false, true);
+    sample(&g, 11999, 40, 24, false, true);
+    assert(g.raw_paused);
+    sample(&g, 12000, 40, 24, false, true);
+    assert(!g.raw_paused);
+
+    cp_memory_guard_started(&g);
+    g.raw_paused = true;
+    sample(&g, 0, 40, 24, false, true);
+    sample(&g, UINT64_MAX, 40, 24, false, true);
+    assert(!g.raw_paused && g.healthy_idle_ms == CP_MEMORY_HEALTHY_MS);
 }
 static void startup_and_unsafe_retry(void) {
     cp_memory_guard_t g = {0};
@@ -101,6 +176,9 @@ static void start_boundaries(void) {
 int main(void) {
     transient_and_sustained();
     http_and_hysteresis();
+    recovery_accumulates_idle_only();
+    unhealthy_idle_restarts_recovery();
+    recovery_timestamp_limits();
     startup_and_unsafe_retry();
     recovery_rechecks();
     start_boundaries();

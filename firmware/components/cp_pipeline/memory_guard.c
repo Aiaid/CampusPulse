@@ -16,27 +16,51 @@ static bool sustained(bool condition, bool *tracking, uint64_t *since,
     }
     return elapsed(now, *since, duration);
 }
+static bool healthy_idle(cp_memory_guard_t *g, bool condition) {
+    g->healthy = condition;
+    if (!condition)
+        g->healthy_idle_ms = 0;
+    return condition && g->healthy_idle_ms >= CP_MEMORY_HEALTHY_MS;
+}
+static void account_idle(cp_memory_guard_t *g, uint64_t now, bool busy) {
+    if (g->sample_seen && now < g->last_sample) {
+        /* Discard intervals across clock rollback rather than underflowing. */
+        g->raw_low = g->scan_low = g->healthy = g->restart_ready = false;
+        g->healthy_idle_ms = 0;
+    } else if (g->sample_seen && !g->http_busy && g->healthy) {
+        /* The prior sample describes the interval ending at this observation.
+         * Saturation keeps even a very large timestamp gap overflow-safe. */
+        uint64_t delta = now - g->last_sample;
+        uint32_t remaining = CP_MEMORY_HEALTHY_MS - g->healthy_idle_ms;
+        g->healthy_idle_ms += delta >= remaining ? remaining : (uint32_t)delta;
+    }
+    g->sample_seen = true;
+    g->last_sample = now;
+    g->http_busy = busy;
+}
 void cp_memory_guard_pause(cp_memory_guard_t *g, uint64_t now) {
     if (!g->scan_paused)
         g->paused_at = now;
     g->scan_paused = g->raw_paused = true;
     g->restart_ready = g->raw_low = g->scan_low = g->healthy = false;
+    g->healthy_idle_ms = 0;
 }
 void cp_memory_guard_observe(cp_memory_guard_t *g, uint64_t now, uint32_t free,
                              uint32_t largest, bool busy, bool collecting) {
+    account_idle(g, now, busy);
     if (busy) {
-        g->raw_low = g->scan_low = g->healthy = g->restart_ready = false;
+        g->raw_low = g->scan_low = g->restart_ready = false;
         return;
     }
     if (g->scan_paused) {
         bool enough = free >= CP_MEMORY_START_FREE && largest >= CP_MEMORY_START_LARGEST;
-        g->restart_ready = sustained(enough && !collecting, &g->healthy, &g->healthy_since,
-                                     now, CP_MEMORY_HEALTHY_MS) &&
+        g->restart_ready = healthy_idle(g, enough && !collecting) &&
                            elapsed(now, g->paused_at, CP_MEMORY_COOLDOWN_MS);
         return;
     }
     if (!collecting) {
         g->raw_low = g->scan_low = g->healthy = false;
+        g->healthy_idle_ms = 0;
         return;
     }
     if (sustained(free < CP_MEMORY_STOP_FREE || largest < CP_MEMORY_STOP_LARGEST,
@@ -47,8 +71,8 @@ void cp_memory_guard_observe(cp_memory_guard_t *g, uint64_t now, uint32_t free,
     if (sustained(free < CP_MEMORY_RAW_FREE || largest < CP_MEMORY_RAW_LARGEST,
                    &g->raw_low, &g->raw_since, now, CP_MEMORY_RAW_DELAY_MS))
         g->raw_paused = true;
-    if (sustained(free >= CP_MEMORY_RAW_RESUME_FREE && largest >= CP_MEMORY_RAW_RESUME_LARGEST,
-                   &g->healthy, &g->healthy_since, now, CP_MEMORY_HEALTHY_MS))
+    if (healthy_idle(g, free >= CP_MEMORY_RAW_RESUME_FREE &&
+                        largest >= CP_MEMORY_RAW_RESUME_LARGEST))
         g->raw_paused = false;
 }
 bool cp_memory_guard_start_allowed(cp_memory_guard_t *g, uint64_t now, uint32_t free,
