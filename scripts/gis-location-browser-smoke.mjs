@@ -178,8 +178,8 @@ try {
   await page.getByRole('button', { name: '编辑地点 图书馆测试点', exact: true }).click();
   dialog = page.getByRole('dialog', { name: '编辑地点', exact: true });
   await dialog.getByLabel('GIS x（0–1）', { exact: true }).fill('0.63');
-  assert.equal(await dialog.getByRole('checkbox').isChecked(), false);
-  await dialog.getByRole('checkbox').check();
+  assert.equal(await dialog.getByRole('checkbox', { name: '我已核对所选 GIS 位置与此地点相符', exact: true }).isChecked(), false);
+  await dialog.getByRole('checkbox', { name: '我已核对所选 GIS 位置与此地点相符', exact: true }).check();
   await capture(page, 'picker-phone');
   assert.equal(await dialog.locator('.cp-admin-dialog-head').evaluate(header => {
     const rect = header.getBoundingClientRect();
