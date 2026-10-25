@@ -38,3 +38,6 @@ sdkconfig.old
 .DS_Store
 .idea/
 .vscode/
+
+# Local agent workspace data: device identifiers, machine paths, session notes
+.workbuddy/
