@@ -1,0 +1,29 @@
+# LILYGO T-Energy-S3 V1.0 (ESP32-S3-WROOM-1 / R8).
+# Every value below is derived from the vendor repository, not from a measurement
+# of the physical boards. See docs/research/t-energy-s3-hardware.md.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# 16 MB flash, QIO, 80 MHz (vendor boards/esp32s3_flash_16MB.json).
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# 8 MB Octal SPI PSRAM (vendor board_build.memory_type = qio_opi).
+# Quad mode makes PSRAM initialisation fail on this board, so Octal is not optional.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+
+# Custom layout: small application plus one large raw partition for the bounded
+# queue. This deliberately replaces the vendor default_16MB.csv
+# (3 MB app + 9.9 MB FATFS), and it is not the AI Passport layout.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Console: platformio.ini disables USB CDC on boot and the README FAQ points at
+# UART0, while the vendor Arduino table claims USB CDC. UART0 is chosen here and
+# still has to be confirmed on hardware; switching is a one-line change to
+# CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y

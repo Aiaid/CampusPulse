@@ -1,0 +1,63 @@
+# LILYGO T-Energy-S3 V1.0 (ESP32-S3-WROOM-1 / R8), shared chain build.
+#
+# The flash/PSRAM block is measured: esptool reports 16 MB quad flash and 8 MB
+# embedded PSRAM on the first physical board (docs/design/tenergy-s3-port.md
+# §2a). The security and timing block is not tunable wishlist material: the
+# shared chain does not compile or run without it, and it is copied from the
+# Passport baseline because that is the only configuration the chain was written
+# against.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# 16 MB quad flash at 80 MHz, 8 MB Octal PSRAM at 80 MHz.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+
+# Custom layout; see partitions.csv for why the queue geometry is fixed.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# Console on the native USB-Serial-JTAG peripheral. The measured board
+# enumerates as VID_303A/PID_1001 on the USB-C port, and cp_usb's console
+# transport refuses to start unless this is selected (cp_usb/usb_console.c).
+# Logs and CPSETUP/1 frames share the port by design: the frame prefix is 0x1E.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# Chain baseline: upload scheduling and lease timing assume a 1 ms tick.
+CONFIG_FREERTOS_HZ=1000
+
+# cp_network refuses to build without TLS time verification and HTTPS.
+CONFIG_MBEDTLS_HAVE_TIME_DATE=y
+CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y
+
+# NimBLE roles. The board only ever scans, but PERIPHERAL and BROADCASTER must
+# stay enabled: cp_pipeline_apply() calls ble_svc_gap_init() and
+# ble_svc_gatt_init() unconditionally, and IDf only compiles those services when
+# a server role is present. Disabling them fails the link, not the scan.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_HOST_BASED_PRIVACY=n
+CONFIG_BT_NIMBLE_NVS_PERSIST=n
+CONFIG_BT_NIMBLE_SECURITY_ENABLE=n
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=6144
+
+# SoftAP setup only exists behind protocomm Security 2; older versions are
+# rejected outright.
+CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_0=n
+CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1=n
+CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2=y
+
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_EQUALS_DEFAULT=y
