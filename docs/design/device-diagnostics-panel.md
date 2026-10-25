@@ -1,8 +1,9 @@
 # Administrator device diagnostics and uploaded evidence
 
-Status: implemented locally, 2026-10-25. Deployment and physical-device acceptance
-are independent of the checks below. This adds no firmware fields or protocol
-migration. All example and browser acceptance records are synthetic.
+Status: implemented and deployed, 2026-10-25. Live device panels and receipt
+metadata were checked separately from isolated payload tests below. This adds
+no firmware fields or protocol migration. All example and browser acceptance
+records are synthetic.
 
 ## Evidence presented
 
@@ -88,6 +89,16 @@ admin cookies access to the separate research-token endpoints.
   ingestion APIs, and checks old-boot display, memory reasons, unknown counters,
   selected summary/original text and desktop/mobile layout. It does not touch
   hardware, production credentials or existing user browser sessions.
+
+The merged application passed all 629 tracked tests across 56 files, production
+build and the isolated diagnostics browser check. Hosted checks and deployment
+passed for `f8fb827`; the published admin bundle matched the local build, health
+returned 200 and unauthenticated admin reads returned 401. Native Chrome showed
+the actual Passport's control/status/ingestion clocks and real batch metadata
+from the same current boot. Expanded projection and exact-byte interactions were
+verified with isolated real D1/R2 fixtures; the production native-browser check
+covered panels and receipt metadata. The diagnostics browser check is also
+included in CI alongside provisioning and the existing browser flows.
 
 No external code or images were imported for this change. Existing repository
 components, ingestion fixtures and test helpers are reused in place.

@@ -93,11 +93,6 @@ collection and durable upload. Final local software verification passed on
 
 ## P1 — Add interaction and display after collection/upload acceptance
 
-- [ ] Clarify administrator device diagnostics and uploaded evidence: separate
-      contact/capture/config/upload states, show age and boot context, explain
-      losses and RAM pauses, and inspect bounded authenticated batch/payload
-      records with exact-byte versus normalized-projection provenance.
-
 - [ ] Add ingestion rate limiting, operational alerts, capacity/orphan audits and
       a lease-safe orphan cleanup process; add research roles and versioned
       vehicle classification only after evaluation with independent evidence.
@@ -156,6 +151,15 @@ collection and durable upload. Final local software verification passed on
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] Clarify administrator device diagnostics and uploaded evidence: separate
+      contact/capture/config/upload states, show age and boot context, explain
+      losses and RAM pauses, and inspect bounded authenticated batch/payload
+      records with exact-byte versus normalized-projection provenance.
+      Verify 33 targeted tests, 629 tracked tests, build, isolated real D1/R2
+      browser flows, hosted deployment and live device-panel/batch metadata;
+      selected payload rendering is isolated-test evidence, not a production
+      archive-content inspection. Add this browser workflow to CI.
 
 - [x] Add automatic RAM-pressure collection protection: suspend optional raw
       work, pause/release BLE when idle free or contiguous heap is inadequate,
