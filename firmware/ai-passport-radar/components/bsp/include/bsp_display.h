@@ -29,20 +29,3 @@ void bsp_display_backlight(uint8_t percent);
 // 已阻止 LVGL 刷屏，调用后必须立即进入 deep sleep 或重启。
 esp_err_t bsp_display_prepare_deep_sleep(void);
 
-// ---------------------------------------------------------------------------
-// LVGL 接入(可选层)。必须先 bsp_display_init() 成功后再调。
-// 不想用 LVGL 的开发者可忽略本段,直接用 bsp_display_panel() 自己画。
-// ---------------------------------------------------------------------------
-// 前向声明:LVGL 里 lv_display_t 是 `typedef struct _lv_display_t lv_display_t;`,
-// 故此处用 struct 形式即可,避免本头文件强行 include lvgl.h。
-struct _lv_display_t;
-
-// 启动 LVGL 与其渲染任务,返回 lv_display_t*。失败返回 NULL；display/回调注册失败
-// 回滚 display 并保留已初始化的 port，后续可重试。port 自身部分初始化失败需重启，
-// 不覆盖依赖中可能尚未退出的任务。首次初始化由单一任务串行调用。
-struct _lv_display_t *bsp_lvgl_init(void);
-
-// LVGL 非线程安全:在【非 LVGL 任务】里操作任何 lv_* 对象前后必须加解锁。
-// LVGL 尚未就绪或超时时 lock 返回 false；只有 lock 成功后才调用 unlock。
-bool bsp_lvgl_lock(int timeout_ms);
-void bsp_lvgl_unlock(void);
