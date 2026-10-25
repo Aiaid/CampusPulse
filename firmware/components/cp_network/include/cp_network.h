@@ -73,6 +73,11 @@ void cp_network_snapshot(cp_network_snapshot_t *out);
 /* Returns latest validated policy; root uses request_sequence to renew core's
  * monotonic lease but only applies hardware when config ID actually changes. */
 bool cp_network_get_policy(cp_network_policy_t *out);
+/* Runtime task only: nonblocking admission against HTTPS working-set
+ * allocations. Pair every successful claim with end in the same task, before
+ * calling report_activation (which acquires the same resource). */
+bool cp_network_begin_radio_transition(void);
+void cp_network_end_radio_transition(void);
 /* Stage report only after actual application/failure. Worker retries current
  * application sequence; stale failures cannot overwrite a newer success. */
 esp_err_t cp_network_report_activation(const char *config_id, bool applied, const char *reason);

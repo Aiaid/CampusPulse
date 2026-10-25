@@ -79,16 +79,30 @@ static void recovery_rechecks(void) {
     sample(&g, 1000, 70, 40, false, false);
     sample(&g, 31001, 70, 40, false, false);
     assert(g.restart_ready);
-    assert(!cp_memory_guard_start_allowed(&g, 31002, 70*1024, 27*1024, false));
+    assert(!cp_memory_guard_start_allowed(&g, 31002, 70*1024, 23*1024, false));
     assert(!g.restart_ready);
     sample(&g, 32000, 70, 40, false, false);
     sample(&g, 42000, 70, 40, false, true);
     assert(!g.restart_ready); /* A failed stop cannot be treated as recovered. */
+}
+static void start_boundaries(void) {
+    cp_memory_guard_t g = {0};
+    assert(CP_MEMORY_START_FREE == 56u*1024u && CP_MEMORY_START_LARGEST == 24u*1024u);
+    assert(cp_memory_guard_start_allowed(&g, 0, 56*1024, 24*1024, false));
+    assert(!cp_memory_guard_start_allowed(&g, 1, 56*1024, 24*1024-1, false));
+    sample(&g, 2, 56, 24, false, false);
+    sample(&g, 30001, 56, 24, false, false);
+    assert(g.restart_ready);
+    assert(cp_memory_guard_start_allowed(&g, 30001, 56*1024, 24*1024, false));
+    cp_memory_guard_started(&g);
+    assert(!cp_memory_guard_start_allowed(&g, 30002, 56*1024-1, 24*1024, false));
+    assert(g.scan_paused);
 }
 int main(void) {
     transient_and_sustained();
     http_and_hysteresis();
     startup_and_unsafe_retry();
     recovery_rechecks();
+    start_boundaries();
     puts("memory guard: sustained pressure, TLS exclusion, hysteresis, cooldown and init latch passed");
 }

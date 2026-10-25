@@ -194,7 +194,7 @@ static esp_err_t http_event(esp_http_client_event_t *event)
         diagnostic(CP_DIAG_CLOUD_AUTH,CP_DIAG_CLOUD_CHECKING,ESP_OK,true,false);
     return cp_http_response_event(event,now_ms(),running());
 }
-/* s_http serializes credentials, HTTP, activation and configuration. */
+/* s_http serializes credentials, HTTP, activation, configuration and radio init. */
 static esp_err_t request_locked(const char *path, const char *body, size_t length,
     const char *hash, response_t *response, int *status)
 {
@@ -280,6 +280,12 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
     }
     unlock();
     log_evidence(NET_PHASE_HTTP_END,e,socket_errno,tls_error,tls_code,tls_flags,*status,started);
+    unsigned request_kind=!strcmp(path,"/api/v2/device/contact")?1u:
+        !strcmp(path,"/api/v2/device/config")?2u:
+        !strcmp(path,"/api/v2/device/config/ack")?3u:
+        !strcmp(path,"/api/v2/ingest")?4u:0u;
+    ESP_LOGI("cp_network","http request_kind=%u error=%ld http=%d response_bytes=%lu response_capacity=%lu",
+        request_kind,(long)e,*status,(unsigned long)response->used,(unsigned long)response->capacity);
     return e;
 }
 static char *contact_body(uint64_t seq)
@@ -556,6 +562,14 @@ bool cp_network_get_policy(cp_network_policy_t *out)
 {
     if (!out || !s_lock) return false;
     lock(); bool valid=s_snapshot.policy_valid; if (valid) *out=s_snapshot.policy; unlock(); return valid;
+}
+bool cp_network_begin_radio_transition(void)
+{
+    return s_http && xSemaphoreTake(s_http,0)==pdTRUE;
+}
+void cp_network_end_radio_transition(void)
+{
+    xSemaphoreGive(s_http);
 }
 void cp_network_set_capture_state(const char *state)
 {

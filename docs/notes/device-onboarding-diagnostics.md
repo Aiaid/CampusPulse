@@ -187,7 +187,7 @@ claim:
 | Pause optional raw samples | Below 32 / 18 KiB, either limit | 2 seconds idle |
 | Resume raw samples | At least 36 / 20 KiB, both limits | 10 seconds healthy idle |
 | Stop scan and release BLE | Below 24 / 16 KiB, either limit | 5 seconds idle |
-| Admit BLE startup/recovery | At least 56 / 28 KiB, both limits | Recovery also needs 30-second cooldown and 10 seconds healthy idle |
+| Admit BLE startup/recovery | At least 56 / 24 KiB, both limits | Recovery also needs 30-second cooldown and 10 seconds healthy idle |
 
 An in-flight HTTPS request breaks these sustained-pressure/recovery intervals;
 normal TLS temporary allocations therefore do not alone trigger a pause. A new
@@ -210,6 +210,20 @@ automatic restart, credential change or Flash erase is introduced.
 Host tests exercise pressure duration, fragmentation, TLS exclusion, hysteresis,
 cooldown, fresh-policy/lease boundaries, SDK retry prevention and USB recovery.
 Physical acceptance and tuned threshold performance remain separate.
+
+The first three-minute run of `cp-194d461feb09` recorded 17 HTTP 200 results,
+three 12-second request deadlines and a minimum free heap of 25,908 bytes.
+Its initial 28 KiB contiguous startup requirement refused BLE despite about
+70 KiB total free and 26 KiB largest blocks. Startup/recovery admission is now
+24 KiB contiguous, retaining the separate 56 KiB total-free requirement. A
+nonblocking claim on the existing HTTP resource serializes BLE initialization
+against TLS allocation; the policy is rechecked under that claim. Contention
+does not consume the desired-policy sequence or create a false failure ACK.
+All claims release before activation reporting, avoiding recursive mutex use.
+HTTP completion evidence identifies only numeric request kinds and bounded
+response sizes, enabling contact/config/activation/ingestion to be distinguished
+without logging their content or credentials. This correction still requires
+its own physical acceptance.
 
 ### Network authentication modes
 

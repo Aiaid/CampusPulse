@@ -21,6 +21,8 @@ static esp_err_t load_error=ESP_OK,save_error=ESP_OK,validation_error=ESP_OK;
 static esp_err_t network_stop_error=ESP_OK,pipeline_stop_error=ESP_OK,provision_stop_error=ESP_OK,apply_error=ESP_OK;
 static bool network_started,entropy_enabled,apply_actually_starts=true;
 static bool memory_refuse_start;
+static bool radio_resource_busy,radio_resource_held,reject_on_radio_claim;
+static unsigned radio_claims,radio_releases;
 static char capture_state[20],last_report_id[65];static bool last_report_applied;
 static cp_provision_submit_fn submit_callback;static void *submit_context;
 static cp_provision_credential_resolver_fn credential_callback;static void *credential_context;
@@ -95,8 +97,18 @@ esp_err_t cp_network_start(const cp_settings_t*s)
 esp_err_t cp_network_stop(void){record(NETWORK_STOP);if(network_stop_error==ESP_OK)network_started=false;return network_stop_error;}
 void cp_network_snapshot(cp_network_snapshot_t*out){*out=net;}
 bool cp_network_get_policy(cp_network_policy_t*out){if(net.policy_valid)*out=net.policy;return net.policy_valid;}
+bool cp_network_begin_radio_transition(void)
+{
+    assert(!radio_resource_held);++radio_claims;
+    if(radio_resource_busy)return false;
+    radio_resource_held=true;
+    if(reject_on_radio_claim){net.policy_valid=false;net.policy_rejected=true;net.policy_response_sequence++;}
+    return true;
+}
+void cp_network_end_radio_transition(void)
+{assert(radio_resource_held);radio_resource_held=false;++radio_releases;}
 esp_err_t cp_network_report_activation(const char*id,bool applied,const char*why)
-{assert(why&&strlen(id)<65);record(applied?APPLIED:FAILED);++report_count;strcpy(last_report_id,id);last_report_applied=applied;return ESP_OK;}
+{assert(!radio_resource_held&&why&&strlen(id)<65);record(applied?APPLIED:FAILED);++report_count;strcpy(last_report_id,id);last_report_applied=applied;return ESP_OK;}
 void cp_network_set_capture_state(const char*state){assert(strlen(state)<sizeof capture_state);strcpy(capture_state,state);}
 esp_err_t cp_network_validate_candidate(const cp_settings_t*s,uint32_t timeout)
 {assert(!provision.active&&!pipe_state.collecting&&!network_started&&timeout>=1000);
@@ -119,7 +131,7 @@ esp_err_t cp_network_attempt_save(const cp_network_attempt_t *attempt)
 esp_err_t cp_pipeline_init(const char*node,const char*boot){assert(node&&boot);return ESP_OK;}
 esp_err_t cp_pipeline_stop(void){record(PIPE_STOP);if(pipeline_stop_error==ESP_OK)pipe_state.collecting=false;return pipeline_stop_error;}
 esp_err_t cp_pipeline_apply(const cp_network_policy_t*p)
-{assert(!provision.active&&p->core.collection_enabled&&!pipe_state.radio_restart_required);record(PIPE_APPLY);++apply_count;
+{assert(radio_resource_held&&!provision.active&&p->core.collection_enabled&&!pipe_state.radio_restart_required);record(PIPE_APPLY);++apply_count;
  if(memory_refuse_start){pipe_state.memory_paused=true;pipe_state.memory_restart_ready=false;return ESP_ERR_NO_MEM;}
  if(apply_error==ESP_OK){pipe_state.collecting=apply_actually_starts;pipe_state.memory_paused=false;pipe_state.memory_raw_paused=false;}return apply_error;}
 esp_err_t cp_pipeline_maintain(void){return pipe_state.stop_failed?ESP_ERR_TIMEOUT:ESP_OK;}
@@ -219,6 +231,17 @@ static void init_fault_repeat_tick(unsigned n)
 {publish_policy(n,clock_ms,120000);}
 static void http_deferral_tick(unsigned n)
 {if(n==2){assert(!apply_count&&!report_count);net.http_in_flight=false;}}
+static void radio_deferral_tick(unsigned n)
+{if(n==2){assert(!apply_count&&!report_count&&!s_policy_attempted_sequence&&!s_core.latest_request_sequence);radio_resource_busy=false;}}
+static void radio_expiry_tick(unsigned n)
+{if(n==3){assert(!apply_count&&!report_count&&!s_policy_attempted_sequence);radio_resource_busy=false;}}
+static void radio_rejection_tick(unsigned n)
+{if(n==2){assert(!apply_count&&!report_count);net.policy_valid=false;net.policy_rejected=true;net.policy_response_sequence=2;radio_resource_busy=false;}}
+static void radio_recovery_tick(unsigned n)
+{
+    if(n==2){assert(apply_count==1&&last_report_applied);pipe_state.collecting=false;pipe_state.memory_paused=true;pipe_state.memory_restart_ready=true;radio_resource_busy=true;}
+    if(n==3){assert(apply_count==1&&report_count==1&&!strcmp(s_reason,"memory_pressure"));radio_resource_busy=false;}
+}
 static void assert_candidate_order(void)
 {const event_t expected[]={PROVISION_STOP,VALIDATE,SAVE,RESTART};assert(event_count-marker==4);
  for(unsigned i=0;i<4;++i)assert(events[marker+i]==expected[i]);}
@@ -264,6 +287,12 @@ static void scenario(const char*name)
     else if(!strcmp(name,"init_fault_usb_setup")){prepare(true);pipe_state.radio_restart_required=true;assert(run(3,init_fault_setup_tick)==1);assert(!apply_count&&provision.active&&provision.mode==CP_PROVISION_USB);}
     else if(!strcmp(name,"init_fault_no_retry")){prepare(true);pipe_state.radio_restart_required=true;assert(run(4,init_fault_repeat_tick)==1);assert(!apply_count&&!last_report_applied&&!strcmp(capture_state,"failed")&&!strcmp(s_reason,"ble_restart_required"));}
     else if(!strcmp(name,"http_start_deferral")){prepare(true);publish_policy(1,9000,120000);net.http_in_flight=true;assert(run(2,http_deferral_tick)==1);assert(apply_count==1&&last_report_applied&&pipe_state.collecting);}
+    else if(!strcmp(name,"radio_start_deferral")){prepare(true);publish_policy(1,9000,120000);radio_resource_busy=true;assert(run(2,radio_deferral_tick)==1);assert(apply_count==1&&report_count==1&&last_report_applied&&pipe_state.collecting&&radio_claims==2&&radio_releases==1);}
+    else if(!strcmp(name,"radio_deferred_expiry")){prepare(true);publish_policy(1,10000,1500);radio_resource_busy=true;assert(run(3,radio_expiry_tick)==1);assert(!apply_count&&report_count==1&&!last_report_applied&&radio_releases==1);}
+    else if(!strcmp(name,"radio_deferred_rejection")){prepare(true);publish_policy(1,9000,120000);radio_resource_busy=true;assert(run(3,radio_rejection_tick)==1);assert(!apply_count&&report_count==1&&!last_report_applied&&!s_policy_attempted_sequence&&radio_releases==0);}
+    else if(!strcmp(name,"radio_claim_rechecks_policy")){prepare(true);publish_policy(1,9000,120000);reject_on_radio_claim=true;assert(run(2,NULL)==1);assert(!apply_count&&report_count==1&&!last_report_applied&&!s_policy_attempted_sequence&&radio_claims==1&&radio_releases==1);}
+    else if(!strcmp(name,"radio_recovery_deferral")){prepare(true);publish_policy(1,9000,120000);assert(run(3,radio_recovery_tick)==1);assert(apply_count==2&&report_count==1&&pipe_state.collecting&&radio_claims==3&&radio_releases==2);}
+    else if(!strcmp(name,"radio_apply_error_releases")){prepare(true);publish_policy(1,9000,120000);apply_error=ESP_ERR_NO_MEM;assert(run(2,NULL)==1);assert(apply_count==1&&report_count==1&&!last_report_applied&&radio_claims==1&&radio_releases==1&&!strcmp(s_reason,"capture_start_failed"));}
     else if(!strcmp(name,"no_false_activation")){prepare(true);publish_policy(1,9000,120000);apply_actually_starts=false;assert(run(2,NULL)==1);assert(apply_count==1&&!last_report_applied&&s_core.policy_state==CP_POLICY_FAILED&&!strcmp(capture_state,"failed"));}
     else if(!strcmp(name,"resume_previous")){prepare(true);assert(run(3,resume_tick)==1);assert(net_start_count==2&&!provision.active&&network_started&&!strcmp(last_network_settings.ssid,"previous-network"));}
     else if(!strcmp(name,"saved_credential_context")){prepare(true);assert_saved_credential(true);assert(!shown_previous&&shown_history_error==ESP_OK);assert(run(3,candidate_usb_tick)==2);assert_saved_credential(true);assert(s_saved_generation==2);}
@@ -276,7 +305,7 @@ static void scenario(const char*name)
 }
 int main(int argc,char**argv)
 {
-    assert(argc==2);scenario(argv[1]);
+    assert(argc==2);scenario(argv[1]);assert(!radio_resource_held);
     if(validate_count){assert(progress_count==2&&history_save_count==2);assert(history_records[0].state==CP_ATTEMPT_INTERRUPTED&&history_records[0].diagnostic.code==CP_DIAG_VALIDATION_INTERRUPTED);assert(history_records[1].state==(restart_count?CP_ATTEMPT_SAVED:CP_ATTEMPT_FAILED));assert(history_records[1].diagnostic.terminal);assert(history_records[1].diagnostic.code==(restart_count?CP_DIAG_SAVED:save_error!=ESP_OK?CP_DIAG_SAVE_FAILED:CP_DIAG_DHCP_TIMEOUT));assert(!memcmp(&provision_diagnostic,&history_records[1].diagnostic,sizeof provision_diagnostic));}
     printf("actual runtime: %s passed\n",argv[1]);return 0;
 }
