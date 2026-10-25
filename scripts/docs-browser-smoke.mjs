@@ -51,10 +51,11 @@ try {
   });
   await page.goto(`${origin}/docs?url=https://example.invalid/forbidden.json`);
   await page.locator('.opblock').nth(8).waitFor();
-  assert.equal(await page.locator('.opblock').count(), 50, 'All implemented public, account/Passkey/admin, operator, v1/v2 device and research operations');
+  assert.equal(await page.locator('.opblock').count(), 51, 'All implemented public, account/Passkey/admin, operator, v1/v2 device and research operations');
   assert.ok(!(await page.content()).includes(token), 'Credential absent from initial HTML');
   const op = (method, path) => page.locator(`.opblock-${method}`).filter({ has: page.locator(`.opblock-summary-path[data-path="${path}"]`) });
   for (const [method, path] of [
+    ['get', '/api/v1/places/{id}/elevator-events'],
     ['get', '/api/v2/device/config'],
     ['post', '/api/v2/device/contact'],
     ['post', '/api/v2/device/config/ack'],
