@@ -12,7 +12,7 @@ const base = `http://127.0.0.1:${server.httpServer.address().port}`;
 const binary = process.env.CHROMIUM_PATH || (existsSync(chromium.executablePath()) ? chromium.executablePath() : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
 const browser = await chromium.launch({ headless: true, executablePath: binary });
 function fixture(existing = false) {
-  const placement = { id: 'existing-placement', place_id: 'synthetic-place', valid_from_ms: Date.now() - 60000, effective_valid_until_ms: null };
+  const placement = { id: 'existing-placement', place_id: 'synthetic-place', observation_kinds: ['activity'], valid_from_ms: Date.now() - 60000, valid_until_ms: null, effective_valid_until_ms: null };
   const config = existing ? provisionConfig(TEST_NODE, placement.id, 'existing-config') : null;
   return { registered: existing, placement: existing ? placement : null, config, published: config ? [config] : [], drafts: [], placementHistory: existing ? [placement] : [],
     contact: false, ack: false, registrations: 0, rotations: 0, placements: 0, configs: 0, publishes: 0, bodies: [], dropRegistration: false, conflictRegistration: false, dropRotation: false, dropInfoAfterRotation: false,
@@ -26,7 +26,7 @@ async function setup(context, state) {
     if (path === '/auth/status') result = { initialized: true, passkeys_enabled: false };
     else if (path === '/session') result = { authenticated: true, role: 'admin', account: { username: 'synthetic', display_name: 'Synthetic test' } };
     else if (path === '/overview') result = { devices_total: 0, devices_enabled: 0, devices_recent: 0, devices_stale: 0, config_pending: 0, server_time: new Date().toISOString() };
-    else if (path === '/places') result = { places: [{ id: 'synthetic-place', name: 'Synthetic location' }, { id: 'synthetic-alternate', name: 'Synthetic alternate location' }] };
+    else if (path === '/places') result = { places: [{ id: 'synthetic-place', name: 'Synthetic location', kind: 'activity', observation_kinds: ['activity'] }, { id: 'synthetic-alternate', name: 'Synthetic alternate location', kind: 'activity', observation_kinds: ['activity'] }] };
     else if (path === '/devices' && request.method() === 'POST') {
       state.registrations++; state.registered = true;
       if (state.dropRegistration) { state.dropRegistration = false; return route.abort('failed'); }

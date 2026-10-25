@@ -72,3 +72,9 @@ editing browser coverage still passes invalid-bin rejection, correction after
 validation failure, committed-response loss retries and mobile editing. Real
 ephemeral D1/R2 v1/v2 ingestion checks also passed after migration. Both new
 browser flows run in CI; hosted release and physical activation are separate.
+
+The existing provisioning browser fixtures now include the same normalized
+place/deployment purpose metadata returned by the migrated API. Full Chromium
+provisioning and the installed WebKit device-page checks pass, as does the real
+ephemeral D1/R2 uploaded-evidence browser flow. Synthetic provisioning peers and
+activation ACKs remain distinct from physical-device acceptance.
