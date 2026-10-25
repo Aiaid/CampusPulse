@@ -66,6 +66,25 @@ helper is `scripts/capture-readme-admin.mjs`; no real administrator session,
 credential, field observation or BLE identity is used. These views include no
 GIS tiles or new third-party artwork. They follow the same original-preservation,
 metadata-removal and final visual-check process documented in the capture recipe.
+## 2026-10-25 — LILYGO T-Energy-S3 board facts
+
+The T-Energy-S3 port uses factual board data published in the vendor repository
+`Xinyuan-LilyGO/T-Energy-S3` (V1.0, 2024-04-10): that GPIO3 carries the battery
+divider, that the divider is 1/2, and that the module is an ESP32-S3-WROOM-1 with
+16 MB QIO flash and 8 MB Octal PSRAM. These are facts about the hardware, not
+protected expression.
+
+**No vendor source file was copied.** `firmware/t-energy-s3/` and
+`firmware/components/cp_board/tenergy_s3.c` are new CampusPulse code that calls
+the installed Apache-2.0 ESP-IDF `adc_oneshot` and `adc_cali` drivers directly.
+The vendor repository declares **GPL-3.0**, so importing its sketch or driver
+code into this repository would place GPL-3.0 obligations on the combined work;
+that has been deliberately avoided. Any future proposal to import a vendor driver
+must settle the licence question before review rather than after.
+
+Vendor values that are still unmeasured — divider resistor values, ADC linearity,
+low-voltage cut-off — are recorded as unverified in
+`docs/design/tenergy-s3-port.md` instead of being promoted to specification.
 
 ## 2026-10-25 — Short PIN and USB provisioning
 
