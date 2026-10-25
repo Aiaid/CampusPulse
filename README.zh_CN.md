@@ -2,6 +2,10 @@
 
 [English](README.md) · [体验原型](https://pulse.anend.net) · [文档索引](docs/README.md)
 
+**Hackathon 截止时间：北京时间 2026 年 10 月 25 日 20:00（UTC+8，即 UTC 12:00）。**
+仓库快照标签：[`hackathon-2026-10-25`](https://github.com/Aiaid/CampusPulse/tree/hackathon-2026-10-25)。
+该标签记录当前前端及 README 快照，整理时间晚于上述截止时间。
+
 CampusPulse 是我们为华中师范大学（CCNU）做的校园观察地图，起点是校园蓝牙
 热力图，后来结合华师已有的 GIS、电瓶车停车和候梯问题，加入了设备端的电瓶车
 自动识别、候梯区蓝牙事件分析和时间回放。
@@ -46,7 +50,7 @@ CampusPulse 是我们为华中师范大学（CCNU）做的校园观察地图，�
 我们还加了一条实时和历史共用的时间轴。采集的数据上传后，可以回看同一地点
 前后的变化，确认哪些时段有记录、哪些时段缺数据。
 
-![CampusPulse 模拟演示：校园地图与地点详情](docs/images/simulation-desktop.png)
+![CampusPulse 当前模拟演示：校园地图与图书馆详情](docs/images/hackathon-demo-desktop.png)
 
 *模拟演示截图。底图来自华师 GIS，人物、车辆和灯光为示意。*
 
@@ -57,16 +61,18 @@ CampusPulse 是我们为华中师范大学（CCNU）做的校园观察地图，�
 
 <table>
 <tr>
-<td width="72%"><img src="docs/images/live-timeline-desktop.png" alt="桌面现场观察界面：来源卡片与连续时间轴" /></td>
-<td width="28%"><img src="docs/images/replay-mobile.png" alt="手机现场观察界面：游标停在历史时刻" /></td>
+<td width="72%"><img src="docs/images/hackathon-field-desktop.png" alt="线上桌面现场观察：图书馆上传记录与推测场景" /></td>
+<td width="28%"><img src="docs/images/hackathon-field-mobile.png" alt="线上手机现场观察：图书馆页面" /></td>
 </tr>
 <tr>
-<td>桌面：查看最近观察与同一条时间轴。</td>
-<td>手机：停在历史时刻回看。</td>
+<td>桌面：查看已上传观察与同一条时间轴。</td>
+<td>手机：查看同一线上现场观察界面。</td>
 </tr>
 </table>
 
-*这两张界面截图使用测试数据，地点标有“样例”，不是现场实录。*
+*截图采自 2026 年 10 月 25 日截止时间之后的线上前端。现场卡片展示已上传记录，
+保留原始时间和质量标记；人物、车辆动画是推测示意，按要求采用 2 倍绘制数量，
+不代表实测人数或车辆数。*
 
 [截图来源与复现方法](docs/notes/readme-screenshots.md)。
 
@@ -75,8 +81,8 @@ CampusPulse 是我们为华中师范大学（CCNU）做的校园观察地图，�
 - [**现场观察**](https://pulse.anend.net/?mode=field)：跟随最近数据，拖动时间轴回看保留历史，再返回实时。
 - [**模拟演示**](https://pulse.anend.net/?mode=demo)：探索教学日、周末与雨天的合成场景、活动和动画。
 
-线上原型可能落后于当前代码。现场观察只显示上传的记录，没有数据就留空；
-模拟演示用于体验界面，两边的数据分开。
+线上原型可能落后于当前代码。现场观察保留最后上传的记录及原始时间、过期状态；
+观测输入驱动演示渲染时明确标为推测场景，示意数值不会写成现场记录或补入历史缺口。
 
 现场时间轴默认显示最近 1 小时，可选 15 分钟／1 小时／24 小时。每类来源最多
 返回最新 200 条，截断会明确提示，因此选择 24 小时不代表获得完整录制。真实数据

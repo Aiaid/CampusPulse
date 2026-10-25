@@ -41,6 +41,15 @@ No network captures, credentials, SDK build products or binaries are published.
 
 ## 2026-10-25 — User-requested README screenshots
 
+The deadline snapshot refresh adds `hackathon-field-desktop.png`,
+`hackathon-field-mobile.png` and `hackathon-demo-desktop.png`, captured from the
+deployed public frontend at `8bcce6c`. Public field aggregates remain distinct
+from inferred animation and the synthetic demo. These are new browser captures,
+not reused historical images. CCNU GIS attribution and underlying artwork rights
+remain unchanged; no raw tiles or new third-party assets are imported. Original
+captures stay ignored locally. Final publication copies are metadata-stripped,
+re-inspected with ExifTool and visually checked; see the capture note.
+
 The user requested a rewritten README with screenshots. The three PNGs under
 `docs/images/` show the actual current local frontend, captured with Playwright;
 they are not imported design mockups or previous-session field captures. The

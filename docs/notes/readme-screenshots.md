@@ -1,5 +1,27 @@
 # README screenshots
 
+## Current deployed frontend · 2026-10-25
+
+The current bilingual README uses three new screenshots from
+`https://pulse.anend.net`, frontend commit `8bcce6c`, captured after the
+2026-10-25 20:00 Asia/Shanghai hackathon deadline:
+
+| Image | View | Data shown |
+| --- | --- | --- |
+| [Field desktop](../images/hackathon-field-desktop.png) | 1440 × 1000 | Public uploaded library aggregates, source/expiry labels and the observation-driven inferred scene |
+| [Field phone](../images/hackathon-field-mobile.png) | 390 × 844 | The same deployed field page at phone width |
+| [Simulation desktop](../images/hackathon-demo-desktop.png) | 1440 × 1000 | Built-in synthetic demo and illustrative actors |
+
+The field captures use public GET endpoints without authentication, fixture
+injection or API writes. Animation reuses the demo scene and the requested 2×
+drawing scale; it is not a headcount or parking census. Original captures are
+kept in ignored local storage. Publication copies are metadata-stripped,
+re-inspected with ExifTool and visually checked. GIS attribution is retained.
+The tag `hackathon-2026-10-25` marks the snapshot prepared at tag creation;
+it does not backdate these captures or the Git commit to the deadline.
+
+## Earlier local interface captures
+
 The bilingual README uses screenshots of the actual local CampusPulse frontend,
 not generated mockups. Capture script: [`scripts/capture-readme.mjs`](../../scripts/capture-readme.mjs).
 

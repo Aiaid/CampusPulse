@@ -3,7 +3,8 @@
 Current planning baseline: [Hackathon plan](hackathon-plan.md), 2026-10-23.
 The user selected all-Cloudflare hosting. Unchecked items mark remaining work
 or acceptance; any partial local implementation is identified explicitly below.
-The competition deadline and mandatory track requirements remain unknown.
+Competition deadline: 2026-10-25 20:00 Asia/Shanghai (12:00 UTC), confirmed by
+the user. Mandatory track requirements remain unknown.
 
 Hardware decision (2026-10-23): all five devices first implement BLE collection,
 bounded durable buffering and direct HTTPS upload with one shared core and

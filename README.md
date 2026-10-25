@@ -2,6 +2,10 @@
 
 [简体中文](README.zh_CN.md) · [Try the prototype](https://pulse.anend.net) · [Documentation](docs/README.md)
 
+**Hackathon deadline: 25 October 2026, 20:00 Beijing time (UTC+8 / 12:00 UTC).**
+Repository snapshot: [`hackathon-2026-10-25`](https://github.com/Aiaid/CampusPulse/tree/hackathon-2026-10-25).
+The tag records the current frontend and README snapshot, prepared after the deadline.
+
 CampusPulse is a campus observation map we are building for Central China Normal
 University (CCNU). It started with the idea of a Bluetooth activity heatmap;
 CCNU's existing GIS, e-bike parking problems and elevator waits led us to add
@@ -57,7 +61,7 @@ We also added one time axis for live observations and historical review. Once
 field data is uploaded, we can look back at changes at the same place and see
 both the recorded intervals and the gaps.
 
-![CampusPulse simulation overview with campus map and place details](docs/images/simulation-desktop.png)
+![Current CampusPulse simulation with campus map and library details](docs/images/hackathon-demo-desktop.png)
 
 *Simulation screenshot. The base map comes from CCNU GIS; people, vehicles and
 lighting are illustrative.*
@@ -70,17 +74,19 @@ or click a record marker to pause at an exact historical time. Select
 
 <table>
 <tr>
-<td width="72%"><img src="docs/images/live-timeline-desktop.png" alt="Desktop observation view with source cards and a continuous timeline" /></td>
-<td width="28%"><img src="docs/images/replay-mobile.png" alt="Phone observation view paused at a historical time" /></td>
+<td width="72%"><img src="docs/images/hackathon-field-desktop.png" alt="Deployed desktop observation view with uploaded library records and an inferred scene" /></td>
+<td width="28%"><img src="docs/images/hackathon-field-mobile.png" alt="Deployed phone observation view of the library" /></td>
 </tr>
 <tr>
-<td>Live observations and the shared timeline on desktop.</td>
-<td>Historical review on a phone.</td>
+<td>Uploaded observations and the shared timeline on desktop.</td>
+<td>The same deployed observation view on a phone.</td>
 </tr>
 </table>
 
-*These two interface screenshots use test data. The place is labelled “样例”
-(sample); these are not field recordings.*
+*Captured from the deployed frontend on 25 October 2026 after the deadline.
+Field cards show uploaded records with their original times and quality labels.
+Animated people and vehicles are an inferred illustration, with the requested
+2× drawing scale; they are not measured headcounts or vehicle counts.*
 
 [How these screenshots are captured](docs/notes/readme-screenshots.md).
 
@@ -89,9 +95,10 @@ or click a record marker to pause at an exact historical time. Select
 - [**现场观察 · Observations**](https://pulse.anend.net/?mode=field): follow live data, drag back through retained history, then return to live.
 - [**模拟演示 · Simulation**](https://pulse.anend.net/?mode=demo): explore teaching-day, weekend and rainy-day scenarios with synthetic activity and animation.
 
-The deployed prototype may lag the current code. Observations show uploaded
-records and leave missing data empty. Simulation is a separate way to try the
-interface; its values never fill gaps in field records.
+The deployed prototype may lag the current code. Observations retain the last
+uploaded records with their original timestamps and expiry labels. Where an
+observation drives the demo renderer, the scene is labelled as inferred; its
+illustrative values never become field records or fill historical recording gaps.
 
 The observation axis starts with the last hour and offers 15-minute, one-hour
 and 24-hour ranges. Reads return at most the newest 200 records per stream;
