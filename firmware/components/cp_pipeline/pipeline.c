@@ -385,9 +385,12 @@ static void radio_reset(int reason) {
     xEventGroupSetBits(s_radio_events, FAILED_BIT);
 }
 static void radio_sync(void) {
+    ESP_LOGW(TAG, "DIAG radio_sync fired");
     int rc = ble_hs_util_ensure_addr(0);
+    ESP_LOGW(TAG, "DIAG sync ensure_addr rc=%d", rc);
     if (!rc)
         rc = ble_hs_id_infer_auto(0, &s_own_address);
+    ESP_LOGW(TAG, "DIAG sync infer_auto rc=%d", rc);
     if (!rc) {
         s_origin = mono_ms();
         s_first_window = s_next_window;
@@ -396,6 +399,7 @@ static void radio_sync(void) {
                               s_policy.raw_enabled))
             rc = BLE_HS_EINVAL;
     }
+    ESP_LOGW(TAG, "DIAG sync collect_begin done rc=%d", rc);
     if (!rc) {
         struct ble_gap_disc_params p = {0};
         p.passive = !s_policy.scan_active;
@@ -404,6 +408,7 @@ static void radio_sync(void) {
         p.filter_duplicates = s_policy.filter_duplicates;
         rc = ble_gap_disc(s_own_address, BLE_HS_FOREVER, &p, discovery, NULL);
     }
+    ESP_LOGW(TAG, "DIAG sync gap_disc rc=%d", rc);
     if (rc) {
         s_health.last_error = rc;
         xEventGroupSetBits(s_radio_events, FAILED_BIT);
@@ -414,7 +419,9 @@ static void radio_sync(void) {
 }
 static void host_task(void *arg) {
     (void)arg;
+    ESP_LOGW(TAG, "DIAG host_task entered, calling nimble_port_run");
     nimble_port_run();
+    ESP_LOGW(TAG, "DIAG nimble_port_run returned");
     xSemaphoreGive(s_host_done);
     for (;;)
         vTaskSuspend(NULL);
@@ -703,25 +710,46 @@ esp_err_t cp_pipeline_apply(const cp_network_policy_t *p) {
     }
     while (xSemaphoreTake(s_worker_done, 0) == pdTRUE) {
     }
-    ESP_LOGW(TAG, "DIAG heap@before-nimble-init free=%lu largest=%lu min=%lu",
-             (unsigned long)esp_get_free_heap_size(),
-             (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
-             (unsigned long)esp_get_minimum_free_heap_size());
+    /* NimBLE's NPL layer asserts on allocation failure; a TLS handshake peak
+     * can transiently drain the heap right here. Never enter nimble_port_init
+     * under memory pressure: wait briefly, then fail gracefully so the outer
+     * scheduler retries instead of the chip resetting. */
+    const uint32_t min_free = 32768, min_largest = 16384;
+    for (unsigned wait_round = 0; ; wait_round++) {
+        const uint32_t free_heap = esp_get_free_heap_size();
+        const uint32_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        ESP_LOGW(TAG, "DIAG heap@before-nimble-init free=%lu largest=%lu min=%lu",
+                 (unsigned long)free_heap, (unsigned long)largest,
+                 (unsigned long)esp_get_minimum_free_heap_size());
+        if (free_heap >= min_free && largest >= min_largest)
+            break;
+        if (wait_round >= 10) {
+            ESP_LOGW(TAG, "BLE init deferred: heap under pressure (free=%lu largest=%lu)",
+                     (unsigned long)free_heap, (unsigned long)largest);
+            return ESP_ERR_NO_MEM;
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
     err = nimble_port_init();
     if (err != ESP_OK)
         return err;
+    ESP_LOGW(TAG, "DIAG nimble_port_init ok");
     s_initialized = true;
     ble_svc_gap_init();
     ble_svc_gatt_init();
     ble_hs_cfg.sync_cb = radio_sync;
     ble_hs_cfg.reset_cb = radio_reset;
-    if (xTaskCreate(host_task, "cp_nimble", 4096, NULL, configMAX_PRIORITIES - 4, &s_host) !=
-        pdPASS) {
+    BaseType_t host_rc = xTaskCreate(host_task, "cp_nimble", 4096, NULL,
+                                     configMAX_PRIORITIES - 4, &s_host);
+    ESP_LOGW(TAG, "DIAG host_task create rc=%ld free=%lu", (long)host_rc,
+             (unsigned long)esp_get_free_heap_size());
+    if (host_rc != pdPASS) {
         (void)cp_pipeline_stop();
         return ESP_ERR_NO_MEM;
     }
     EventBits_t bits = xEventGroupWaitBits(s_radio_events, READY_BIT | FAILED_BIT, pdFALSE, pdFALSE,
                                            pdMS_TO_TICKS(10000));
+    ESP_LOGW(TAG, "DIAG radio waitbits=0x%lx", (unsigned long)bits);
     if (!(bits & READY_BIT) || (bits & FAILED_BIT)) {
         (void)cp_pipeline_stop();
         return ESP_FAIL;
