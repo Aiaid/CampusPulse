@@ -1,4 +1,5 @@
 import { addDeviceV2OpenApi } from './device-v2-openapi';
+import { addElevatorEventsOpenApi } from './elevator-events-openapi';
 import { createAdminOpenApi } from './admin-openapi';
 
 /** Implemented public, operator, administrator, device and research API contract. */
@@ -492,5 +493,5 @@ export function createOpenApiDocument(): Record<string, unknown> {
       },
     },
   };
-  return addDeviceV2OpenApi(document);
+  return addElevatorEventsOpenApi(addDeviceV2OpenApi(document));
 }

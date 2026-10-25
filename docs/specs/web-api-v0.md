@@ -44,6 +44,12 @@ separate acceptance step.
 
 ## Public reads
 
+- `GET /api/v1/places/:id/elevator-events`: bounded field-only BLE group
+  disappearance candidates for an elevator place. Returns independent quality
+  and freshness states, time intervals and aggregate identifier counts. It
+  publishes no MACs and makes no people-count or wait-prediction claim. See the
+  [rule architecture](../design/elevator-cohort-events.md).
+
 - `GET /api/v1/health`: runtime liveness, reports ingestion implemented and whether raw storage is bound; it does not probe dependencies.
 - `GET /api/v1/settings`: public site name and initial demo/field mode only;
   no administrator settings, credentials or device information.

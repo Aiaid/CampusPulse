@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Clock, Info, Plus, Radio, ArrowClockwise, X } from '@phosphor-icons/react';
+import ElevatorEvents from './ElevatorEvents.jsx';
 import './observations.css';
 
 const stamp = value => new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -110,11 +111,12 @@ export default function Observations({ open, onClose, initialPlaceId }) {
       <div className="observation-section-heading"><h3>{place?.name || '现场观察'}</h3><button className="observation-refresh" onClick={() => setRevision(value => value + 1)} disabled={loading || saving} aria-label="刷新现场观察"><ArrowClockwise size={14} />刷新</button></div>
       {error && <p className="observation-error" role="status">{error}</p>}
       <div className="observation-summary" aria-live="polite">
-        {loading ? <p>正在读取服务端记录…</p> : latest ? <><div className="observation-value"><strong>{recordText(latest)}</strong><span className={summary.freshness === 'fresh' ? 'record-fresh' : 'record-stale'}>{summary.freshness === 'fresh' ? '有效观察' : '历史观察'}</span></div><p>来源：人工现场记录 · {latest.kind === 'parking' ? '数量范围' : '本次已完成候梯时长，不是当前预测'}</p><p>观测于 {stamp(latest.observed_at)}<br />有效至 {stamp(latest.valid_until)}</p></> : <><strong>{error ? '现场数据不可用' : '暂无现场记录'}</strong><p>未配置传感器覆盖；空白不表示无人或空闲。</p></>}
+        {loading ? <p>正在读取服务端记录…</p> : latest ? <><div className="observation-value"><strong>{recordText(latest)}</strong><span className={summary.freshness === 'fresh' ? 'record-fresh' : 'record-stale'}>{summary.freshness === 'fresh' ? '有效观察' : '历史观察'}</span></div><p>来源：人工现场记录 · {latest.kind === 'parking' ? '数量范围' : '本次已完成候梯时长，不是当前预测'}</p><p>观测于 {stamp(latest.observed_at)}<br />有效至 {stamp(latest.valid_until)}</p></> : <><strong>{error ? '现场数据不可用' : '暂无现场记录'}</strong><p>暂无人工记录不表示无人或空闲。</p></>}
         {summary && <small>服务端状态时间 {stamp(summary.as_of)} · 每 30 秒刷新</small>}
       </div>
       <div className="observation-history-heading"><span><Clock size={13} />最近记录</span><div role="group" aria-label="现场记录时间范围">{[1, 5, 15].map(value => <button key={value} className={minutes === value ? 'active' : ''} aria-pressed={minutes === value} onClick={() => setMinutes(value)}>近 {value} 分钟</button>)}</div></div>
       <div className="observation-history">{!history.length ? <p>所选时段暂无可展示记录</p> : history.map(record => <div key={record.id}><span>{stamp(record.observed_at)}<small>人工记录{record.status === 'cancelled' ? ' · 已撤销' : ''}</small></span><strong>{recordText(record)}</strong></div>)}</div>
+      {place?.kind === 'elevator' && <ElevatorEvents key={placeId} open={open} placeId={placeId} revision={revision} />}
       {canRecord ? <form className="record-form" onSubmit={submit}>
         <h3><Plus size={16} />添加现场记录</h3>
         <p className="observation-help">服务端确认后才会显示。网络失败后重试会沿用同一记录编号。</p>
