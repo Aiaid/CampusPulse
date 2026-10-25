@@ -35,6 +35,21 @@ static esp_err_t s_history_error;
 static uint64_t s_policy_response_seen;
 static uint64_t s_policy_attempted_sequence;
 static char s_reason[80];
+/* Radio exclusivity on ESP32-C3 (no PSRAM): the Wi-Fi driver plus a TLS
+ * session and the NimBLE host+controller cannot stay resident together
+ * (measured 2026-10-25: nimble_port_init alone needs ~60 KB; with Wi-Fi
+ * resident only ~1 KB remained and host-task creation/asserts followed).
+ * The runtime therefore alternates phases: NETWORK brings Wi-Fi up for
+ * contact/lease/upload, COLLECT tears Wi-Fi fully down so BLE fits. */
+typedef enum { RADIO_NETWORK, RADIO_COLLECT } radio_phase_t;
+static radio_phase_t s_phase = RADIO_NETWORK;
+static uint64_t s_phase_started_ms;
+static cp_network_policy_t s_cached_policy;
+static bool s_have_cached_policy;
+#define CP_COLLECT_PHASE_MS 60000u      /* collect this long before an upload round */
+#define CP_COLLECT_MAX_PHASE_MS 90000u  /* lease is 120 s; renew well before expiry */
+#define CP_NETWORK_MIN_PHASE_MS 8000u   /* allow contact/TLS to finish */
+#define CP_NETWORK_MAX_PHASE_MS 45000u  /* do not starve collection on slow links */
 static uint64_t now_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }
 static void boot_uuid(void) {
     uint8_t b[16];
@@ -156,7 +171,7 @@ static void test_candidate(command_t *cmd) {
         cp_provision_set_diagnostic(&diagnostic,cmd->attempt);cp_provision_set_status("failed",code);publish();
     }
 }
-static void apply_control(void) {
+static void apply_control(bool allow_ble_apply) {
     cp_network_snapshot_t net;
     cp_network_snapshot(&net);
     cp_provision_set_diagnostic(&net.diagnostic,NULL);
@@ -189,7 +204,7 @@ static void apply_control(void) {
             (void)cp_pipeline_stop();
             cp_core_mark_apply_failed(&s_core);
             (void)cp_network_report_activation(p.core.config_id, false, "unsupported_policy");
-        } else if (s_core.policy_state != CP_POLICY_APPLIED) {
+        } else if (allow_ble_apply && s_core.policy_state != CP_POLICY_APPLIED) {
             cp_core_set_setup_active(&s_core, false);
             esp_err_t err = cp_pipeline_apply(&p);
             if (err == ESP_OK && cp_core_mark_applied(&s_core, p.core.config_id)) {
@@ -208,7 +223,7 @@ static void apply_control(void) {
     cp_pipeline_snapshot(&pipe);
     if (!cp_collection_allowed(state) && pipe.collecting)
         (void)cp_pipeline_stop();
-    if (cp_collection_allowed(state) && !pipe.collecting && pipe.storage_ready &&
+    if (allow_ble_apply && cp_collection_allowed(state) && !pipe.collecting && pipe.storage_ready &&
         cp_network_get_policy(&p) &&
         (!pipe.pressure_paused ||
          pipe.free_slots * 100u >= pipe.capacity_slots * (100u - p.resume_pct))) {
@@ -221,6 +236,82 @@ static void apply_control(void) {
                                  : state == CP_COLLECTION_WAIT_POLICY            ? "unassigned"
                                  : state == CP_COLLECTION_POLICY_FAILED          ? "failed"
                                                                                  : "paused");
+}
+
+/* Alternate exclusive radio phases; see RADIO_NETWORK/RADIO_COLLECT above. */
+static void radio_tick(void) {
+    cp_pipeline_snapshot_t pipe;
+    cp_pipeline_snapshot(&pipe);
+    const uint64_t now = now_ms();
+    const uint64_t age = now - s_phase_started_ms;
+    if (s_phase == RADIO_NETWORK) {
+        /* Wi-Fi owns the radio this phase: contact/lease/uploads only. BLE must
+         * not start here; it cannot share the heap with Wi-Fi+TLS on C3. */
+        apply_control(false);
+        cp_network_snapshot_t net;
+        cp_network_snapshot(&net);
+        cp_network_policy_t p;
+        if (net.policy_valid && cp_network_get_policy(&p)) {
+            s_cached_policy = p;
+            s_have_cached_policy = true;
+        }
+        const bool drained = pipe.pending == 0;
+        if (s_have_cached_policy && age >= CP_NETWORK_MIN_PHASE_MS &&
+            (drained || age >= CP_NETWORK_MAX_PHASE_MS)) {
+            if (cp_network_stop() != ESP_OK) {
+                reason("network_stop_failed");
+                return;
+            }
+            s_phase = RADIO_COLLECT;
+            s_phase_started_ms = now_ms();
+            esp_err_t err = cp_pipeline_apply(&s_cached_policy);
+            if (err == ESP_OK) {
+                if (cp_core_mark_applied(&s_core, s_cached_policy.core.config_id))
+                    (void)cp_network_report_activation(s_cached_policy.core.config_id, true,
+                                                       "applied");
+                s_policy_attempted_sequence = s_cached_policy.request_sequence;
+                reason("collecting");
+            } else {
+                cp_core_mark_apply_failed(&s_core);
+                (void)cp_network_report_activation(s_cached_policy.core.config_id, false,
+                                                   "capture_start_failed");
+                reason("capture_start_failed");
+                /* Report and retry need Wi-Fi: go back to the network phase. */
+                if (cp_network_start(&s_settings) == ESP_OK) {
+                    s_phase = RADIO_NETWORK;
+                    s_phase_started_ms = now_ms();
+                }
+            }
+        }
+        return;
+    }
+    /* COLLECT phase: BLE owns the radio; Wi-Fi is fully deinitialized. */
+    cp_collection_state_t state = cp_core_decide(&s_core, now);
+    bool lease_low = false;
+    if (s_have_cached_policy) {
+        const uint64_t lease_end = s_cached_policy.fetched_mono_ms + s_cached_policy.lease_ms;
+        lease_low = now + 30000 >= lease_end;
+    }
+    if (!cp_collection_allowed(state) || lease_low ||
+        (pipe.pending > 0 && age >= CP_COLLECT_PHASE_MS) || age >= CP_COLLECT_MAX_PHASE_MS) {
+        if (cp_pipeline_stop() != ESP_OK) {
+            reason("pipeline_stop_failed");
+            return;
+        }
+        if (cp_network_start(&s_settings) == ESP_OK) {
+            s_phase = RADIO_NETWORK;
+            s_phase_started_ms = now_ms();
+            reason("network_round");
+        } else if (cp_collection_allowed(state) && s_have_cached_policy &&
+                   cp_pipeline_apply(&s_cached_policy) == ESP_OK) {
+            /* Wi-Fi unavailable: keep collecting on the remaining lease. */
+            s_phase_started_ms = now_ms();
+            reason("network_restart_failed");
+        } else {
+            reason("network_restart_failed");
+            s_phase_started_ms = now_ms();
+        }
+    }
 }
 static void runtime_task(void *arg) {
     (void)arg;
@@ -249,6 +340,8 @@ static void runtime_task(void *arg) {
                     cp_core_set_setup_active(&s_core, false);
                     cp_core_set_identity(&s_core, CP_IDENTITY_ENROLLED);
                     (void)cp_network_start(&s_settings);
+                    s_phase = RADIO_NETWORK;
+                    s_phase_started_ms = now_ms();
                     reason("resuming_saved_network");
                 } else
                     reason("provision_stop_failed");
@@ -259,7 +352,7 @@ static void runtime_task(void *arg) {
         cp_provision_snapshot_t provision;
         cp_provision_snapshot(&provision);
         if (s_enrolled && !provision.active && !s_testing && !s_core.setup_active)
-            apply_control();
+            radio_tick();
         publish();
     }
 }

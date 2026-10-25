@@ -46,6 +46,7 @@ validation records are not evidence for this implementation.
 | [Upload protocol v1 / 上传协议](specs/ingest-v1.md) | Window/raw/status streams, MAC and AD payload, private R2, durable ACK | Server deployed and demo-verified; physical-node onboarding and firmware pending |
 | [Roadmap](design/ROADMAP.md) | Priorities, planned milestones, completed work | Current |
 | [Reuse record](notes/reuse.md) | Prior-work boundary and code attribution | Current |
+| [AI Passport v2 radio-exclusion fix](notes/ai-passport-v2-radio-exclusion-2026-10-25.md) | Root-caused NimBLE/Wi-Fi heap conflict; exclusive radio phases, 5-minute device pass | Device-level fix verified; longer soak and batch reconciliation pending |
 | [T-Energy-S3 enclosure research](research/t-energy-s3-enclosure.md) | Author-published enclosure links and official mechanical drawing | Sources checked; fit/print unverified |
 | [Pre-hackathon observations](upstream/pre-hackathon/observations.md) | Prior BLE/storage/network/GIS observations with source fingerprints | Historical reference; not rerun |
 | [Pre-hackathon vehicle rules](upstream/pre-hackathon/vehicle-rules.md) | Earlier candidate logic and its evidence boundaries | Historical; not implemented in this repository |
