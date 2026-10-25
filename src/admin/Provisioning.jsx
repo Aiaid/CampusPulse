@@ -5,7 +5,7 @@ import { bluetoothSupport, connectProvisioning, selectProvisioningDevice } from 
 import { PIN_PATTERN } from './provisioning/security2.js';
 import { serialSupport, selectProvisioningPort, connectSerialProvisioning, connectSerialDiagnostics } from './provisioning/serial.js';
 import { saveProvisionSettings, cloudProgress, inspectEnrollment, currentProvisionConfig, NODE_PATTERN, TOKEN_PATTERN } from './provisioning/enrollment.js';
-import { diagnosticView, previousDiagnostic, bootEvidence } from './provisioning/diagnostics.js';
+import { diagnosticView, previousDiagnostic, bootEvidence, networkSettingsSaved } from './provisioning/diagnostics.js';
 import { prepareNetworkCredential } from './provisioning/credential-recovery.js';
 import { wifiPayload, supportsWifiMode } from './provisioning/network.js';
 import './provisioning.css';
@@ -44,7 +44,8 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
   const currentConfig = currentProvisionConfig(detail);
   const progress = submitted ? cloudProgress(detail, configId, started.current) : { contact: false, applied: false };
   const diagnosis = diagnosticView(localStatus), previous = previousDiagnostic(localStatus), boot = bootEvidence(localStatus);
-  const validating = submitted && !diagnosis.failed && !writeComplete && !progress.applied &&
+  const networkSaved = submitted && networkSettingsSaved(localStatus, attempt.current);
+  const validating = submitted && !diagnosis.failed && !writeComplete && !networkSaved && !progress.applied &&
     (mode !== 'ap' || ['sending', 'received', 'testing', 'saved'].includes(localStatus?.state));
   const submitReason = validating ? '设备正在处理本次设置，等待明确结果后可继续修改。'
     : writeComplete ? '本次配网已完成。再次发送前，点击重新配置网络。'
@@ -58,7 +59,7 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
   const acceptStatus = status => {
     if (!status) return;
     if (status.node_id && status.node_id !== selectedNode.current) throw new Error('USB 返回了另一台设备的身份，已停止读取。');
-    const staleAttempt = submitted && !writeComplete &&
+    const staleAttempt = submitted && !writeComplete && !networkSettingsSaved(status, attempt.current) &&
       ((status.attempt_id && status.attempt_id !== attempt.current) ||
         (['failed', 'stop_failed'].includes(status.state) && status.attempt_id !== attempt.current));
     if (staleAttempt) {
@@ -266,8 +267,8 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
     let active = true, timer;
     const poll = async () => { try { const source = diagnosticClient.current || client.current; const status = await source?.request({ op: 'status' }); if (active) acceptStatus(status); } catch { if (active) setLocalError('USB 状态暂时不可读，已保留最后一次诊断；请检查数据线或串口占用，并继续检查云端。'); } if (active) timer = setTimeout(poll, 1500); };
     timer = setTimeout(poll, 300); return () => { active = false; clearTimeout(timer); };
-  }, [submitted, mode, disconnected, debugAttached, mutation.pending, progress.applied]);
-  useEffect(() => { if (progress.applied && !writeComplete) { setWriteComplete(true); token.current = ''; setCredentialMode(''); setHandoff(''); setPassword(''); setEapPassword(''); } }, [progress.applied, writeComplete]);
+  }, [submitted, mode, disconnected, debugAttached, mutation.pending, progress.applied, writeComplete]);
+  useEffect(() => { if ((networkSaved || progress.applied) && !writeComplete) { setWriteComplete(true); token.current = ''; setCredentialMode(''); setHandoff(''); setPassword(''); setEapPassword(''); } }, [networkSaved, progress.applied, writeComplete]);
   return <Dialog title={initialNodeId ? '重新配置设备网络' : '连接并部署设备'} onClose={close} pending={mutation.pending} wide>
     <div className="cp-provision" aria-busy={mutation.pending}>
       <p>已登记设备会带入当前设置。位置、采集配置和 Wi-Fi 可以继续修改，保存后以新设置为准；发送到设备前再核对连接和设备凭证。</p>
@@ -315,13 +316,13 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
         <div className="cp-provision-stage"><strong>{diagnosis.state}</strong>{diagnosis.stage && <span>最后报告阶段：{diagnosis.stage}</span>}</div>
         {bootChanged && <Notice>已观察到设备启动标识变化，说明设备发生过重启。当前等待状态不代表上次故障已解决；请查看历史记录与本次云端确认。</Notice>}
         {boot && <p>本次启动运行 {boot.uptime_ms == null ? '未知' : `${Math.floor(boot.uptime_ms / 1000)} 秒`}{boot.reset_reason == null ? '' : ` · 设备复位原因代码 ${boot.reset_reason}`}</p>}
-        {previous && <details><summary>上一次设备记录（历史，不是本次结果）</summary><pre className="cp-provision-diagnostic">{JSON.stringify(previous, null, 2)}</pre></details>}
+        {previous && <details><summary>上一次设备记录（重启前保留，须核对本次尝试）</summary><pre className="cp-provision-diagnostic">{JSON.stringify(previous, null, 2)}</pre></details>}
         {diagnosis.problem && <p><strong>{diagnosis.problem}</strong>。{diagnosis.advice}</p>}
         {diagnosis.failed && <p>本次候选未确认保存。可修正上方 Wi-Fi 后重试；不需要重新登记设备或重新发布相同配置。</p>}
         {disconnected && <Notice>本机连接已断开。设备可能正在验证或重启，这本身不能判断成功或失败。继续检查云端，或连接 USB 读取诊断。</Notice>}
         {localError && <p role="status">{localError}</p>}
         {lastDiagnostic && <details><summary>安全诊断详情</summary><pre className="cp-provision-diagnostic">{JSON.stringify(lastDiagnostic, null, 2)}</pre><small>这是最后一次收到的安全诊断，开始新尝试后保留至设备更新。仅含阶段、固定错误代码和数值，不包含网络名称、密码或设备凭证。</small></details>}
-        <ol className="cp-provision-checks"><li>云端身份：{registered ? '沿用已登记节点' : '尚未确认'}</li><li>期望配置：{configId || '尚未选择'}</li><li>本次云端联系：{progress.contact ? '已收到' : '尚未收到'}</li><li>本次配置应用确认：{progress.applied ? '已收到当前配置新的 applied ACK' : '尚未收到新的 applied ACK，历史确认不计入本次'}</li></ol>
+        <ol className="cp-provision-checks"><li>云端身份：{registered ? '沿用已登记节点' : '尚未确认'}</li><li>期望配置：{configId || '尚未选择'}</li><li>本次网络设置：{networkSaved ? '设备已确认保存本次网络设置' : '尚未取得本次保存确认'}</li><li>本次云端联系：{progress.contact ? '已收到' : '尚未收到'}</li><li>本次配置应用确认：{progress.applied ? '已收到当前配置新的 applied ACK' : '尚未收到新的 applied ACK，历史确认不计入本次'}</li></ol>
         <div className="cp-provision-actions"><button className="cp-admin-button" disabled={mutation.pending} onClick={() => mutation.run(async () => { setDetail(await api(`/devices/${node}`)); setCloudError(''); })}>检查云端状态</button>{(mode === 'usb' || debugAttached) && <button className="cp-admin-button" disabled={mutation.pending} onClick={() => mutation.run(readStatus)}>读取设备阶段与诊断</button>}</div>{cloudError && <p role="status">{cloudError}</p>}
         {writeComplete && <button className="cp-admin-button cp-admin-primary" onClick={() => { notify(progress.applied ? '设备已重新联系云端并确认应用配置。' : '本次配网已完成；最新采集配置的应用状态请在设备目录查看。'); close(); }}>完成并返回设备目录</button>}
       </section>}

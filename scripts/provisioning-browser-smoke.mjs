@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { chromium, webkit } from '@playwright/test';
+import { chromium, webkit, expect } from '@playwright/test';
 import { createServer } from 'vite';
 import { createPeer, TEST_NODE, TEST_PROOF, TEST_TOKEN, TEST_NONCE } from '../tests/provisioning/device-peer.mjs';
 import { provisionConfig } from '../src/admin/provisioning/enrollment.js';
@@ -91,8 +91,8 @@ async function installUsb(context, state, disableBle = true) {
       assert.equal(request.nonce, state.nonce); state.configureCalls++; state.candidate = request; state.usbState = 'testing';
       if (state.dropConfigure) { state.dropConfigure = false; return []; }
       result = { v: 1, ok: true, state: 'testing', attempt_id: request.attempt_id };
-    } else if (request.op === 'status') result = { v: 1, ok: true, node_id: TEST_NODE, state: state.usbState, attempt_id: state.statusAttempt || state.candidate?.attempt_id,
-      has_saved_credential: state.savedCredential, diagnostic: { stage: state.usbState === 'failed' ? 'wifi_connect' : 'clock', code: state.usbState === 'failed' ? 'wifi_auth_failed' : 'clock_wait', esp_err: state.usbState === 'failed' ? 263 : 0, http_status: 0, wifi_reason: state.usbState === 'failed' ? 202 : 0, elapsed_ms: 12000, retryable: true, ssid: 'MUST-NOT-EXPOSE', password: 'MUST-NOT-EXPOSE', eap_username: 'MUST-NOT-EXPOSE', eap_identity: 'MUST-NOT-EXPOSE', eap_password: 'MUST-NOT-EXPOSE' } };
+    } else if (request.op === 'status') result = { v: 1, ok: true, node_id: TEST_NODE, state: state.usbState, attempt_id: state.omitStatusAttempt ? undefined : state.statusAttempt || state.candidate?.attempt_id,
+      has_saved_credential: state.savedCredential, ...(state.previousAttempt ? { previous_attempt: state.previousAttempt } : {}), diagnostic: { stage: state.usbState === 'failed' ? 'wifi_connect' : state.usbState === 'saved' ? 'saved' : state.usbState === 'idle' ? 'idle' : 'clock', code: state.usbState === 'failed' ? 'wifi_auth_failed' : state.usbState === 'saved' ? 'saved' : state.usbState === 'idle' ? 'idle' : 'clock_wait', esp_err: state.usbState === 'failed' ? 263 : 0, http_status: 0, wifi_reason: state.usbState === 'failed' ? 202 : 0, elapsed_ms: 12000, retryable: true, ssid: 'MUST-NOT-EXPOSE', password: 'MUST-NOT-EXPOSE', eap_username: 'MUST-NOT-EXPOSE', eap_identity: 'MUST-NOT-EXPOSE', eap_password: 'MUST-NOT-EXPOSE' } };
     else throw Error('Unexpected synthetic USB operation');
     return Array.from(new TextEncoder().encode('unrelated boot log\n' + `\x1eCPSETUP/1 ${id} ${JSON.stringify(result)}\n`));
   });
@@ -305,6 +305,35 @@ try {
   assert.equal(saved.candidate.nonce, saved.nonce); assert.equal(saved.configureCalls, 3); assert.equal(saved.candidate.reuse_saved_credential, true);
   assert.equal(saved.registrations, 0); assert.equal(saved.rotations, 0); assert.equal(saved.configs, 1); assert.equal(saved.publishes, 1); assert.equal(saved.config.capture_config_id, savedConfigAfterApplied);
   const storage = await usb.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } })); assert(!storage.includes(TEST_TOKEN)); assert(!storage.includes('corrected-password')); await usbContext.close();
+  // The device can reboot immediately after saving and retain this attempt in
+  // history. Its exact save proof unlocks editing without inventing a cloud ACK.
+  const rebootNetwork = await existingUsbNetwork(), reboot = rebootNetwork.page, rebootState = rebootNetwork.state;
+  await reboot.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-before-reboot'); await reboot.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-reboot-secret');
+  await reboot.getByRole('button', { name: '通过 USB 发送给设备', exact: true }).click(); await reboot.getByText('设备正在验证', { exact: true }).waitFor();
+  const rebootAttempt = rebootState.candidate.attempt_id;
+  rebootState.usbState = 'idle'; rebootState.omitStatusAttempt = true;
+  rebootState.previousAttempt = { state: 'saved', attempt_id: rebootAttempt, diagnostic: { stage: 'saved', code: 'saved', http_status: 200, elapsed_ms: 14771 } };
+  await reboot.getByRole('button', { name: '读取设备阶段与诊断', exact: true }).click();
+  await reboot.getByText('设备已退出配网，已有保存设置', { exact: true }).waitFor();
+  await reboot.getByText('本次网络设置：设备已确认保存本次网络设置', { exact: true }).waitFor();
+  await reboot.getByRole('button', { name: '完成并返回设备目录', exact: true }).waitFor();
+  assert.equal(await reboot.getByLabel('部署地点', { exact: true }).isEnabled(), true); assert.equal(await reboot.getByLabel('Wi-Fi SSID', { exact: true }).isEnabled(), true);
+  assert.equal(rebootState.ack, false); assert.equal(rebootState.contact, false);
+  await reboot.getByText('本次配置应用确认：尚未收到新的 applied ACK，历史确认不计入本次', { exact: true }).waitFor();
+  const statusReads = rebootState.operations.filter(op => op === 'status').length;
+  await expect.poll(() => rebootState.operations.filter(op => op === 'status').length).toBeGreaterThan(statusReads);
+  // Starting a fresh candidate must remain locked when only the previous
+  // attempt has save evidence, even though the device still has a credential.
+  await reboot.getByRole('button', { name: '重新配置网络', exact: true }).click();
+  await reboot.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-after-reboot'); await reboot.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-new-secret');
+  await reboot.getByRole('button', { name: '通过 USB 发送给设备', exact: true }).click(); await reboot.getByText('设备正在验证', { exact: true }).waitFor();
+  assert.notEqual(rebootState.candidate.attempt_id, rebootAttempt); assert.equal(rebootState.configureCalls, 2);
+  rebootState.usbState = 'idle'; await reboot.getByRole('button', { name: '读取设备阶段与诊断', exact: true }).click();
+  await reboot.getByText('设备已退出配网，已有保存设置', { exact: true }).waitFor();
+  assert.equal(await reboot.getByLabel('部署地点', { exact: true }).isDisabled(), true); assert.equal(await reboot.getByLabel('Wi-Fi SSID', { exact: true }).isDisabled(), true);
+  assert.equal(await reboot.getByRole('button', { name: '完成并返回设备目录', exact: true }).count(), 0);
+  await reboot.getByText('本次网络设置：尚未取得本次保存确认', { exact: true }).waitFor();
+  assert.equal(rebootState.rotations, 0); assert.equal(rebootState.registrations, 0); await rebootNetwork.context.close();
   // Explicit open choice clears the old personal password and sends no EAP
   // fields. An empty personal password cannot silently become an open network.
   const openNetwork = await existingUsbNetwork(); const open = openNetwork.page;
