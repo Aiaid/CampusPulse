@@ -53,7 +53,7 @@ export function fieldIllustration({ mode = 'field', live, history, cursor, now, 
       || (count(sensor.max_addresses) && sensor.max_addresses > 0 && sensor.visible_identifiers >= sensor.max_addresses);
     const band = saturated ? null : sensor.visible_identifiers < 20 ? 1 : sensor.visible_identifiers < 100 ? 2 : 3;
     groups.push({ kind: 'people', figure_count: sensor.visible_identifiers === 0 ? 0 : saturated ? 5 : [3, 5, 7][band - 1], band, source: 'sensor', saturated,
-      quantity: `${sensor.visible_identifiers} 个 BLE 标识`,
+      metric_value: sensor.visible_identifiers, quantity: `${sensor.visible_identifiers} 个 BLE 标识`,
       description: saturated ? '已达采集上限 · 人数未知' : `广播活动量级示意 ${band} 档 · 人数未知`,
       label: `${sensor.visible_identifiers} 个 BLE 标识 · ${saturated ? '已达采集上限 · 人数未知' : `广播活动量级示意 ${band} 档 · 人数未知`}`,
       ...evidence(sensor, reported ? 'last_reported_sensor' : 'sensor') });
@@ -64,11 +64,11 @@ export function fieldIllustration({ mode = 'field', live, history, cursor, now, 
     // only within that freshness tier. Explicit zero remains a valid replacement.
     const useParking = hasParking && (!hasVehicles || replay || fresh(parking, 'parking') || !fresh(vehicles, 'vehicles'));
     if (useParking) groups.push({ kind: 'bikes', figure_count: parking.parking_min > 0 ? 2 : 0, source: 'manual',
-      quantity: `${parking.parking_min}–${parking.parking_max} 辆 · 人工`, description: '人工停车观察',
+      metric_value: (parking.parking_min + parking.parking_max) / 2, quantity: `${parking.parking_min}–${parking.parking_max} 辆 · 人工`, description: '人工停车观察',
       label: `人工停车观察 ${parking.parking_min}–${parking.parking_max} 辆`, ...evidence(parking, 'parking') });
     if (hasVehicles) {
       if (!useParking && vehicles.candidate_count > 0) groups.push({ kind: 'bikes', figure_count: 2, source: 'candidate',
-        quantity: `${vehicles.candidate_count} 个候选标识`,
+        metric_value: vehicles.candidate_count, quantity: `${vehicles.candidate_count} 个候选标识`,
         label: '电动车相关广播 · 识别候选', ...evidence(vehicles, 'vehicles') });
       if (vehicles.car_related_count > 0) groups.push({ kind: 'cars', figure_count: 2, source: 'candidate',
         quantity: `${vehicles.car_related_count} 个候选标识`,

@@ -91,15 +91,16 @@ of vehicles, labelled `推测`. This is a UI illustration rather than a vehicle
 count, API result or history record. Actual manual/candidate evidence takes
 precedence, and actual zero results suppress this visual fallback.
 
-Observed place diagrams reuse the existing simulation `ActivityLayer` rendering
-interface, directional sprites and animation. A field-data adapter supplies
-bounded illustrative routes near the selected place, with the user-requested
-display multiplier of two. Original identifier/candidate quantities are retained;
-the animation is schematic rather than individual tracking. Replay freezes its
-motion. Field anchors can sit inside roof silhouettes, so schematic field actors
-do not apply demo building/tree occlusion; the original demo keeps its occlusion.
-Browser acceptance checks nontransparent pixels in the original actor canvas and
-doubled person/vehicle drawing budgets.
+The live map now reuses the original demo scene end to end: existing routes,
+parking slots, directional actors, lighting and building/tree occlusion. The
+existing scene metric interface accepts observed values for the selected place;
+missing scene inputs retain the demo's illustrative estimates. The map labels
+this as a predicted scene, while detail cards retain original observations.
+The user-requested display multiplier of two applies to scene drawing budgets,
+without changing raw API counts. Unknown place IDs use the nearest existing
+scene route association. Replay freezes motion. The prior large overlay is
+removed. Browser acceptance checks real moving pixels, observed and unknown-time
+inputs, empty/replay gaps, mode isolation and phone layout.
 
 `GET /api/v1/places/:id/summary` adds the optional `automatic_observations` object
 documented in `/openapi.json`: independent `vehicles` and `elevator` references

@@ -3,7 +3,6 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffec
 import { getMetrics, MAP_HEIGHT, MAP_WIDTH, places, sceneAttribution } from './scene-data';
 import { buildings, pointInPolygon } from './spatial-scene';
 import ActivityLayer from './ActivityLayer';
-import FieldIllustration from './FieldIllustration.jsx';
 import NightLighting from './NightLighting';
 import MapRegions, { useBuildingMask } from './MapRegions';
 import { gisTileAvailability, selectTileLevel, visibleGisTiles } from './gis-tiles';
@@ -248,12 +247,8 @@ export const CampusMap = forwardRef(function CampusMap({
       <div className="cp-map__atmosphere" aria-hidden="true" />
       {renderScene && <><ActivityLayer project={project} scale={scale} translateX={translateX} translateY={translateY} viewWidth={size.width} viewHeight={size.height} layers={layers} minute={minute} scenarioId={scenarioId} isDark={isDark} xray={xray} moving={moving} selectedId={selectedId} demo={demo} lighting={lighting} detailView={compactSelected} fieldIllustration={fieldIllustration} fieldPlace={mapPlaces.find(item => item.id === selectedId)} />
       <NightLighting project={project} scale={scale} viewWidth={size.width} viewHeight={size.height} isDark={isDark} xray={xray} selectedId={selectedId} lighting={lighting} />
-      {demo && <MapRegions project={project} viewWidth={size.width} viewHeight={size.height} selectedId={selectedId} xray={xray} />}</>}
+      {(demo || fieldIllustration) && <MapRegions project={project} viewWidth={size.width} viewHeight={size.height} selectedId={selectedId} xray={xray} />}</>}
       <div className="cp-map__landmarks">
-        {!demo && renderScene && fieldIllustration && (() => {
-          const place = mapPlaces.find(item => item.id === selectedId);
-          return place ? <FieldIllustration illustration={fieldIllustration} point={project(place.x, place.y)} width={size.width} height={size.height} compact={compactSelected} placeName={place.name} /> : null;
-        })()}
         {mapPlaces.map((place) => {
           const selected = selectedId === place.id;
           const metrics = demo ? getMetrics(place.id, minute, scenarioId) : null;

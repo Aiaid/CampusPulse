@@ -56,15 +56,17 @@ function actorPosition(actor, elapsed) {
   const position = sampleRoute(actor.route, progress);
   return { ...actor, ...position, heading: position.heading + (returning ? 180 : 0) };
 }
-function makeActors(minute, layers, scenarioId) {
+function makeActors(minute, layers, scenarioId, input = null) {
+  const metricsFor = id => { const base = getMetrics(id, minute, scenarioId); return input?.placeId === id ? { ...base, people: input.people, bikes: input.bikes ?? base.bikes, parking: input.parking ?? base.parking } : base; };
+  const multiplier = input ? 2 : 1;
   const result = [];
   // Stable IDs and phase keep the same actors in place as density changes.
   for (const route of sceneRoutes) {
     if (route.points.length < 2 || !layers[route.kind === 'walk' ? 'people' : 'bikes']) continue;
-    const metrics = getMetrics(route.placeId, minute, scenarioId);
+    const metrics = metricsFor(route.placeId);
     // Higher peak pedestrian density follows the selected concept in EVERY
     // lighting mode. It is illustrative activity, never a field people count.
-    const count = route.kind === 'walk' ? clamp(Math.round(metrics.people / 10), 1, 10) : clamp(Math.round(metrics.bikes / 24), 1, 4);
+    const count = (route.kind === 'walk' ? metrics.people === 0 ? 0 : clamp(Math.round(metrics.people / 10), 1, 10) : metrics.bikes === 0 ? 0 : clamp(Math.round(metrics.bikes / 24), 1, 4)) * multiplier;
     const length = Math.max(pathLength(route), 1);
     for (let index = 0; index < count; index += 1) {
       result.push({ id: `${route.id}-${index}`, route, length, kind: route.kind, parked: false,
@@ -74,8 +76,8 @@ function makeActors(minute, layers, scenarioId) {
   }
   // A parking sprite contains no rider and never participates in motion.
   if (layers.bikes) for (const area of parkingAreas) {
-    const metrics = getMetrics(area.placeId, minute, scenarioId);
-    const occupied = Math.round(area.slots.length * metrics.parking / 100);
+    const metrics = metricsFor(area.placeId);
+    const occupied = Math.min(area.slots.length, Math.round(area.slots.length * metrics.parking / 100) * multiplier);
     for (const [index, slot] of area.slots.slice(0, occupied).entries()) {
       result.push({ id: `${area.id}-parked-${index}`, kind: 'ride', parked: true, ...slot });
     }
@@ -84,22 +86,19 @@ function makeActors(minute, layers, scenarioId) {
   // place retains its route allocation and fixed parking comes after no cutoff.
   return result.slice(0, MAX_ACTORS);
 }
-function makeObservedActors(illustration, place) {
-  if (!illustration || !place) return [];
-  const result = [];
-  for (const group of illustration.groups) {
-    const walk = group.kind === 'people';
-    if (!walk && group.kind !== 'bikes' && group.kind !== 'cars') continue;
-    const count = Math.min(40, group.figure_count * 2);
-    const parked = !walk && group.source === 'manual';
-    const route = { id: `observed-${place.id}-${group.kind}`, placeId: place.id, kind: walk ? 'walk' : 'ride',
-      points: walk ? [[place.x - 19, place.y + 9], [place.x + 19, place.y + 9], [place.x + 17, place.y + 20], [place.x - 17, place.y + 20], [place.x - 19, place.y + 9]]
-        : [[place.x - 24, place.y + 25], [place.x + 24, place.y + 25]], closed: walk };
-    for (let index = 0; index < count; index++) result.push({ id: `${route.id}-${index}`, route, kind: route.kind,
-      length: Math.max(1, pathLength(route)), phase: index / Math.max(1, count), speed: walk ? .95 : 2.6, parked,
-      ...(parked ? { x: place.x + (index - (count - 1) / 2) * 6, y: place.y + 25, heading: 45 } : {}) });
-  }
-  return result.slice(0, MAX_ACTORS);
+function sceneInput(illustration, place) {
+  if (!illustration || !place) return null;
+  const people = illustration.groups.find(group => group.kind === 'people');
+  if (!people && !illustration.groups.some(group => group.kind === 'bikes' || group.kind === 'cars')) return null;
+  const nearest = sceneRoutes.reduce((best, route) => {
+    const distance = Math.min(...route.points.map(([x,y]) => Math.hypot(x-place.x,y-place.y)));
+    return !best || distance < best.distance ? { placeId: route.placeId, distance } : best;
+  }, null);
+  const id = getMetrics(place.id).people !== null ? place.id : nearest?.placeId;
+  const vehicles = illustration.groups.find(group => group.kind === 'bikes');
+  return { placeId: id, people: people?.metric_value ?? people?.figure_count ?? 0,
+    bikes: vehicles?.metric_value > 0 ? vehicles.metric_value : null,
+    parking: vehicles?.source === 'manual' ? Math.min(100, (vehicles.metric_value || 0) * 10) : null };
 }
 function loadImage(src, redraw) {
   const image = new Image();
@@ -267,8 +266,10 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       const context = canvas.getContext('2d');
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
       context.clearRect(0, 0, width, height);
-      const definitions = props.demo ? actorDefinitions.resolve(props.scenarioId,
-        [props.minute, props.layers.people, props.layers.bikes], () => makeActors(props.minute, props.layers, props.scenarioId)) : makeObservedActors(props.fieldIllustration, props.fieldPlace);
+      const input = props.demo ? null : sceneInput(props.fieldIllustration, props.fieldPlace);
+      const definitions = props.demo || input ? actorDefinitions.resolve(props.demo ? props.scenarioId : 'field-'+input.placeId,
+        [props.minute, props.layers.people, props.layers.bikes, input?.people, input?.bikes, input?.parking],
+        () => makeActors(props.minute, props.layers, props.scenarioId, input)) : [];
       const actors = definitions.map((actor) => actorPosition(actor, elapsed)).sort((a, b) => a.y - b.y);
       const treeRevision = treeMaterialState().revision;
       let hiddenCount = 0;
@@ -276,7 +277,7 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       const campusLighting = props.isDark && props.lighting === 'campus';
       const libraryLighting = props.isDark && (props.lighting === 'library' || campusLighting);
       const localLighting = props.isDark && (props.lighting === 'atmospheric' || libraryLighting);
-      const readableDetail = props.detailView && (!props.demo || campusLighting || libraryLighting && props.selectedId === 'library');
+      const readableDetail = props.detailView && (campusLighting || libraryLighting && props.selectedId === 'library');
       const shadowClip = libraryLighting && actors.length ? projectedPaths.resolve('ground',
         [projectPoint, width, height], () => groundClipPaths(projectPoint, width, height)) : null;
       let shadowContext = null;
@@ -302,14 +303,10 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
         const libraryAmount = campusLighting ? 1 : libraryLighting ? libraryBlend(actor.x, actor.y) : 0;
         const dimensions = actorDimensions(actor, frame, mapScale,
           { readable: readableDetail, viewWidth: width, amount: libraryAmount });
-        if (!props.demo && dimensions.height > 0) {
-          const factor = Math.max(1, (props.detailView ? 22 : 17) / dimensions.height);
-          dimensions.width *= factor; dimensions.height *= factor; dimensions.presentationScale *= factor;
-        }
         const {width:spriteWidth,height:spriteHeight,physicalWidth,physicalHeight,presentationScale} = dimensions;
         if (screen.left < -spriteWidth || screen.left > width + spriteWidth || screen.top < -spriteHeight || screen.top > height + spriteHeight) continue;
-        const occludingBuilding = props.demo ? actorOcclusion.resolve(actor.id, [actor.x, actor.y],
-          () => classifyOcclusion([actor.x, actor.y])) : null;
+        const occludingBuilding = actorOcclusion.resolve(actor.id, [actor.x, actor.y],
+          () => classifyOcclusion([actor.x, actor.y]));
         const occluded = Boolean(occludingBuilding);
         if (occluded) hiddenCount += 1;
         const revealed = occluded && props.xray && occludingBuilding.placeId === props.selectedId;
@@ -350,10 +347,10 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
         let drawFrame = litFrame;
         const treeMask = libraryLighting ? treeMaskBehind(actor.y) : null;
         const actorLeft = actor.x - spriteWidth / mapScale / 2, actorTop = actor.y - spriteHeight / mapScale;
-        const overlapsTree = props.demo && treeMask?.trees.some(tree => actorLeft < tree.screenBounds.left + tree.screenBounds.width && actorLeft + spriteWidth / mapScale > tree.screenBounds.left && actorTop < tree.screenBounds.top + tree.screenBounds.height && actor.y > tree.screenBounds.top);
-        const campusCrowns = props.demo && campusLighting ? campusCrownMasks({ left: actorLeft, top: actorTop,
+        const overlapsTree = treeMask?.trees.some(tree => actorLeft < tree.screenBounds.left + tree.screenBounds.width && actorLeft + spriteWidth / mapScale > tree.screenBounds.left && actorTop < tree.screenBounds.top + tree.screenBounds.height && actor.y > tree.screenBounds.top);
+        const campusCrowns = campusLighting ? campusCrownMasks({ left: actorLeft, top: actorTop,
           width: spriteWidth / mapScale, height: spriteHeight / mapScale }, actor.y) : [];
-        const nativeCrowns = props.demo && campusLighting ? getCampusNativeCanopyMasks({ left: actorLeft, top: actorTop,
+        const nativeCrowns = campusLighting ? getCampusNativeCanopyMasks({ left: actorLeft, top: actorTop,
           width: spriteWidth / mapScale, height: spriteHeight / mapScale }) : [];
         if (overlapsTree || campusCrowns.length || nativeCrowns.length) {
           // Mask an isolated sprite, never the shared actor canvas. A canopy
@@ -427,7 +424,7 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       }
       // Cut sprites by registered projected silhouettes without reading remote
       // school imagery into canvas. Xray keeps the selected building open.
-      if (actors.length && props.demo) {
+      if (actors.length) {
         context.save();
         context.globalCompositeOperation = 'destination-out';
         context.globalAlpha = 1;
