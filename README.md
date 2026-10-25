@@ -223,9 +223,11 @@ theft, so the prototype is demonstrated through temporary, attended setups.
 For the hackathon submission, an on-site demonstration with the devices can be
 arranged on request to show collection, campus Wi-Fi upload and the web interface.
 
-> **Actual operation screenshots — to be added.**
-> Space reserved for photos/screenshots of the physical setup and its uploaded
-> observations. The sample interface images above remain labelled as samples.
+![Actual operation: library field observations and uploaded-record timeline](docs/images/field-operation-desktop.png)
+
+*User-provided operation screenshot of the library observation page. The displayed
+16 BLE identifiers are marked as capped and do not mean 16 people; the activity
+icons are illustrative. Elevator observations are still pending in this snapshot.*
 
 ## Run locally
 

@@ -67,6 +67,13 @@ credential, field observation or BLE identity is used. These views include no
 GIS tiles or new third-party artwork. They follow the same original-preservation,
 metadata-removal and final visual-check process documented in the capture recipe.
 
+The user supplied `field-operation-desktop.png` as an actual-operation page
+screenshot for the hackathon section. It retains the app's visible CCNU GIS
+attribution; the underlying map rights remain unchanged. The original is kept
+outside the repository. The publication copy is converted to sRGB and stripped
+of embedded metadata, with its final chunks and decoded image checked before
+commit. This user-provided snapshot is distinct from the synthetic captures above.
+
 ## 2026-10-25 — Short PIN and USB provisioning
 
 The revised local BLE flow uses the installed Apache-2.0 ESP-IDF 5.5.3

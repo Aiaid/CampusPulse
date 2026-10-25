@@ -107,3 +107,25 @@ writes or unmatched API routes. SHA-256 of the reviewed final copies:
 
 - `admin-overview.png`: `047d0e0a38e967da7eace8e1c8fe7f819c726e39c47dc54add65560046379fee`
 - `admin-device-diagnostics.png`: `3e13c92bddbd4d0fcfb475469dc66601dbc320a2ad1f8f879ad7875e9d112f7e`
+
+## User-provided operation screenshot · 2026-10-25
+
+[Field operation](../images/field-operation-desktop.png) is a 3010 × 1620
+screenshot supplied by the user for the hackathon demonstration section. It
+shows the library field-observation page and uploaded-record timeline, rather
+than the synthetic fixtures used for the earlier screenshots. The visible
+16-identifier value is capped; icons do not represent individual people or
+positions, and elevator observations are pending. This snapshot alone does not
+establish sustained hardware stability or complete radio coverage.
+
+The source remains unchanged outside the repository. The publication copy was
+converted from its embedded color profile to sRGB, then stripped of ancillary
+metadata, including EXIF, XMP comments and the original display profile. ExifTool
+and the final PNG chunk inspection confirm only `IHDR`, `IDAT` and `IEND` remain;
+no embedded identity, location, author/contact, device, capture-time or path
+metadata remains. The final image was decoded and visually checked for
+orientation, color, legibility and visible GIS attribution. The page's displayed
+timestamps are part of the screenshot, not embedded capture metadata. CCNU GIS
+artwork rights remain as described above.
+
+Final SHA-256: `93a5eab0ae06d16e4d05b83377d3e03606c1af34d00af00cd5d8f32bc0818cbb`.
