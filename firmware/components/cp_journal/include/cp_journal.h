@@ -48,5 +48,8 @@ cp_journal_result_t cp_journal_oldest(const cp_journal_t *, uint16_t *slot);
 cp_journal_result_t cp_journal_read(cp_journal_t *, uint16_t, void *, size_t, size_t *);
 /* Call ONLY after the protocol client has matched every durable ACK identity. */
 cp_journal_result_t cp_journal_ack(cp_journal_t *, uint16_t);
+/* Explicit staleness discard: erases a PENDING slot WITHOUT any server ACK.
+ * Callers must record this in visible loss counters; it is never automatic. */
+cp_journal_result_t cp_journal_discard(cp_journal_t *, uint16_t);
 unsigned cp_journal_pending(const cp_journal_t *);
 unsigned cp_journal_free_slots(const cp_journal_t *);

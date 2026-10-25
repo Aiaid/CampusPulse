@@ -88,6 +88,39 @@ static void update_store_health(void) {
     __atomic_store_n(&s_health.pending, cp_journal_pending(&s_journal), __ATOMIC_RELAXED);
     __atomic_store_n(&s_health.quarantined_slots, s_journal.corrupt_slots, __ATOMIC_RELAXED);
 }
+/* Explicit staleness backstop (2026-10-25, user-decided semantics): a pending
+ * batch older than CP_STALE_MS is discarded, counted in storage_drops and
+ * reported via node_status. Never silent. Unknown ages (post-reboot recovery)
+ * get a fresh TTL grace from boot. */
+#define CP_STALE_MS 120000u
+static uint64_t s_slot_frozen[CP_JOURNAL_MAX_SLOTS];
+static uint64_t s_last_sweep;
+static void sweep_stale(void) {
+    const uint64_t now = mono_ms();
+    if (now - s_last_sweep < 5000)
+        return;
+    s_last_sweep = now;
+    if (xSemaphoreTake(s_store_lock, pdMS_TO_TICKS(1000)) != pdTRUE)
+        return;
+    for (unsigned i = 0; i < s_journal.count; i++) {
+        if (s_journal.slots[i].state != CP_SLOT_PENDING || !s_slot_frozen[i])
+            continue;
+        if (now - s_slot_frozen[i] < CP_STALE_MS)
+            continue;
+        const unsigned stream = s_upload_scheduler.stream[i];
+        if (stream < CP_UPLOAD_STREAM_COUNT && load(&s_stream_pending[stream]))
+            __atomic_sub_fetch(&s_stream_pending[stream], 1u, __ATOMIC_RELAXED);
+        cp_upload_scheduler_confirmed(&s_upload_scheduler, (uint16_t)i);
+        s_slot_frozen[i] = 0;
+        if (cp_journal_discard(&s_journal, (uint16_t)i) == CP_JOURNAL_OK) {
+            bump(&s_health.storage_drops);
+            ESP_LOGW(TAG, "stale batch discarded after %lus unsent (slot %u, counted)",
+                     (unsigned long)(CP_STALE_MS / 1000), i);
+        }
+    }
+    update_store_health();
+    xSemaphoreGive(s_store_lock);
+}
 static bool store_body(void *context, const char *body, size_t length, const char *stream,
                        unsigned count, bool control) {
     (void)context;
@@ -97,6 +130,7 @@ static bool store_body(void *context, const char *body, size_t length, const cha
         uint16_t slot;
         ok = cp_journal_append(&s_journal, body, length, control, &slot) == CP_JOURNAL_OK;
         if (ok) {
+            s_slot_frozen[slot] = mono_ms();
             int i = stream_index(stream);
             (void)cp_upload_scheduler_bind(&s_upload_scheduler, slot, (unsigned)i);
             if (i >= 0)
@@ -474,6 +508,7 @@ static void upload_read_failed(uint16_t slot, cp_journal_result_t error) {
 static void uploader_task(void *arg) {
     (void)arg;
     for (;;) {
+        sweep_stale();
         cp_network_snapshot_t net;
         cp_network_snapshot(&net);
         if (net.network != CP_NETWORK_READY || net.auth != CP_AUTH_VALID) {
@@ -544,6 +579,7 @@ static void uploader_task(void *arg) {
         }
         if (result == CP_NET_UPLOAD_ACKED) {
             if (cp_journal_ack(&s_journal, selected) == CP_JOURNAL_OK) {
+                s_slot_frozen[selected] = 0;
                 if (load(&s_stream_pending[stream]))
                     __atomic_sub_fetch(&s_stream_pending[stream], 1u, __ATOMIC_RELAXED);
                 cp_upload_scheduler_confirmed(&s_upload_scheduler, selected);
@@ -619,6 +655,7 @@ esp_err_t cp_pipeline_init(const char *node, const char *boot) {
     update_store_health();
     for (unsigned i = 0; i < s_journal.count; i++)
         if (s_journal.slots[i].state == CP_SLOT_PENDING) {
+            s_slot_frozen[i] = mono_ms(); /* reboot recovery: fresh TTL grace */
             size_t n;
             cp_journal_result_t read =
                 cp_journal_read(&s_journal, (uint16_t)i, s_upload_body, CP_JOURNAL_MAX_BODY, &n);

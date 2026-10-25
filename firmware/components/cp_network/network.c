@@ -153,10 +153,15 @@ static esp_err_t resolve_api(void) {
     return result;
 }
 typedef cp_http_response_t response_t;
+static esp_http_client_handle_t s_client;
+static response_t *s_active_response;
 static esp_err_t http_event(esp_http_client_event_t *event)
 {
     if(event->event_id==HTTP_EVENT_ON_CONNECTED)
         diagnostic(CP_DIAG_CLOUD_AUTH,CP_DIAG_CLOUD_CHECKING,ESP_OK,true,false);
+    /* The persistent client holds no per-request user_data; route the active
+     * caller's response buffer at event time instead. */
+    event->user_data=s_active_response;
     return cp_http_response_event(event,now_ms(),running());
 }
 /* s_http serializes credentials, HTTP, activation and configuration. */
@@ -168,26 +173,45 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
     if (!running() || !eligible) return ESP_ERR_INVALID_STATE;
     esp_err_t resolved=resolve_api();
     if(resolved!=ESP_OK)return resolved;
-    diagnostic(CP_DIAG_TLS,CP_DIAG_TLS_CONNECTING,ESP_OK,true,false);
+    if(!s_client)diagnostic(CP_DIAG_TLS,CP_DIAG_TLS_CONNECTING,ESP_OK,true,false);
     response->deadline_ms=now_ms()+12000;
     char url[128], auth[CP_SETTINGS_TOKEN_SIZE+8];
     if (snprintf(url,sizeof(url),"%s%s",s_settings.api_origin,path)>=(int)sizeof(url)) return ESP_ERR_INVALID_SIZE;
     snprintf(auth,sizeof(auth),"Bearer %s",s_settings.device_token);
-    esp_http_client_config_t config={
-        .url=url, .timeout_ms=12000, .disable_auto_redirect=true, .is_async=true,
-        .crt_bundle_attach=esp_crt_bundle_attach,
-        .event_handler=http_event, .user_data=response,
-        .buffer_size=1024, .buffer_size_tx=1024,
-    };
-    esp_http_client_handle_t client=esp_http_client_init(&config);
-    if (!client) { memset(auth,0,sizeof(auth)); return ESP_ERR_NO_MEM; }
+    /* One keep-alive TLS connection per network phase: a fresh handshake costs
+     * 2-5 s on this chip. Reuse is allowed ONLY after a completely read,
+     * successful response; any error/timeout/partial body destroys the client
+     * and the next request rebuilds it. */
+    const bool reused = s_client != NULL;
+    if(!s_client){
+        esp_http_client_config_t config={
+            .url=url, .timeout_ms=12000, .disable_auto_redirect=true, .is_async=true,
+            .crt_bundle_attach=esp_crt_bundle_attach,
+            .event_handler=http_event, .user_data=NULL,
+            .buffer_size=1024, .buffer_size_tx=1024,
+            .keep_alive_enable=true, .keep_alive_idle=10, .keep_alive_interval=5,
+        };
+        s_client=esp_http_client_init(&config);
+        if(!s_client){ memset(auth,0,sizeof(auth)); return ESP_ERR_NO_MEM; }
+    } else {
+        esp_err_t url_err=esp_http_client_set_url(s_client,url);
+        if(url_err!=ESP_OK){ memset(auth,0,sizeof(auth)); return url_err; }
+    }
+    ESP_LOGW("cp_network_diag", "DIAG http reused=%d path=%s", (int)reused, path);
+    esp_http_client_handle_t client=s_client;
+    s_active_response=response;
     esp_err_t e=esp_http_client_set_header(client,"Authorization",auth);
     memset(auth,0,sizeof(auth));
     if (e==ESP_OK) e=esp_http_client_set_header(client,"Accept","application/json");
-    if (e==ESP_OK && body) e=esp_http_client_set_method(client,HTTP_METHOD_POST);
+    /* esp_http_client_set_post_field() forces the method back to POST; it must
+     * run BEFORE set_method or a reused client would send POST where the route
+     * only accepts GET (observed on-device as ESP_ERR_NOT_FOUND / HTTP 404). */
+    if (e==ESP_OK) e=esp_http_client_set_post_field(client,body,body?(int)length:0);
+    if (e==ESP_OK) e=esp_http_client_set_method(client,body?HTTP_METHOD_POST:HTTP_METHOD_GET);
     if (e==ESP_OK && body) e=esp_http_client_set_header(client,"Content-Type","application/json");
+    if (e==ESP_OK && !body) esp_http_client_delete_header(client,"Content-Type");
     if (e==ESP_OK && hash) e=esp_http_client_set_header(client,"X-Body-SHA256",hash);
-    if (e==ESP_OK && body) e=esp_http_client_set_post_field(client,body,(int)length);
+    if (e==ESP_OK && !hash) esp_http_client_delete_header(client,"X-Body-SHA256");
     if (e==ESP_OK) {
         const uint64_t deadline=response->deadline_ms;
         do {
@@ -203,7 +227,14 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
     cp_http_response_check(response,now_ms(),running());
     int tls_code=0,tls_flags=0;
     esp_err_t tls_error=esp_http_client_get_and_clear_last_tls_error(client,&tls_code,&tls_flags);
-    esp_http_client_cleanup(client);
+    s_active_response=NULL;
+    /* Reuse only a fully-read success. Anything else leaves the byte stream
+     * misaligned; destroy instead of poisoning the next request. */
+    if(e!=ESP_OK || *status==0 || response->read_stopped){
+        esp_http_client_cleanup(s_client); s_client=NULL;
+    }
+    ESP_LOGW("cp_network_diag","DIAG http result path=%s err=%s status=%d reused=%d read_stopped=%d",
+             path,esp_err_to_name(e),*status,(int)reused,(int)response->read_stopped);
     if (response->abort_reason!=ESP_OK) e=response->abort_reason;
     lock();
     s_snapshot.last_http_status=*status; s_snapshot.last_error=e;
@@ -468,6 +499,7 @@ esp_err_t cp_network_stop(void)
         s_task=NULL;
     }
     xSemaphoreTake(s_http,portMAX_DELAY);
+    if(s_client){ esp_http_client_cleanup(s_client); s_client=NULL; }
     if (s_sntp_started) { esp_netif_sntp_deinit(); s_sntp_started=false; }
     if (s_wifi_handler) { esp_event_handler_instance_unregister(WIFI_EVENT,ESP_EVENT_ANY_ID,s_wifi_handler); s_wifi_handler=NULL; }
     if (s_ip_handler) { esp_event_handler_instance_unregister(IP_EVENT,ESP_EVENT_ANY_ID,s_ip_handler); s_ip_handler=NULL; }

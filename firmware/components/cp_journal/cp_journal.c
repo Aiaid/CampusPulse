@@ -218,3 +218,17 @@ cp_journal_result_t cp_journal_ack(cp_journal_t *j, uint16_t slot) {
     j->slots[slot].state = CP_SLOT_ACKED;
     return CP_JOURNAL_OK;
 }
+
+cp_journal_result_t cp_journal_discard(cp_journal_t *j, uint16_t slot) {
+    if (!j || !j->ready || slot >= j->count)
+        return CP_JOURNAL_INVALID;
+    if (j->slots[slot].state != CP_SLOT_PENDING)
+        return CP_JOURNAL_INVALID;
+    /* Full erase so a reboot cannot resurrect the discarded batch. */
+    if (!j->flash.erase(j->flash.context, (size_t)slot * CP_JOURNAL_SLOT_BYTES,
+                        CP_JOURNAL_SLOT_BYTES))
+        return io_error(j);
+    j->slots[slot].state = CP_SLOT_FREE;
+    j->slots[slot].length = 0;
+    return CP_JOURNAL_OK;
+}

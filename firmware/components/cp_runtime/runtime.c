@@ -46,10 +46,12 @@ static radio_phase_t s_phase = RADIO_NETWORK;
 static uint64_t s_phase_started_ms;
 static cp_network_policy_t s_cached_policy;
 static bool s_have_cached_policy;
+static unsigned s_phase_start_pending;
 #define CP_COLLECT_PHASE_MS 60000u      /* collect this long before an upload round */
 #define CP_COLLECT_MAX_PHASE_MS 90000u  /* lease is 120 s; renew well before expiry */
 #define CP_NETWORK_MIN_PHASE_MS 8000u   /* allow contact/TLS to finish */
 #define CP_NETWORK_MAX_PHASE_MS 45000u  /* do not starve collection on slow links */
+#define CP_NETWORK_MAX_BATCHES 24u      /* ~2 min worst-case BLE blackout per round */
 static uint64_t now_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }
 static void boot_uuid(void) {
     uint8_t b[16];
@@ -255,9 +257,14 @@ static void radio_tick(void) {
             s_cached_policy = p;
             s_have_cached_policy = true;
         }
+        /* Drain priority with a per-round cap: leave as soon as the queue is
+         * empty OR 24 batches went out (~2 min max BLE blackout); pending only
+         * shrinks during this phase because the collector is stopped. */
+        const unsigned uploaded = pipe.pending <= s_phase_start_pending
+                                      ? s_phase_start_pending - pipe.pending : 0;
         const bool drained = pipe.pending == 0;
         if (s_have_cached_policy && age >= CP_NETWORK_MIN_PHASE_MS &&
-            (drained || age >= CP_NETWORK_MAX_PHASE_MS)) {
+            (drained || uploaded >= CP_NETWORK_MAX_BATCHES || age >= CP_NETWORK_MAX_PHASE_MS)) {
             if (cp_network_stop() != ESP_OK) {
                 reason("network_stop_failed");
                 return;
@@ -280,6 +287,7 @@ static void radio_tick(void) {
                 if (cp_network_start(&s_settings) == ESP_OK) {
                     s_phase = RADIO_NETWORK;
                     s_phase_started_ms = now_ms();
+                    s_phase_start_pending = pipe.pending;
                 }
             }
         }
@@ -301,6 +309,7 @@ static void radio_tick(void) {
         if (cp_network_start(&s_settings) == ESP_OK) {
             s_phase = RADIO_NETWORK;
             s_phase_started_ms = now_ms();
+            s_phase_start_pending = pipe.pending;
             reason("network_round");
         } else if (cp_collection_allowed(state) && s_have_cached_policy &&
                    cp_pipeline_apply(&s_cached_policy) == ESP_OK) {
@@ -318,6 +327,10 @@ static void runtime_task(void *arg) {
     if (s_enrolled) {
         cp_core_set_setup_active(&s_core, false);
         cp_core_set_identity(&s_core, CP_IDENTITY_ENROLLED);
+        s_phase = RADIO_NETWORK;
+        s_phase_started_ms = now_ms();
+        { cp_pipeline_snapshot_t boot_pipe; cp_pipeline_snapshot(&boot_pipe);
+          s_phase_start_pending = boot_pipe.pending; }
         if (cp_network_start(&s_settings) != ESP_OK)
             reason("network_start_failed");
     } else if (s_core.profile->capabilities & CP_CAP_DISPLAY) {
@@ -342,6 +355,8 @@ static void runtime_task(void *arg) {
                     (void)cp_network_start(&s_settings);
                     s_phase = RADIO_NETWORK;
                     s_phase_started_ms = now_ms();
+                    { cp_pipeline_snapshot_t rp; cp_pipeline_snapshot(&rp);
+                      s_phase_start_pending = rp.pending; }
                     reason("resuming_saved_network");
                 } else
                     reason("provision_stop_failed");
