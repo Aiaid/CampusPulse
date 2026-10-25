@@ -154,7 +154,12 @@ static cp_codec_t codec_context(void) {
                     .firmware_version = CP_NETWORK_FIRMWARE,
                     .max_items = s_policy.max_items,
                     .max_body_bytes = s_policy.max_body_bytes,
-                    .clock_known = clock.clock_trusted,
+                    /* The exclusive radio phases stop the network every cycle,
+                     * which clears the transient clock_trusted flag. Batch
+                     * timestamps must use the durable server-time estimate
+                     * instead: it survives phase teardown by design, and the
+                     * reported uncertainty grows with its age. */
+                    .clock_known = clock.clock_estimated && clock.clock_utc_ms,
                     .clock_mono_ms = clock.clock_mono_ms,
                     .clock_utc_ms = clock.clock_utc_ms,
                     .clock_epoch = clock.clock_epoch,
