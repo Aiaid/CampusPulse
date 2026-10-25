@@ -6,6 +6,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
 #include "esp_http_client.h"
+#include "esp_heap_caps.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
 #include "esp_timer.h"
@@ -73,6 +74,37 @@ static void diagnostic_locked(cp_diag_stage_t stage,cp_diag_code_t code,esp_err_
 }
 static void diagnostic(cp_diag_stage_t stage,cp_diag_code_t code,esp_err_t error,bool retryable,bool terminal) {
     lock();diagnostic_locked(stage,code,error,retryable,terminal);unlock();
+}
+/* Private numeric phases: no URL, credentials, network or device identifiers. */
+typedef enum {
+    NET_PHASE_DNS=1,NET_PHASE_CLIENT_INIT,NET_PHASE_HTTP_END,
+    NET_PHASE_CONTACT_JSON,NET_PHASE_CONTACT_RESPONSE,NET_PHASE_POLICY_RESPONSE,
+    NET_PHASE_ACTIVATION_JSON,NET_PHASE_ACTIVATION_RESPONSE,NET_PHASE_ACTIVATION_PARSE,
+    NET_PHASE_UPLOAD_RESPONSE,NET_PHASE_START,
+} net_phase_t;
+static void log_evidence(net_phase_t phase,esp_err_t error,int socket_errno,
+    esp_err_t tls_error,int tls_code,int tls_flags,int status,uint64_t started)
+{
+    lock();cp_diag_stage_t stage=s_snapshot.diagnostic.stage;unlock();
+    uint64_t now=now_ms(),elapsed=now>=started?now-started:0;
+    ESP_LOG_LEVEL_LOCAL(error==ESP_OK?ESP_LOG_INFO:ESP_LOG_WARN,"cp_network",
+        "phase=%u stage=%u free=%u internal_free=%u internal_largest=%u min_heap=%u err=%d errno=%d tls_err=%d tls_code=%d tls_flags=%u http=%d elapsed_ms=%llu",
+        (unsigned)phase,(unsigned)stage,
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
+        (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT),
+        (int)error,socket_errno,(int)tls_error,tls_code,(unsigned)tls_flags,status,
+        (unsigned long long)elapsed);
+}
+static void allocation_failed(net_phase_t phase)
+{
+    lock();s_snapshot.last_error=ESP_ERR_NO_MEM;
+    /* Local allocation failed before a trustworthy cloud result exists. End a
+     * candidate immediately so its caller cannot replace this with TLS timeout. */
+    diagnostic_locked(CP_DIAG_CLOUD_AUTH,CP_DIAG_RESOURCE_EXHAUSTED,ESP_ERR_NO_MEM,true,s_candidate_mode);
+    unlock();
+    log_evidence(phase,ESP_ERR_NO_MEM,0,ESP_OK,0,0,0,now_ms());
 }
 /* Driver/TCPIP callbacks enqueue numeric evidence and return immediately. */
 static void wifi_event(void *arg,esp_event_base_t base,int32_t id,void *data) {
@@ -147,7 +179,10 @@ static esp_err_t resolve_api(void) {
     }
     if(!running())result=ESP_ERR_INVALID_STATE;
     portENTER_CRITICAL(&s_dns_lock);++s_dns_generation;portEXIT_CRITICAL(&s_dns_lock);
-    if(result!=ESP_OK)diagnostic(CP_DIAG_DNS,result==ESP_ERR_TIMEOUT?CP_DIAG_DNS_TIMEOUT:CP_DIAG_DNS_FAILED,result,true,false);
+    if(result!=ESP_OK) {
+        diagnostic(CP_DIAG_DNS,result==ESP_ERR_TIMEOUT?CP_DIAG_DNS_TIMEOUT:CP_DIAG_DNS_FAILED,result,true,false);
+        log_evidence(NET_PHASE_DNS,result,0,ESP_OK,0,0,0,deadline-6000);
+    }
     return result;
 }
 typedef cp_http_response_t response_t;
@@ -162,6 +197,7 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
     const char *hash, response_t *response, int *status)
 {
     *status=0;
+    const uint64_t started=now_ms();
     lock(); bool eligible=s_link && s_synced; unlock();
     if (!running() || !eligible) return ESP_ERR_INVALID_STATE;
     esp_err_t resolved=resolve_api();
@@ -173,12 +209,14 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
     snprintf(auth,sizeof(auth),"Bearer %s",s_settings.device_token);
     esp_http_client_config_t config={
         .url=url, .timeout_ms=12000, .disable_auto_redirect=true, .is_async=true,
+        /* Eligibility and the DNS preflight both require IPv4 GOT_IP. */
+        .addr_type=HTTP_ADDR_TYPE_INET,
         .crt_bundle_attach=esp_crt_bundle_attach,
         .event_handler=http_event, .user_data=response,
         .buffer_size=1024, .buffer_size_tx=1024,
     };
     esp_http_client_handle_t client=esp_http_client_init(&config);
-    if (!client) { memset(auth,0,sizeof(auth)); return ESP_ERR_NO_MEM; }
+    if (!client) { memset(auth,0,sizeof(auth)); allocation_failed(NET_PHASE_CLIENT_INIT); return ESP_ERR_NO_MEM; }
     esp_err_t e=esp_http_client_set_header(client,"Authorization",auth);
     memset(auth,0,sizeof(auth));
     if (e==ESP_OK) e=esp_http_client_set_header(client,"Accept","application/json");
@@ -201,7 +239,10 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
     cp_http_response_check(response,now_ms(),running());
     int tls_code=0,tls_flags=0;
     esp_err_t tls_error=esp_http_client_get_and_clear_last_tls_error(client,&tls_code,&tls_flags);
+    int socket_errno=esp_http_client_get_errno(client);
     esp_http_client_cleanup(client);
+    /* Keep driver evidence queued during the bounded HTTP operation. */
+    drain_events();
     if (response->abort_reason!=ESP_OK) e=response->abort_reason;
     lock();
     s_snapshot.last_http_status=*status; s_snapshot.last_error=e;
@@ -210,11 +251,13 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
     if(e!=ESP_OK) {
         cp_diag_stage_t stage=s_snapshot.diagnostic.stage;
         cp_diag_code_t code;
-        if(tls_error==ESP_ERR_ESP_TLS_CANNOT_RESOLVE_HOSTNAME){stage=CP_DIAG_DNS;code=CP_DIAG_DNS_FAILED;}
+        if(e==ESP_ERR_NO_MEM){stage=CP_DIAG_CLOUD_AUTH;code=CP_DIAG_RESOURCE_EXHAUSTED;}
+        else if(tls_error==ESP_ERR_ESP_TLS_CANNOT_RESOLVE_HOSTNAME){stage=CP_DIAG_DNS;code=CP_DIAG_DNS_FAILED;}
         else if(tls_flags){stage=CP_DIAG_TLS;code=CP_DIAG_TLS_CERTIFICATE_FAILED;}
+        else if(stage==CP_DIAG_WIFI_CONNECT || stage==CP_DIAG_DHCP)code=s_snapshot.diagnostic.code;
         else if(stage==CP_DIAG_TLS)code=e==ESP_ERR_TIMEOUT?CP_DIAG_TLS_TIMEOUT:CP_DIAG_TLS_FAILED;
         else code=e==ESP_ERR_TIMEOUT?CP_DIAG_CLOUD_TIMEOUT:CP_DIAG_HTTP_FAILED;
-        diagnostic_locked(stage,code,tls_error!=ESP_OK?tls_error:e,true,false);
+        diagnostic_locked(stage,code,e==ESP_ERR_NO_MEM?e:tls_error!=ESP_OK?tls_error:e,true,e==ESP_ERR_NO_MEM&&s_candidate_mode);
     } else if(*status==401||*status==403) {
         diagnostic_locked(CP_DIAG_CLOUD_AUTH,CP_DIAG_CLOUD_AUTH_FAILED,ESP_ERR_NOT_ALLOWED,false,true);
     } else if(*status<200||*status>=300) {
@@ -226,6 +269,7 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
         s_snapshot.auth=CP_AUTH_REJECTED; s_snapshot.policy_valid=false;
     }
     unlock();
+    log_evidence(NET_PHASE_HTTP_END,e,socket_errno,tls_error,tls_code,tls_flags,*status,started);
     return e;
 }
 static char *contact_body(uint64_t seq)
@@ -239,12 +283,12 @@ static bool contact(void)
     if (!s_pending_contact) {
         if (s_contact_seq==UINT32_MAX) return false;
         char *candidate=contact_body(s_contact_seq+1);
-        if (!candidate) return false;
+        if (!candidate) { allocation_failed(NET_PHASE_CONTACT_JSON); return false; }
         s_pending_contact=candidate; ++s_contact_seq;
     }
     if (!s_pending_contact) return false;
     response_t r={.body=calloc(1,CP_NETWORK_BODY_MAX+1)};
-    if (!r.body) return false;
+    if (!r.body) { allocation_failed(NET_PHASE_CONTACT_RESPONSE); return false; }
     int status=0;
     esp_err_t e=request_locked("/api/v2/device/contact",s_pending_contact,strlen(s_pending_contact),NULL,&r,&status);
     bool ok=e==ESP_OK && status==200 && cp_network_control_ack_matches(r.body,r.used,s_node,s_boot,s_contact_seq,NULL,NULL,NULL);
@@ -261,7 +305,7 @@ static bool contact(void)
 static void fetch_policy(void)
 {
     response_t r={.body=calloc(1,CP_NETWORK_BODY_MAX+1)};
-    if (!r.body) return;
+    if (!r.body) { allocation_failed(NET_PHASE_POLICY_RESPONSE); return; }
     const uint64_t sequence=++s_request_seq;
     int status=0;
     uint64_t started=now_ms();
@@ -302,13 +346,17 @@ static void send_activation(void)
     /* report_activation also holds s_http, so the exact pending attempt remains
      * stable across a request/retry and cannot overtake a newer local outcome. */
     if (!cp_control_prepare_activation(&s_activation_intent,s_boot,&s_apply_seq,
-                                       &s_pending_activation,&s_pending_apply_seq)) return;
+                                       &s_pending_activation,&s_pending_apply_seq)) {
+        if(s_apply_seq<UINT32_MAX)allocation_failed(NET_PHASE_ACTIVATION_JSON);
+        return;
+    }
     if (!s_pending_activation) return;
     response_t r={.body=calloc(1,CP_NETWORK_BODY_MAX+1)};
-    if (!r.body) return;
+    if (!r.body) { allocation_failed(NET_PHASE_ACTIVATION_RESPONSE); return; }
     int status=0;
     esp_err_t e=request_locked("/api/v2/device/config/ack",s_pending_activation,strlen(s_pending_activation),NULL,&r,&status);
     cJSON *sent=cJSON_Parse(s_pending_activation);
+    if(!sent) { allocation_failed(NET_PHASE_ACTIVATION_PARSE);free(r.body);return; }
     const cJSON *config=cJSON_GetObjectItemCaseSensitive(sent,"capture_config_id"), *state=cJSON_GetObjectItemCaseSensitive(sent,"state"), *message=cJSON_GetObjectItemCaseSensitive(sent,"message");
     bool ok=e==ESP_OK && status==200 && cJSON_IsString(config) && cJSON_IsString(state) &&
         cp_network_control_ack_matches(r.body,r.used,s_node,s_boot,s_pending_apply_seq,config->valuestring,state->valuestring,cJSON_IsString(message)?message->valuestring:NULL);
@@ -450,7 +498,9 @@ esp_err_t cp_network_start(const cp_settings_t *settings)
     if (xTaskCreate(service,"cp_network",8192,NULL,4,&s_task)!=pdPASS) { s_task=NULL; e=ESP_ERR_NO_MEM; goto failed; }
     return ESP_OK;
 failed:
+    lock();s_snapshot.last_error=e;unlock();
     diagnostic(CP_DIAG_WIFI_CONNECT,CP_DIAG_NETWORK_START_FAILED,e,true,true);
+    log_evidence(NET_PHASE_START,e,0,ESP_OK,0,0,0,s_diag_started);
     cp_network_stop(); return e;
 }
 esp_err_t cp_network_stop(void)
@@ -465,6 +515,7 @@ esp_err_t cp_network_stop(void)
     if (s_sntp_started) { esp_netif_sntp_deinit(); s_sntp_started=false; }
     if (s_wifi_handler) { esp_event_handler_instance_unregister(WIFI_EVENT,ESP_EVENT_ANY_ID,s_wifi_handler); s_wifi_handler=NULL; }
     if (s_ip_handler) { esp_event_handler_instance_unregister(IP_EVENT,ESP_EVENT_ANY_ID,s_ip_handler); s_ip_handler=NULL; }
+    drain_events();
     if (s_wifi_initialized) {
         if(s_enterprise_enabled){esp_err_t off=esp_wifi_sta_enterprise_disable();if(off!=ESP_OK){xSemaphoreGive(s_http);return off;}s_enterprise_enabled=false;}
         esp_eap_client_clear_identity();esp_eap_client_clear_username();esp_eap_client_clear_password();esp_eap_client_clear_ca_cert();
@@ -553,8 +604,11 @@ esp_err_t cp_network_validate_candidate_with_progress(const cp_settings_t *setti
     }
     lock();
     if(e==ESP_OK)diagnostic_locked(CP_DIAG_READY,CP_DIAG_NETWORK_VALIDATED,ESP_OK,true,true);
-    else if(!s_snapshot.diagnostic.terminal)diagnostic_locked(s_snapshot.diagnostic.stage,
-        e==ESP_ERR_NOT_ALLOWED?CP_DIAG_CLOUD_AUTH_FAILED:cp_network_diag_timeout_code(&s_snapshot.diagnostic),e,e!=ESP_ERR_NOT_ALLOWED,true);
+    else if(!s_snapshot.diagnostic.terminal) {
+        if(e==ESP_ERR_NOT_ALLOWED)diagnostic_locked(CP_DIAG_CLOUD_AUTH,CP_DIAG_CLOUD_AUTH_FAILED,e,false,true);
+        else cp_network_diag_finish_timeout(&s_snapshot.diagnostic,elapsed_ms());
+        if(s_snapshot.diagnostic.esp_err!=ESP_OK)e=s_snapshot.diagnostic.esp_err;
+    }
     unlock();
     esp_err_t stopped=cp_network_stop();s_candidate_mode=false;
     if(stopped!=ESP_OK){lock();s_snapshot.diagnostic.terminal=false;diagnostic_locked(CP_DIAG_HANDOFF,CP_DIAG_NETWORK_STOP_FAILED,stopped,true,true);unlock();e=stopped;}
@@ -571,7 +625,11 @@ cp_net_upload_result_t cp_network_upload_frozen(const void *body, size_t length,
     char hash[65];
     if (!cp_network_sha256(body,length,hash) || strcmp(hash,expected->body_sha256)) return CP_NET_UPLOAD_REJECTED;
     response_t r={.body=calloc(1,CP_NETWORK_BODY_MAX+1)};
-    if (!r.body) return CP_NET_UPLOAD_RETRY;
+    if (!r.body) {
+        allocation_failed(NET_PHASE_UPLOAD_RESPONSE);
+        lock();++s_snapshot.upload_failures;unlock();
+        return CP_NET_UPLOAD_RETRY;
+    }
     xSemaphoreTake(s_http,portMAX_DELAY);
     esp_err_t e=request_locked("/api/v2/ingest",body,length,hash,&r,&ack->http_status);
     cp_net_upload_result_t result=CP_NET_UPLOAD_RETRY;

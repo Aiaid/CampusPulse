@@ -300,8 +300,27 @@ static void test_storage(void)
     assert(out.diagnostic.esp_err == (int32_t)0x80808080u && out.diagnostic.tls_code == (int32_t)0x80808080u);
     assert(!handle_open);
 }
+static void test_preserve_failure_at_deadline(void)
+{
+    cp_network_diag_finish_timeout(NULL,90000);
+    cp_network_diagnostic_t d={0};
+    cp_network_diag_update(&d,CP_DIAG_TLS,CP_DIAG_TLS_CERTIFICATE_FAILED,ESP_FAIL,12000,false,false);
+    d.tls_code=-123;d.tls_flags=8;
+    cp_network_diag_finish_timeout(&d,90000);
+    assert(d.code==CP_DIAG_TLS_CERTIFICATE_FAILED && d.esp_err==ESP_FAIL && d.tls_code==-123 && d.tls_flags==8 && d.terminal && d.elapsed_ms==90000);
+    cp_network_diag_reset(&d);
+    cp_network_diag_update(&d,CP_DIAG_CLOUD_AUTH,CP_DIAG_RESOURCE_EXHAUSTED,ESP_ERR_NO_MEM,14000,true,false);
+    cp_network_diag_finish_timeout(&d,90000);
+    assert(d.code==CP_DIAG_RESOURCE_EXHAUSTED && d.esp_err==ESP_ERR_NO_MEM && d.terminal);
+    cp_network_diag_reset(&d);
+    cp_network_diag_update(&d,CP_DIAG_TLS,CP_DIAG_TLS_CONNECTING,ESP_OK,14000,true,false);
+    cp_network_diag_finish_timeout(&d,90000);
+    assert(d.code==CP_DIAG_TLS_TIMEOUT && d.esp_err==ESP_ERR_TIMEOUT && d.terminal);
+    cp_network_diagnostic_t original=d;cp_network_diag_finish_timeout(&d,91000);
+    assert(!memcmp(&d,&original,sizeof d));
+}
 int main(void)
 {
-    test_safe_diagnostic(); test_wifi_and_timeout(); test_attempt_validation(); test_storage();
+    test_preserve_failure_at_deadline(); test_safe_diagnostic(); test_wifi_and_timeout(); test_attempt_validation(); test_storage();
     puts("diagnostics: safe enums/numerics, Wi-Fi/timeouts, canonical NVS schema, corrupt history and write faults passed");
 }

@@ -19,7 +19,8 @@ typedef enum {
     CP_DIAG_CLOUD_CHECKING, CP_DIAG_CLOUD_AUTH_FAILED, CP_DIAG_HTTP_FAILED,
     CP_DIAG_INVALID_CLOUD_REPLY, CP_DIAG_CLOUD_TIMEOUT, CP_DIAG_NETWORK_VALIDATED,
     CP_DIAG_SAVING, CP_DIAG_SAVE_FAILED, CP_DIAG_SAVED, CP_DIAG_NETWORK_STOP_FAILED,
-    CP_DIAG_VALIDATION_TIMEOUT, CP_DIAG_VALIDATION_INTERRUPTED, CP_DIAG_CODE_COUNT
+    CP_DIAG_VALIDATION_TIMEOUT, CP_DIAG_VALIDATION_INTERRUPTED,
+    CP_DIAG_RESOURCE_EXHAUSTED, CP_DIAG_CODE_COUNT
 } cp_diag_code_t;
 /* Safe numeric evidence only. No addresses, identifiers, SSIDs or secrets. Zero
  * in an error/status field means no such observation, never a guessed success. */
@@ -38,6 +39,7 @@ void cp_network_diag_update(cp_network_diagnostic_t *d,cp_diag_stage_t stage,
     cp_diag_code_t code,esp_err_t error,uint32_t elapsed,bool retryable,bool terminal);
 cp_diag_code_t cp_network_diag_wifi_reason(unsigned reason);
 cp_diag_code_t cp_network_diag_timeout_code(const cp_network_diagnostic_t *d);
+void cp_network_diag_finish_timeout(cp_network_diagnostic_t *d,uint32_t elapsed);
 bool cp_network_diag_valid(const cp_network_diagnostic_t *d);
 typedef enum { CP_ATTEMPT_INTERRUPTED=1, CP_ATTEMPT_FAILED, CP_ATTEMPT_SAVED } cp_attempt_state_t;
 typedef struct {

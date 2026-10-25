@@ -116,6 +116,35 @@ applied ACK arrives.
 
 ## Network diagnostics and remaining verification
 
+### Asynchronous transport repair and timing evidence
+
+Source review of the pinned ESP-IDF 5.5.3 identified two transport defects relevant
+to this diagnosis: asynchronous connect failures did not copy the internal TLS
+error into the transport error handle, and nonblocking SSL read waits could
+return zero without `EAGAIN`. The HTTP body path then treated a normal one-second
+poll gap as an incomplete response instead of yielding to the next poll. The
+build-local, fingerprint-checked repair fixes these paths and a socket-lookup
+failure's duplicate cleanup risk. CA, hostname and certificate-date checks remain
+strict. Actual generated-function ASan/UBSan tests cover these behaviors.
+
+The 90-second elapsed figure belongs to the entire candidate-validation budget,
+which can contain repeated 12-second requests; it is not evidence of one
+90-second TLS handshake. Deadline finalization now preserves a currently observed
+specific failure. Allocation failures report `resource_exhausted` immediately
+instead of leaving an old TLS stage to time out. Numeric-only logs expose socket
+errno, TLS errors, internal free/largest heap and request elapsed time. Collector
+startup failures likewise retain their error and a numeric failure phase.
+No retained-record layout change is needed; the new error enum is appended.
+
+On the newly selected enterprise network, the connected Passport reported an
+initial saved validation with HTTP 200 after 14.771 seconds and a software reboot.
+A later read showed repeated post-boot HTTP-connect errors, with the settings
+still saved. This establishes that initial TLS succeeded on that network; it does
+not establish continuous upload or identify the cause on the earlier network.
+Sanitized, ignored evidence stores only numeric/error/state fields, not raw UART,
+SSID, enterprise identity, password, nonce or credential values. Physical repair
+acceptance is tracked separately from these source findings.
+
 ### Network authentication modes
 
 The administrator wizard and device-hosted setup page explicitly select WPA2

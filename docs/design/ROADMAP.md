@@ -15,6 +15,11 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
+- [ ] Resolve the physical Passport TLS validation timeout: distinguish TCP/TLS,
+      response parsing and memory pressure using bounded diagnostics, preserve
+      strict HTTPS checks and all stored data, then verify on the user's newly
+      selected Wi-Fi through USB and confirm saved settings and cloud contact.
+
 - [ ] Diagnose the reported Passport connection failure without clearing saved
       state. Add observable Wi-Fi/IP/time/TLS/cloud/save stages and retained safe
       failure diagnostics; distinguish first registration from existing-device

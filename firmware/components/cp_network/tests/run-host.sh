@@ -27,3 +27,5 @@ clang -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
     "$CP_NETWORK_DIR/diagnostic.c" "$CP_NETWORK_DIR/diagnostic_store.c" \
     "$CP_NETWORK_DIR/tests/test_diagnostic.c" -o "$CP_TEST_DIR/test-diagnostic"
 "$CP_TEST_DIR/test-diagnostic"
+
+uv run --no-project "$CP_NETWORK_DIR/tests/test_transport_async.py" --idf-path "$IDF_PATH"

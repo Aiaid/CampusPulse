@@ -5,6 +5,7 @@
 #include "cp_pipeline.h"
 #include "cp_upload_scheduler.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_partition.h"
 #include "esp_random.h"
 #include "esp_system.h"
@@ -667,24 +668,34 @@ esp_err_t cp_pipeline_stop(void) {
         s_initialized = false;
     return err;
 }
+static esp_err_t apply_failed(unsigned phase,esp_err_t error) {
+    s_health.last_error=error;
+    ESP_LOGE(TAG,"phase=%u err=%d internal_free=%u internal_largest=%u free_slots=%u",
+        phase,(int)error,
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
+        (unsigned)load(&s_free_slots));
+    return error;
+}
 esp_err_t cp_pipeline_apply(const cp_network_policy_t *p) {
     if (!s_health.storage_ready || !p || p->max_addresses > CP_COLLECT_ADDRESSES ||
         !p->max_addresses || !p->summary_bin_ms ||
         (p->summary_window_ms + p->summary_bin_ms - 1) / p->summary_bin_ms > CP_COLLECT_BINS ||
         p->max_raw_per_window > CP_COLLECT_RAW || p->max_body_bytes < 4096 ||
         p->max_body_bytes > CP_JOURNAL_MAX_BODY || (p->raw_enabled && !p->sample_every_n))
-        return ESP_ERR_NOT_SUPPORTED;
+        return apply_failed(101,ESP_ERR_NOT_SUPPORTED);
     esp_err_t err = cp_pipeline_stop();
     if (err != ESP_OK)
-        return err;
+        return apply_failed(102,err);
     if (load(&s_free_slots) <= CP_JOURNAL_CONTROL_RESERVE)
-        return ESP_ERR_NO_MEM;
+        return apply_failed(103,ESP_ERR_NO_MEM);
     if (__atomic_load_n(&s_pressure_paused, __ATOMIC_ACQUIRE) &&
         (s_journal.count - load(&s_free_slots)) * 100 / s_journal.count > p->resume_pct)
-        return ESP_ERR_NO_MEM;
+        return apply_failed(104,ESP_ERR_NO_MEM);
     __atomic_store_n(&s_pressure_paused, false, __ATOMIC_RELEASE);
     __atomic_store_n(&s_raw_paused, false, __ATOMIC_RELEASE);
     s_policy = *p;
+    s_health.last_error=ESP_OK;
     cp_pipeline_renew_lease(p->fetched_mono_ms + p->lease_ms);
     memset(s_losses, 0, sizeof s_losses);
     s_stop_at = 0;
@@ -696,7 +707,7 @@ esp_err_t cp_pipeline_apply(const cp_network_policy_t *p) {
     }
     err = nimble_port_init();
     if (err != ESP_OK)
-        return err;
+        return apply_failed(105,err);
     s_initialized = true;
     ble_svc_gap_init();
     ble_svc_gatt_init();
@@ -705,17 +716,17 @@ esp_err_t cp_pipeline_apply(const cp_network_policy_t *p) {
     if (xTaskCreate(host_task, "cp_nimble", 4096, NULL, configMAX_PRIORITIES - 4, &s_host) !=
         pdPASS) {
         (void)cp_pipeline_stop();
-        return ESP_ERR_NO_MEM;
+        return apply_failed(106,ESP_ERR_NO_MEM);
     }
     EventBits_t bits = xEventGroupWaitBits(s_radio_events, READY_BIT | FAILED_BIT, pdFALSE, pdFALSE,
                                            pdMS_TO_TICKS(10000));
     if (!(bits & READY_BIT) || (bits & FAILED_BIT)) {
         (void)cp_pipeline_stop();
-        return ESP_FAIL;
+        return apply_failed(107,s_health.last_error?s_health.last_error:ESP_FAIL);
     }
     if (xTaskCreate(collector_worker, "cp_collect", 8192, NULL, 4, &s_worker) != pdPASS) {
         (void)cp_pipeline_stop();
-        return ESP_ERR_NO_MEM;
+        return apply_failed(108,ESP_ERR_NO_MEM);
     }
     return ESP_OK;
 }

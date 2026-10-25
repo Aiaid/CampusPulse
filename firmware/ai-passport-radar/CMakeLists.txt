@@ -6,3 +6,4 @@ project(CampusPulse-AI-Passport-Radar)
 
 # Pinned SDK private IV alignment fix, generated only inside each build directory.
 include("${CMAKE_CURRENT_LIST_DIR}/../components/cp_provision/cmake/security2_alignment.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../components/cp_network/cmake/transport_async_errors.cmake")

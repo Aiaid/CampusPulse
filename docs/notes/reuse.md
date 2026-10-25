@@ -1,5 +1,20 @@
 # Prior work and reuse
 
+## 2026-10-25 — Pinned asynchronous TLS transport repair
+
+The firmware reads the installed ESP-IDF 5.5.3 Apache-2.0 source
+`components/tcp_transport/transport_ssl.c` and generates a repaired translation
+unit inside each build directory. The installed SDK remains unchanged; its
+Espressif copyright/SPDX header remains in the generated source. The generator
+requires SHA-256 `7ea28eb0a05f5547794619b7fd48aad03b15bbfd5c6142f32266c892ff59fb0b`
+and rejects drift. Changes propagate asynchronous TLS errors, retain one cleanup
+owner on socket lookup failure, and mark nonblocking read waits as `EAGAIN`.
+They preserve TLS certificate validation and the connection state machine.
+The generated manifest records source/output hashes. Host regressions compile
+the actual generated SDK functions with I/O shims under ASan/UBSan, including
+timeouts, WANT_READ, EOF, memory failure, error details and cleanup ownership.
+No network captures, credentials, SDK build products or binaries are published.
+
 ## 2026-10-25 — Short PIN and USB provisioning
 
 The revised local BLE flow uses the installed Apache-2.0 ESP-IDF 5.5.3
