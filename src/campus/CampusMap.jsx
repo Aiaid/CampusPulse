@@ -3,6 +3,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffec
 import { getMetrics, MAP_HEIGHT, MAP_WIDTH, places, sceneAttribution } from './scene-data';
 import { buildings, pointInPolygon } from './spatial-scene';
 import ActivityLayer from './ActivityLayer';
+import FieldIllustration from './FieldIllustration.jsx';
 import NightLighting from './NightLighting';
 import MapRegions, { useBuildingMask } from './MapRegions';
 import { gisTileAvailability, selectTileLevel, visibleGisTiles } from './gis-tiles';
@@ -19,6 +20,7 @@ const TILE_ORIGIN = (import.meta.env.VITE_GIS_TILE_ORIGIN || 'https://gis.ccnu.e
 export const CampusMap = forwardRef(function CampusMap({
   selectedId = 'library', onSelect = () => {}, compactSelected = false,
   mapPlaces = places, renderScene = true, onPickGisAnchor,
+  fieldIllustration = null,
   layers = { people: true, bikes: true, waits: true }, minute = 1200, scenarioId = 'weekday', isDark = false, onZoomChange, maxZoom = 4, xray = false, moving = true, demo = true, lighting = 'atmospheric',
 }, ref) {
   const gradeId = useId().replace(/:/g, '');
@@ -248,6 +250,10 @@ export const CampusMap = forwardRef(function CampusMap({
       <NightLighting project={project} scale={scale} viewWidth={size.width} viewHeight={size.height} isDark={isDark} xray={xray} selectedId={selectedId} lighting={lighting} />
       {demo && <MapRegions project={project} viewWidth={size.width} viewHeight={size.height} selectedId={selectedId} xray={xray} />}</>}
       <div className="cp-map__landmarks">
+        {!demo && renderScene && fieldIllustration && (() => {
+          const place = mapPlaces.find(item => item.id === selectedId);
+          return place ? <FieldIllustration illustration={fieldIllustration} point={project(place.x, place.y)} width={size.width} height={size.height} compact={compactSelected} placeName={place.name} /> : null;
+        })()}
         {mapPlaces.map((place) => {
           const selected = selectedId === place.id;
           const metrics = demo ? getMetrics(place.id, minute, scenarioId) : null;

@@ -152,6 +152,16 @@ collection and durable upload. Final local software verification passed on
 
 ## Completed archive
 
+- [x] Add observation-driven person/e-bike/car diagrams and elevator badges at
+      the selected place in overview and local maps. Keep fixed drawing budgets,
+      source labels, independent expiry/layers and historical time distinct from
+      physical counts/positions; prefer completed manual waits over historical
+      references and show waiting text for insufficient evidence. Verify focused
+      unit tests, full local suite, production build and isolated desktop/390px
+      browser controls, replay/gaps, stale/error handling and demo isolation.
+      Include the browser acceptance in hosted CI. See
+      [automatic observation references](../specs/automatic-observations.md).
+
 - [x] Connect experimental versioned vehicle candidates and elevator historical
       references to compact raw-off firmware evidence, bounded private backend
       analysis and independent public cards. Keep car/ecosystem categories,

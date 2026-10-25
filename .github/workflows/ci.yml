@@ -38,6 +38,8 @@ jobs:
         run: node scripts/place-purposes-browser-smoke.mjs
       - name: Verify automatic candidate and historical-wait projections
         run: node scripts/automatic-observations-browser-smoke.mjs
+      - name: Verify observed people, vehicles and elevator diagrams
+        run: node scripts/field-illustration-browser-smoke.mjs
       - name: Verify capture correction and deployment retry workflows
         run: node scripts/config-editing-browser-smoke.mjs
       - name: Prepare local database and disposable operator/admin credentials

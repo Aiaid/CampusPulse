@@ -88,6 +88,29 @@ candidates, which does not mean no physical vehicles. Current automatic output
 is not inserted into retained-record replay; the selected past cursor never
 receives a current inference.
 
+Both overview and local maps attach a bounded observation diagram to the selected
+place. Fresh BLE window activity selects a small fixed person-glyph budget; the
+glyphs are an activity illustration, never a person-per-identifier conversion.
+Positive manual parking observations or eligible rule-positive e-bike/car
+categories select separate vehicle glyphs. Ecosystem clues alone do not draw a
+physical vehicle, and manual and automatic e-bike evidence are not added together.
+The card identifies its source and states that glyph counts and arrangement do
+not represent physical counts or individual positions.
+
+The elevator badge prefers an independently fresh completed manual wait. It then
+falls back to a fresh historical reference, clearly labelled as historical rather
+than a current prediction. Enabled parking/elevator purposes with insufficient
+evidence show waiting text without fabricated vehicles or zero-second waits.
+The activity toggle and person/vehicle/elevator layers remain independent. Replay
+uses sensor windows covering the cursor and then-valid manual records only;
+current automatic references never leak into a selected historical time.
+
+The isolated `scripts/field-illustration-browser-smoke.mjs` verifies desktop and
+390px phone layouts, source priority, waiting states, independent controls,
+historical gaps, expiry, missing/failed reads and demo isolation. Its fixtures are
+synthetic and its HTTP operations are read-only. Hosted CI runs it after building
+the current frontend.
+
 ## Library upload correction and recovery
 
 The preexisting codec legitimately emits partial summaries shorter than their
