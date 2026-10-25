@@ -42,7 +42,7 @@ try {
   await events.getByText('6 个标识集中消失', { exact: true }).waitFor();
   await events.getByText('尚未现场核实', { exact: true }).waitFor();
   assert.ok((await events.innerText()).includes('标识数不等于人数'));
-  assert.ok(!(await events.innerText()).includes('02:'));
+  assert.ok(!/\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b/i.test(await events.innerText()));
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 
   mode = 'unavailable';
@@ -54,6 +54,7 @@ try {
   await events.getByText('事件暂时读取失败', { exact: false }).waitFor();
   assert.equal(await events.getByText('6 个标识集中消失', { exact: true }).count(), 0);
   await dialog.getByLabel('记录地点', { exact: true }).selectOption('east-parking');
+  await events.waitFor({ state: 'detached' });
   assert.equal(await dialog.getByRole('region', { name: '候梯区群体消失事件' }).count(), 0);
   console.log('Elevator events: real read, synthetic UI candidate, unavailable/error isolation and mobile layout passed.');
 } finally { await browser.close(); }
