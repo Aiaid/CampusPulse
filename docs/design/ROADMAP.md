@@ -72,6 +72,8 @@ collection and durable upload. Final local software verification passed on
 - [ ] Adapt that core to T-Energy-S3, AI Passport and the confirmed Waveshare
       board; use board-specific drivers, flash layouts and memory budgets.
       Preserve Passport's protected app/cardid layout; do not initialize unused audio.
+      Seams, blockers and order recorded in the
+      [T-Energy-S3 port plan](tenergy-s3-port.md) (plan only; blockers 1-7 open).
 - [ ] Enable and individually verify collection and direct Cloudflare upload on
       both T-Energy boards, both Passports and the ePaper board; preserve
       unacknowledged data and report failures, losses, gaps and queue pressure.
