@@ -84,6 +84,23 @@ function makeActors(minute, layers, scenarioId) {
   // place retains its route allocation and fixed parking comes after no cutoff.
   return result.slice(0, MAX_ACTORS);
 }
+function makeObservedActors(illustration, place) {
+  if (!illustration || !place) return [];
+  const result = [];
+  for (const group of illustration.groups) {
+    const walk = group.kind === 'people';
+    if (!walk && group.kind !== 'bikes' && group.kind !== 'cars') continue;
+    const count = Math.min(40, group.figure_count * 2);
+    const parked = !walk && group.source === 'manual';
+    const route = { id: `observed-${place.id}-${group.kind}`, placeId: place.id, kind: walk ? 'walk' : 'ride',
+      points: walk ? [[place.x - 19, place.y + 9], [place.x + 19, place.y + 9], [place.x + 17, place.y + 20], [place.x - 17, place.y + 20], [place.x - 19, place.y + 9]]
+        : [[place.x - 24, place.y + 25], [place.x + 24, place.y + 25]], closed: walk };
+    for (let index = 0; index < count; index++) result.push({ id: `${route.id}-${index}`, route, kind: route.kind,
+      length: Math.max(1, pathLength(route)), phase: index / Math.max(1, count), speed: walk ? .95 : 2.6, parked,
+      ...(parked ? { x: place.x + (index - (count - 1) / 2) * 6, y: place.y + 25, heading: 45 } : {}) });
+  }
+  return result.slice(0, MAX_ACTORS);
+}
 function loadImage(src, redraw) {
   const image = new Image();
   image.onload = redraw;
@@ -191,12 +208,12 @@ function drawActorShadows(context, screen, spriteWidth, spriteHeight, mapScale, 
 /** Synthetic route animation; speed and density are demonstrations, not tracking. */
 export default function ActivityLayer({ project, scale, translateX, translateY, viewWidth, viewHeight,
   layers = { people: true, bikes: true }, minute = 1200, scenarioId = 'weekday', isDark = false, xray = false, moving = true,
-  selectedId = 'library', demo = true, lighting = 'atmospheric', detailView = false,
+  selectedId = 'library', demo = true, lighting = 'atmospheric', detailView = false, fieldIllustration = null, fieldPlace = null,
 }) {
   const canvasRef = useRef(null);
   const current = useRef(null);
   const invalidate = useRef(null);
-  current.current = { project, scale, translateX, translateY, viewWidth, viewHeight, layers, minute, scenarioId, isDark, xray, moving, selectedId, demo, lighting, detailView };
+  current.current = { project, scale, translateX, translateY, viewWidth, viewHeight, layers, minute, scenarioId, isDark, xray, moving, selectedId, demo, lighting, detailView, fieldIllustration, fieldPlace };
 
   useEffect(() => {
     let request = 0;
@@ -205,7 +222,7 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
     let dirty = true;
     let frame = 0;
     const media = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const canMove = () => current.current.demo && current.current.moving && (current.current.layers.people || current.current.layers.bikes) && !media.matches && !document.hidden;
+    const canMove = () => (current.current.demo ? current.current.moving : current.current.fieldIllustration && !current.current.fieldIllustration.replay) && (current.current.layers.people || current.current.layers.bikes) && !media.matches && !document.hidden;
     const redraw = () => {
       dirty = true;
       if (!request && !disposed) request = requestAnimationFrame(draw);
@@ -251,7 +268,7 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
       context.clearRect(0, 0, width, height);
       const definitions = props.demo ? actorDefinitions.resolve(props.scenarioId,
-        [props.minute, props.layers.people, props.layers.bikes], () => makeActors(props.minute, props.layers, props.scenarioId)) : [];
+        [props.minute, props.layers.people, props.layers.bikes], () => makeActors(props.minute, props.layers, props.scenarioId)) : makeObservedActors(props.fieldIllustration, props.fieldPlace);
       const actors = definitions.map((actor) => actorPosition(actor, elapsed)).sort((a, b) => a.y - b.y);
       const treeRevision = treeMaterialState().revision;
       let hiddenCount = 0;
@@ -259,7 +276,7 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       const campusLighting = props.isDark && props.lighting === 'campus';
       const libraryLighting = props.isDark && (props.lighting === 'library' || campusLighting);
       const localLighting = props.isDark && (props.lighting === 'atmospheric' || libraryLighting);
-      const readableDetail = props.demo && props.detailView && (campusLighting || libraryLighting && props.selectedId === 'library');
+      const readableDetail = props.detailView && (!props.demo || campusLighting || libraryLighting && props.selectedId === 'library');
       const shadowClip = libraryLighting && actors.length ? projectedPaths.resolve('ground',
         [projectPoint, width, height], () => groundClipPaths(projectPoint, width, height)) : null;
       let shadowContext = null;
@@ -285,10 +302,14 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
         const libraryAmount = campusLighting ? 1 : libraryLighting ? libraryBlend(actor.x, actor.y) : 0;
         const dimensions = actorDimensions(actor, frame, mapScale,
           { readable: readableDetail, viewWidth: width, amount: libraryAmount });
+        if (!props.demo && dimensions.height > 0) {
+          const factor = Math.max(1, (props.detailView ? 22 : 17) / dimensions.height);
+          dimensions.width *= factor; dimensions.height *= factor; dimensions.presentationScale *= factor;
+        }
         const {width:spriteWidth,height:spriteHeight,physicalWidth,physicalHeight,presentationScale} = dimensions;
         if (screen.left < -spriteWidth || screen.left > width + spriteWidth || screen.top < -spriteHeight || screen.top > height + spriteHeight) continue;
-        const occludingBuilding = actorOcclusion.resolve(actor.id, [actor.x, actor.y],
-          () => classifyOcclusion([actor.x, actor.y]));
+        const occludingBuilding = props.demo ? actorOcclusion.resolve(actor.id, [actor.x, actor.y],
+          () => classifyOcclusion([actor.x, actor.y])) : null;
         const occluded = Boolean(occludingBuilding);
         if (occluded) hiddenCount += 1;
         const revealed = occluded && props.xray && occludingBuilding.placeId === props.selectedId;
@@ -329,10 +350,10 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
         let drawFrame = litFrame;
         const treeMask = libraryLighting ? treeMaskBehind(actor.y) : null;
         const actorLeft = actor.x - spriteWidth / mapScale / 2, actorTop = actor.y - spriteHeight / mapScale;
-        const overlapsTree = treeMask?.trees.some(tree => actorLeft < tree.screenBounds.left + tree.screenBounds.width && actorLeft + spriteWidth / mapScale > tree.screenBounds.left && actorTop < tree.screenBounds.top + tree.screenBounds.height && actor.y > tree.screenBounds.top);
-        const campusCrowns = campusLighting ? campusCrownMasks({ left: actorLeft, top: actorTop,
+        const overlapsTree = props.demo && treeMask?.trees.some(tree => actorLeft < tree.screenBounds.left + tree.screenBounds.width && actorLeft + spriteWidth / mapScale > tree.screenBounds.left && actorTop < tree.screenBounds.top + tree.screenBounds.height && actor.y > tree.screenBounds.top);
+        const campusCrowns = props.demo && campusLighting ? campusCrownMasks({ left: actorLeft, top: actorTop,
           width: spriteWidth / mapScale, height: spriteHeight / mapScale }, actor.y) : [];
-        const nativeCrowns = campusLighting ? getCampusNativeCanopyMasks({ left: actorLeft, top: actorTop,
+        const nativeCrowns = props.demo && campusLighting ? getCampusNativeCanopyMasks({ left: actorLeft, top: actorTop,
           width: spriteWidth / mapScale, height: spriteHeight / mapScale }) : [];
         if (overlapsTree || campusCrowns.length || nativeCrowns.length) {
           // Mask an isolated sprite, never the shared actor canvas. A canopy
@@ -406,7 +427,7 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       }
       // Cut sprites by registered projected silhouettes without reading remote
       // school imagery into canvas. Xray keeps the selected building open.
-      if (actors.length) {
+      if (actors.length && props.demo) {
         context.save();
         context.globalCompositeOperation = 'destination-out';
         context.globalAlpha = 1;

@@ -91,12 +91,15 @@ of vehicles, labelled `推测`. This is a UI illustration rather than a vehicle
 count, API result or history record. Actual manual/candidate evidence takes
 precedence, and actual zero results suppress this visual fallback.
 
-Observed place diagrams also drive a separate canvas sprite layer attached to
-the selected map anchor. It reuses the existing person and parked-vehicle sheets
-for bounded static schematic positions, with the user-requested display quantity
-multiplier of two. It never changes underlying identifier/candidate quantities,
-creates tracked individuals, or uses demo route metrics. Browser acceptance
-checks nontransparent canvas pixels and doubled person/vehicle drawing budgets.
+Observed place diagrams reuse the existing simulation `ActivityLayer` rendering
+interface, directional sprites and animation. A field-data adapter supplies
+bounded illustrative routes near the selected place, with the user-requested
+display multiplier of two. Original identifier/candidate quantities are retained;
+the animation is schematic rather than individual tracking. Replay freezes its
+motion. Field anchors can sit inside roof silhouettes, so schematic field actors
+do not apply demo building/tree occlusion; the original demo keeps its occlusion.
+Browser acceptance checks nontransparent pixels in the original actor canvas and
+doubled person/vehicle drawing budgets.
 
 `GET /api/v1/places/:id/summary` adds the optional `automatic_observations` object
 documented in `/openapi.json`: independent `vehicles` and `elevator` references

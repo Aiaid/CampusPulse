@@ -58,9 +58,9 @@ try {
   const overview = page.locator('.overview-map .field-illustration'), detail = page.locator('.detail-scene .field-illustration');
   await expect(overview).toHaveAttribute('data-figure-count', '9');
   await expect(detail).toHaveAttribute('data-figure-count', '9');
-  const sceneActors = page.locator('.detail-scene .cp-field-actors');
+  const sceneActors = page.locator('.detail-scene .cp-activity-layer');
   await expect(sceneActors).toHaveAttribute('data-person-count', '10');
-  await expect(sceneActors).toHaveAttribute('data-vehicle-count', '8');
+  await expect(sceneActors).toHaveAttribute('data-actor-count', '18');
   await expect.poll(() => sceneActors.getAttribute('data-visible-count')).not.toBe('0');
   await expect.poll(() => sceneActors.evaluate(canvas => { const pixels = canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data; return pixels.some((value,index) => index % 4 === 3 && value > 0); })).toBe(true);
   await expect(detail).not.toContainText('广播活动量级');
@@ -86,7 +86,7 @@ try {
   await expect(detail.locator('[data-kind="elevator"] .field-illustration-quantity')).toHaveText('27 秒 · 人工');
   await expect(detail).not.toContainText('非实际人数或车辆数');
   await expect(detail).not.toContainText('位置不代表个体定位');
-  await expect.poll(() => page.locator('.cp-activity-layer').evaluateAll(items => items.length > 0 && items.every(item => item.dataset.actorCount === '0'))).toBe(true);
+  await expect.poll(() => page.locator('.cp-activity-layer').evaluateAll(items => items.length > 0 && items.every(item => Number(item.dataset.actorCount) > 0))).toBe(true);
   await page.getByRole('button', { name: '行人活动', exact: true }).click();
   await expect(detail.locator('[data-kind="people"]')).toHaveCount(0);
   await expect(detail).toHaveAttribute('data-figure-count', '4');
