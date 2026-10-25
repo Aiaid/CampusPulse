@@ -94,7 +94,7 @@ function sceneInput(illustration, place) {
     const distance = Math.min(...route.points.map(([x,y]) => Math.hypot(x-place.x,y-place.y)));
     return !best || distance < best.distance ? { placeId: route.placeId, distance } : best;
   }, null);
-  const id = getMetrics(place.id).people !== null ? place.id : nearest?.placeId;
+  const id = nearest?.placeId;
   const vehicles = illustration.groups.find(group => group.kind === 'bikes');
   return { placeId: id, people: people?.metric_value ?? people?.figure_count ?? 0,
     bikes: vehicles?.metric_value > 0 ? vehicles.metric_value : null,
