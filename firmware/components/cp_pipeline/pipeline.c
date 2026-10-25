@@ -4,6 +4,7 @@
 #include "cp_journal.h"
 #include "cp_pipeline.h"
 #include "cp_upload_scheduler.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_partition.h"
 #include "esp_random.h"
@@ -674,9 +675,17 @@ esp_err_t cp_pipeline_apply(const cp_network_policy_t *p) {
         p->max_raw_per_window > CP_COLLECT_RAW || p->max_body_bytes < 4096 ||
         p->max_body_bytes > CP_JOURNAL_MAX_BODY || (p->raw_enabled && !p->sample_every_n))
         return ESP_ERR_NOT_SUPPORTED;
+    ESP_LOGW(TAG, "DIAG heap@apply-entry free=%lu largest=%lu min=%lu",
+             (unsigned long)esp_get_free_heap_size(),
+             (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned long)esp_get_minimum_free_heap_size());
     esp_err_t err = cp_pipeline_stop();
     if (err != ESP_OK)
         return err;
+    ESP_LOGW(TAG, "DIAG heap@after-stop free=%lu largest=%lu min=%lu",
+             (unsigned long)esp_get_free_heap_size(),
+             (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned long)esp_get_minimum_free_heap_size());
     if (load(&s_free_slots) <= CP_JOURNAL_CONTROL_RESERVE)
         return ESP_ERR_NO_MEM;
     if (__atomic_load_n(&s_pressure_paused, __ATOMIC_ACQUIRE) &&
@@ -694,6 +703,10 @@ esp_err_t cp_pipeline_apply(const cp_network_policy_t *p) {
     }
     while (xSemaphoreTake(s_worker_done, 0) == pdTRUE) {
     }
+    ESP_LOGW(TAG, "DIAG heap@before-nimble-init free=%lu largest=%lu min=%lu",
+             (unsigned long)esp_get_free_heap_size(),
+             (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned long)esp_get_minimum_free_heap_size());
     err = nimble_port_init();
     if (err != ESP_OK)
         return err;

@@ -5,9 +5,11 @@
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_eap_client.h"
@@ -441,6 +443,10 @@ esp_err_t cp_network_start(const cp_settings_t *settings)
         if(e!=ESP_OK)goto failed;
         s_enterprise_enabled=true;
     }
+    ESP_LOGW("cp_network_diag", "DIAG heap@wifi-start free=%lu largest=%lu min=%lu",
+             (unsigned long)esp_get_free_heap_size(),
+             (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned long)esp_get_minimum_free_heap_size());
     e=esp_wifi_start(); if (e!=ESP_OK) goto failed;
     lock();
     s_snapshot.network=CP_NETWORK_CONNECTING; s_snapshot.auth=CP_AUTH_UNKNOWN;
@@ -485,6 +491,10 @@ esp_err_t cp_network_stop(void)
     s_snapshot.network=CP_NETWORK_OFFLINE; s_snapshot.auth=CP_AUTH_UNKNOWN;
     s_snapshot.clock_trusted=false; s_snapshot.policy_valid=false;
     unlock();
+    ESP_LOGW("cp_network_diag", "DIAG heap@network-stopped free=%lu largest=%lu min=%lu",
+             (unsigned long)esp_get_free_heap_size(),
+             (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned long)esp_get_minimum_free_heap_size());
     xSemaphoreGive(s_http);
     return ESP_OK;
 }
