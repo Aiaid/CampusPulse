@@ -36,13 +36,13 @@ try {
     if (url.pathname === '/api/v1/places') return route.fulfill({ json: { places: [place] } });
     if (scenario === 'failed') return route.fulfill({ status: 503, json: { error: 'synthetic' } });
     if (url.pathname.endsWith('/summary')) {
-      const expired = scenario === 'stale', empty = scenario === 'missing';
-      const manualParking = empty ? null : { ...parking, ...(expired ? { valid_until: iso(-1) } : {}) };
-      const manualElevator = empty ? null : { ...elevator, ...(expired || scenario === 'baseline' ? { valid_until: iso(-1) } : {}) };
-      return route.fulfill({ json: { place, as_of: iso(0), sensor: empty ? null : { ...sensor, ...(expired ? { valid_until: iso(-1) } : {}) }, latest_observation: manualElevator,
+      const expired = scenario === 'stale', empty = scenario === 'missing', zero = scenario === 'zero';
+      const manualParking = empty ? null : { ...parking, ...(expired ? { valid_until: iso(-1) } : {}), ...(zero ? { parking_min: 0, parking_max: 0 } : {}) };
+      const manualElevator = empty ? null : { ...elevator, ...(expired || scenario === 'baseline' ? { valid_until: iso(-1) } : {}), ...(zero ? { wait_seconds: 0 } : {}) };
+      return route.fulfill({ json: { place, as_of: iso(0), sensor: empty ? null : { ...sensor, ...(expired ? { valid_until: iso(-1) } : {}), ...(scenario === 'capped' ? { visible_identifiers: 16, unique_table_overflow: true } : {}), ...(zero ? { visible_identifiers: 0 } : {}) }, latest_observation: manualElevator,
         latest_observations: { parking: manualParking, elevator: manualElevator },
         automatic_observations: empty ? { vehicles: { ...automatic.vehicles, status: 'unavailable', candidate_count: null, car_related_count: null, ecosystem_count: null, sample_count: 0, reason: 'vehicle_features_not_reported', evidence_kind: 'none' }, elevator: { ...automatic.elevator, status: 'unavailable', wait_seconds: null, range_seconds: null, sample_count: 0, day_count: 0, observed_at: null, valid_until: null, reason: 'no_manual_samples' } }
-          : { vehicles: { ...automatic.vehicles, ...(expired ? { valid_until: iso(-1) } : {}) }, elevator: { ...automatic.elevator, ...(expired ? { valid_until: iso(-1) } : {}) } } } });
+          : { vehicles: { ...automatic.vehicles, ...(expired ? { valid_until: iso(-1) } : {}), ...(zero ? { candidate_count: 0, car_related_count: 0 } : {}) }, elevator: { ...automatic.elevator, ...(expired ? { valid_until: iso(-1) } : {}) } } } });
     }
     if (url.pathname.endsWith('/history')) return route.fulfill({ json: { place_id: place.id, from: iso(-3600000), to: iso(0), truncated: false, sensor_truncated: false,
       sensor_windows: [{ ...sensor, seq: 2, visible_identifiers: 4, observed_at: iso(-60000), valid_until: iso(30000) }],
@@ -54,19 +54,29 @@ try {
   const overview = page.locator('.overview-map .field-illustration'), detail = page.locator('.detail-scene .field-illustration');
   await expect(overview).toHaveAttribute('data-figure-count', '9');
   await expect(detail).toHaveAttribute('data-figure-count', '9');
-  await expect(detail).toContainText('广播活动量级示意 2 档');
+  await expect(detail).not.toContainText('广播活动量级');
   await expect(detail.locator('[data-kind="people"]')).toHaveAttribute('data-figure-count', '5');
+  await expect(detail.locator('[data-kind="people"] .field-illustration-quantity')).toHaveText('72 个 BLE 标识');
   await expect(detail.locator('[data-kind="bikes"]')).toHaveAttribute('data-source', 'manual');
+  await expect(detail.locator('[data-kind="bikes"] .field-illustration-quantity')).toHaveText('4–8 辆 · 人工');
   await expect(detail.locator('[data-kind="cars"]')).toHaveAttribute('data-source', 'candidate');
+  await expect(detail.locator('[data-kind="cars"] .field-illustration-quantity')).toHaveText('1 个候选标识');
   await expect(detail.locator('[data-kind="elevator"]')).toHaveAttribute('data-source', 'manual');
-  await expect(detail).toContainText('已完成候梯 27 秒 · 人工');
+  await expect(detail.locator('[data-kind="elevator"] .field-illustration-quantity')).toHaveText('27 秒 · 人工');
+  await expect(detail).toContainText('最后观测');
+  await expect(detail).not.toContainText('人数未知');
+  scenario = 'capped'; await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();
+  await expect(detail.locator('[data-kind="people"] .field-illustration-quantity')).toHaveText('16 个 BLE 标识');
+  await expect(detail.locator('[data-kind="people"]')).toContainText('已达上限');
+  await expect(detail.locator('[data-kind="people"]')).not.toContainText('1 档');
+  await expect(detail.locator('[data-kind="people"]')).toHaveAttribute('data-figure-count', '5');
   scenario = 'baseline'; await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();
   await expect(detail.locator('[data-kind="elevator"]')).toHaveAttribute('data-source', 'historical');
-  await expect(detail).toContainText('候梯参考约 55 秒 · 历史样本');
+  await expect(detail.locator('[data-kind="elevator"] .field-illustration-quantity')).toHaveText('约 55 秒 · 历史');
   scenario = 'fresh'; await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();
-  await expect(detail).toContainText('已完成候梯 27 秒 · 人工');
-  await expect(detail).toContainText('非实际人数或车辆数');
-  await expect(detail).toContainText('位置不代表个体定位');
+  await expect(detail.locator('[data-kind="elevator"] .field-illustration-quantity')).toHaveText('27 秒 · 人工');
+  await expect(detail).not.toContainText('非实际人数或车辆数');
+  await expect(detail).not.toContainText('位置不代表个体定位');
   await expect.poll(() => page.locator('.cp-activity-layer').evaluateAll(items => items.length > 0 && items.every(item => item.dataset.actorCount === '0'))).toBe(true);
   await page.getByRole('button', { name: '行人活动', exact: true }).click();
   await expect(detail.locator('[data-kind="people"]')).toHaveCount(0);
@@ -90,34 +100,56 @@ try {
   await detail.scrollIntoViewIfNeeded();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   const box = await detail.boundingBox(); assert.ok(box && box.x >= 0 && box.x + box.width <= 391);
+  assert.ok(box.y >= 0 && box.y + box.height <= 845);
+  const scrollState = await detail.evaluate(card => ({ maxHeight: parseFloat(getComputedStyle(card).maxHeight), height: card.clientHeight, scrollHeight: card.scrollHeight, pointerEvents: getComputedStyle(card).pointerEvents }));
+  assert.ok(scrollState.height <= scrollState.maxHeight && scrollState.pointerEvents === 'auto');
   const axis = page.getByRole('slider', { name: '现场数据时间轴', exact: true });
   await axis.fill(String(now - 60000));
   await expect(detail).toHaveAttribute('data-historical', 'true');
   await expect(detail).toHaveAttribute('data-figure-count', '5');
   await expect(detail.locator('[data-kind="cars"]')).toHaveCount(0);
-  await expect(detail).toContainText('历史窗口');
-  await expect(detail).toContainText('已完成候梯 19 秒 · 人工');
-  await expect(detail).not.toContainText('候梯参考约 55 秒');
+  await expect(detail).toContainText('历史观测');
+  await expect(detail.locator('[data-kind="people"] .field-illustration-quantity')).toHaveText('4 个 BLE 标识');
+  await expect(detail.locator('[data-kind="bikes"] .field-illustration-quantity')).toHaveText('4–8 辆 · 人工');
+  await expect(detail.locator('[data-kind="elevator"] .field-illustration-quantity')).toHaveText('19 秒 · 人工');
+  await expect(detail).not.toContainText('55 秒');
   await axis.fill(String(now - 120000));
   await expect(detail.locator('.field-illustration-group')).toHaveCount(0);
-  await expect(detail).toContainText('所选时刻候梯待观测');
+  await expect(detail).toContainText('候梯待观测');
   await page.getByRole('button', { name: '返回实时', exact: true }).click();
   await expect(detail).toHaveAttribute('data-figure-count', '9');
   for (const next of ['stale', 'missing', 'failed']) {
     scenario = next;
     await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();
-    if (next === 'failed') await expect(page.locator('.field-illustration')).toHaveCount(0);
-    else {
-      await expect(detail.locator('.field-illustration-group')).toHaveCount(0);
-      await expect(detail).toContainText('车辆待观测');
-      await expect(detail).toContainText('候梯样本不足 / 待观测');
-      await expect(detail).not.toContainText('0 秒');
+    await expect(detail).toHaveAttribute('data-figure-count', '9');
+    await expect(detail).toContainText('最后观测');
+    if (next === 'failed') {
+      await expect(detail).toHaveAttribute('data-update-failed', 'true');
+      await expect(detail).toContainText('更新失败');
+    } else if (next === 'stale') {
+      await expect(detail.locator('[data-kind="people"]')).toHaveAttribute('data-stale', 'true');
+      await expect(detail).toContainText('已过期');
+      await expect(detail.locator('[data-kind="people"] .field-illustration-quantity')).toHaveText('72 个 BLE 标识');
+      await expect(detail.locator('[data-kind="bikes"] .field-illustration-quantity')).toHaveText('4–8 辆 · 人工');
+      await expect(detail.locator('[data-kind="elevator"] .field-illustration-quantity')).toHaveText('27 秒 · 人工');
+    } else {
+      await expect(detail.locator('[data-kind="people"]')).toHaveAttribute('data-last-known', 'true');
+      await expect(detail.locator('[data-kind="bikes"]')).toHaveAttribute('data-source', 'candidate');
+      await expect(detail.locator('[data-kind="bikes"] .field-illustration-quantity')).toHaveText('3 个候选标识');
+      await expect(detail).toContainText('候梯待观测');
     }
   }
+  scenario = 'zero'; await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();
+  await expect(detail).toHaveAttribute('data-update-failed', 'false');
+  await expect(detail).toHaveAttribute('data-figure-count', '0');
+  await expect(detail.locator('[data-kind="people"] .field-illustration-quantity')).toHaveText('0 个 BLE 标识');
+  await expect(detail.locator('[data-kind="bikes"] .field-illustration-quantity')).toHaveText('0–0 辆 · 人工');
+  await expect(detail.locator('[data-kind="elevator"] .field-illustration-quantity')).toHaveText('0 秒 · 人工');
+  await expect(detail.locator('.field-illustration-glyphs svg')).toHaveCount(0);
   scenario = 'fresh'; await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();
   await expect(detail).toHaveAttribute('data-figure-count', '9');
   await page.getByRole('button', { name: '模拟演示', exact: true }).click();
   await expect(page.locator('.field-illustration')).toHaveCount(0);
   assert.ok(requests.every(method => method === 'GET')); assert.deepEqual(errors, []);
-  console.log('Field illustration UI acceptance passed: bounded place diagrams, people/manual/candidate categories, completed elevator/manual versus historical-reference precedence, waiting states, layers/toggle, 390px, replay/gaps, stale/missing/errors and demo isolation. Synthetic fixtures; no physical-count or device validation.');
+  console.log('Field illustration UI acceptance passed: bounded diagrams, capped BLE identifiers/unknown people, source freshness, visible observation times, retained expired/unavailable/error data, valid zero replacement, layers/toggle, bounded scrolling at390px, replay/gaps and demo isolation. Synthetic fixtures; no physical-count or device validation.');
 } finally { await browser?.close(); await mf.dispose(); }

@@ -152,6 +152,16 @@ collection and durable upload. Final local software verification passed on
 
 ## Completed archive
 
+- [x] Retain the last observed live map/card values when updates stop, with
+      concise measured quantity/unit badges, original timestamps, dimmed expiry
+      and visible read failures. Preserve failures through pending retries,
+      replace real zero values, honor source retractions/purpose removal and
+      authoritative corrected elevator baselines, isolate place/replay state,
+      and avoid interpreting capped BLE identifiers as physical headcounts.
+      Verify unit regressions, production build and isolated desktop/390px
+      browser controls, source/expiry/error retention and replay isolation.
+      See [automatic observation references](../specs/automatic-observations.md).
+
 - [x] Add observation-driven person/e-bike/car diagrams and elevator badges at
       the selected place in overview and local maps. Keep fixed drawing budgets,
       source labels, independent expiry/layers and historical time distinct from

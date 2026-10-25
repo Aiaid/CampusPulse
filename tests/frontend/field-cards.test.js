@@ -49,6 +49,22 @@ describe('independent public observation cards', () => {
     expect(html).not.toContain('42 秒已完成候梯');
   });
 
+  test('keeps last observation cards on a failed live refresh and explains capped identifiers', () => {
+    const data = summary();
+    data.sensor = { ...data.sensor, visible_identifiers: 16, unique_table_overflow: true, valid_until: iso(-1) };
+    data.last_known = { sensor: 'read_failed' };
+    const session = { now, live: { data, loading: false, error: '现场读取失败（503）' }, history: state(null), refresh() {} };
+    const html = renderPanel(session);
+    expect(html).toContain('更新失败，保留最后一次观测');
+    expect(html).toContain('16 个 BLE 可见标识');
+    expect(html).toContain('已过期 · 等待更新');
+    expect(html).toContain('标识表溢出');
+    expect(html).toContain('最近成功读取的服务端状态时间');
+    const replay = renderPanel({ ...session, history: { data: history([parking]), loading: false, error: '历史读取失败' } }, { mode: 'replay', cursor: now - 25000 });
+    expect(replay).toContain('现场数据不可用');
+    expect(replay).not.toContain('field-data-value');
+  });
+
   test('explains why an online device can have no public sensor window', () => {
     const data = { ...summary(), sensor: null };
     const html = renderPanel({ now, live: state(data), history: state(null), refresh() {} });

@@ -89,17 +89,46 @@ is not inserted into retained-record replay; the selected past cursor never
 receives a current inference.
 
 Both overview and local maps attach a bounded observation diagram to the selected
-place. Fresh BLE window activity selects a small fixed person-glyph budget; the
+place. BLE window activity selects a small fixed person-glyph budget; the
 glyphs are an activity illustration, never a person-per-identifier conversion.
 Positive manual parking observations or eligible rule-positive e-bike/car
 categories select separate vehicle glyphs. Ecosystem clues alone do not draw a
 physical vehicle, and manual and automatic e-bike evidence are not added together.
-The card identifies its source and states that glyph counts and arrangement do
-not represent physical counts or individual positions.
+Quantity units identify observed identifiers, manual vehicle ranges or historical
+waits; accessible descriptions distinguish schematic glyphs from physical counts
+and individual positions.
 
-The elevator badge prefers an independently fresh completed manual wait. It then
-falls back to a fresh historical reference, clearly labelled as historical rather
-than a current prediction. Enabled parking/elevator purposes with insufficient
+When no newer observation is available, the live map and cards retain the last
+record with its original observation time and expiry. Expired drawings are dimmed
+and labelled as the last observation, waiting for an update; they do not become
+current estimates. A failed refresh keeps the last successful page-session state
+and exposes the error. Sensor absence and unavailable automatic output can retain
+earlier values for the same place, with an explicit last-known marker. New valid
+zero observations replace positive drawings. Successful manual nulls still clear
+cancelled/retracted evidence, purpose removal clears automatic fallback, and a
+place change cannot import another place's snapshot. No snapshot is written to
+browser persistent storage. Automatic last-known values can only be retained if
+this page session has actually received an available result; opening a page with
+unavailable analysis never fabricates a previous result.
+Successful historical baseline calculations remain authoritative even when a
+correction/cancellation moves their evidence time backwards; withdrawn or
+insufficient manual cohorts clear the old baseline. A pending retry preserves a
+failed-read marker until a new response succeeds.
+
+The number of person glyphs is a fixed layout budget, not a calibrated estimate.
+Prominent quantity badges use the actual observation units: BLE identifiers,
+manual vehicle ranges or candidate identifiers. Capped address tables have a
+concise cap indicator rather than a low-activity band derived from a small cap.
+For example, 16 visible identifiers at a 16-address limit can hide additional
+broadcast identifiers and cannot be interpreted as 16 people. The visible map
+keeps icons, quantities and observation time/status concise, with schematic
+semantics retained in its accessible description.
+
+The elevator badge prefers a fresh completed manual wait, then a fresh historical
+reference, then retained older evidence with its own timestamp and stale label.
+Vehicle source selection likewise prefers fresh evidence over stale fallback.
+Historical references remain distinct from current predictions. Enabled
+parking/elevator purposes with insufficient
 evidence show waiting text without fabricated vehicles or zero-second waits.
 The activity toggle and person/vehicle/elevator layers remain independent. Replay
 uses sensor windows covering the cursor and then-valid manual records only;
@@ -107,7 +136,8 @@ current automatic references never leak into a selected historical time.
 
 The isolated `scripts/field-illustration-browser-smoke.mjs` verifies desktop and
 390px phone layouts, source priority, waiting states, independent controls,
-historical gaps, expiry, missing/failed reads and demo isolation. Its fixtures are
+historical gaps, expired/failed-read retention, zero replacement, capped identifiers
+and demo isolation. Its fixtures are
 synthetic and its HTTP operations are read-only. Hosted CI runs it after building
 the current frontend.
 

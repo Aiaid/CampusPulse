@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createFieldReader, FIELD_REFRESH_MS } from './field-data';
+import { advanceLiveFieldRead } from './last-observation';
 
 const empty = { data: null, loading: false, error: '', scope: '' };
 
@@ -10,15 +11,21 @@ export function useFieldSession(placeId, enabled, minutes) {
   const [history, setHistory] = useState(empty);
   const [revision, setRevision] = useState(0);
   const [now, setNow] = useState(Date.now);
+  const lastLive = useRef(null);
   const scope = `${enabled ? placeId || '' : ''}:${minutes}`;
 
   useEffect(() => {
     if (!enabled || !placeId) return;
+    if (lastLive.current?.placeId !== placeId) lastLive.current = null;
     const publish = setter => next => setter(previous => ({ ...next,
       data: next.loading && previous.scope === scope ? previous.data : next.data,
       scope,
     }));
-    const summaryReader = createFieldReader(publish(setLive));
+    const summaryReader = createFieldReader(next => {
+      const { cache, read } = advanceLiveFieldRead(next, lastLive.current, placeId, Date.now());
+      lastLive.current = cache;
+      setLive({ ...read, scope });
+    });
     const historyReader = createFieldReader(publish(setHistory));
     summaryReader.read({ placeId, mode: 'live' });
     historyReader.read({ placeId, mode: 'replay', minutes });

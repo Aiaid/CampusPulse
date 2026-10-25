@@ -13,119 +13,160 @@ const manualWait = (extra = {}) => ({ ...parking(), kind: 'elevator', wait_secon
 const baseline = (extra = {}) => ({ status: 'historical_estimate', source: 'manual_historical_baseline', calibrated: false, wait_seconds: 55.5, sample_count: 5, day_count: 2, observed_at: iso(-2000), valid_until: iso(88000), ...extra });
 const state = data => ({ data, error: '', loading: false });
 const read = (data, extra = {}) => fieldIllustration({ now, mode: 'field', live: state(data), ...extra });
+const render = illustration => renderToStaticMarkup(createElement(FieldIllustration, { illustration, point: { left: 150, top: 50 }, width: 300, height: 210, compact: true, placeName: '图书馆' }));
 
 describe('observation-driven place diagrams', () => {
-  test('uses a bounded drawing budget per radio band, never one person per identifier', () => {
+  test('uses bounded schematic budgets, explicitly keeps physical people unknown, and never bands a saturated table', () => {
     const bands = [1, 12, 19, 20, 64, 99, 100, 10000].map(visible_identifiers => read({ sensor: sensor({ visible_identifiers }) }));
     expect(bands.map(result => result.figure_count)).toEqual([3, 3, 3, 5, 5, 5, 7, 7]);
-    expect(bands[0].groups[0]).toMatchObject({ kind: 'people', band: 1, source: 'sensor', label: '广播活动量级示意 1 档' });
+    expect(bands[0].groups[0]).toMatchObject({ kind: 'people', band: 1, source: 'sensor' });
+    expect(bands[0].groups[0].label).toContain('人数未知');
+    const capped = read({ sensor: sensor({ visible_identifiers: 16, unique_table_overflow: true }) });
+    expect(capped.groups[0]).toMatchObject({ band: null, saturated: true, figure_count: 5, quantity: '16 个 BLE 标识' });
+    expect(capped.groups[0].label).toBe('16 个 BLE 标识 · 已达采集上限 · 人数未知');
+    expect(capped.groups[0].label).not.toContain('1 档');
+    expect(read({ sensor: sensor({ visible_identifiers: 16, max_addresses: 16 }) }).groups[0].saturated).toBe(true);
   });
 
   test.each([
-    null, sensor({ dataset: 'demo' }), sensor({ visible_identifiers: 0 }), sensor({ visible_identifiers: -1 }),
-    sensor({ visible_identifiers: '12' }), sensor({ valid_until: iso(-1) }), sensor({ observed_at: iso(1) }),
-    sensor({ scan_enabled_ms: 0 }), sensor({ scan_enabled_ms: 31000 }), sensor({ valid_until: 'invalid' }),
-  ])('does not draw people for missing, zero, stale or malformed sensor evidence %#', record => {
+    null, sensor({ dataset: 'demo' }), sensor({ visible_identifiers: -1 }), sensor({ visible_identifiers: '12' }),
+    sensor({ observed_at: iso(1) }), sensor({ scan_enabled_ms: 0 }), sensor({ scan_enabled_ms: 31000 }),
+    sensor({ valid_until: 'invalid' }), sensor({ observed_at: iso(-1000), valid_until: iso(-1000) }),
+  ])('rejects missing, future and malformed sensor evidence %#', record => {
     expect(read({ sensor: record })).toBeNull();
   });
 
-  test('respects the explicit toggle, source mode, independent layers and failed reads', () => {
+  test('retains expired sensor, parking and automatic observations without extending their expiry', () => {
+    const expired = { observed_at: iso(-60000), valid_until: iso(-1) };
+    const result = read({ sensor: sensor(expired), latest_observation: parking(expired), automatic_observations: { vehicles: vehicles(expired), elevator: baseline(expired) } }, { place });
+    expect(result.groups).toHaveLength(3);
+    expect(result.groups.every(group => group.stale && group.observed_at === expired.observed_at && group.valid_until === expired.valid_until)).toBe(true);
+    expect(result.elevator).toMatchObject({ status: 'historical', wait_seconds: 55.5, stale: true, ...expired });
+    const html = render(result);
+    expect(html).toContain('最后观测');
+    expect(html).toContain('已过期');
+    expect(html).toContain('10/25 17:59:00');
+    expect(html).toContain('people retained');
+    expect(html).toContain('dateTime="2026-10-25T09:59:00.000Z"');
+    expect(html).toContain('<strong class="field-illustration-quantity">12 个 BLE 标识</strong>');
+    expect(html).toContain('<strong class="field-illustration-quantity">2–5 辆 · 人工</strong>');
+  });
+
+  test('retains live diagrams on read failure and marks source-specific last-known results', () => {
+    const data = { sensor: sensor(), latest_observation: parking(), last_known: { sensor: 'source_unavailable' } };
+    expect(read(data).groups[0]).toMatchObject({ stale: false, last_known: 'source_unavailable' });
+    const result = read(data, { live: { data, error: 'unavailable' } });
+    expect(result.update_failed).toBe(true);
+    expect(result.figure_count).toBe(5);
+    expect(render(result)).toContain('role="status">更新失败</p>');
+    expect(render(result)).toContain('data-last-known="true"');
+    expect(read(data, { live: { data: null, error: 'unavailable' } })).toBeNull();
+  });
+
+  test('respects mode, independent layers and explicit diagram toggle', () => {
     const data = { sensor: sensor(), latest_observation: parking(), automatic_observations: { vehicles: vehicles() } };
     expect(read(data, { enabled: false })).toBeNull();
     expect(read(data, { mode: 'demo' })).toBeNull();
-    expect(read(data, { live: { data, error: 'unavailable' } })).toBeNull();
     expect(read(data, { layers: { people: false, bikes: false } })).toBeNull();
     expect(read(data, { layers: { people: false } }).groups.map(item => item.kind)).toEqual(['bikes', 'cars']);
     expect(read(data, { layers: { bikes: false } }).groups.map(item => item.kind)).toEqual(['people']);
   });
 
-  test('draws manual parked-bike diagrams only when the range confirms a positive minimum', () => {
-    expect(read({ latest_observation: parking({ parking_min: 0, parking_max: 0 }) })).toBeNull();
-    expect(read({ latest_observation: parking({ parking_min: 0, parking_max: 20 }) })).toBeNull();
+  test('renders manual parking ranges as observed and rejects malformed ranges', () => {
     expect(read({ latest_observation: parking({ parking_min: 5, parking_max: 2 }) })).toBeNull();
-    expect(read({ latest_observation: parking({ valid_until: iso(-1) }) })).toBeNull();
-    const small = read({ latest_observation: parking({ parking_min: 1 }) });
-    const large = read({ latest_observation: parking({ parking_min: 100, parking_max: 200 }) });
-    expect(small.figure_count).toBe(2);
-    expect(large.figure_count).toBe(2);
-    expect(small.groups[0]).toMatchObject({ kind: 'bikes', source: 'manual', label: '人工停车观察 1–5 辆' });
+    expect(read({ latest_observation: parking({ observed_at: iso(1000) }) })).toBeNull();
+    expect(read({ latest_observation: parking({ parking_min: 0, parking_max: 20 }) }).groups[0]).toMatchObject({ figure_count: 0, label: '人工停车观察 0–20 辆' });
+    expect(read({ latest_observation: parking({ parking_min: 100, parking_max: 200 }) }).figure_count).toBe(2);
   });
 
-  test('keeps car/e-bike candidates separate and does not draw ecosystem modules as vehicles', () => {
+  test('valid new zero values replace positive glyphs without treating missing sources as zero', () => {
+    const result = read({ sensor: sensor({ visible_identifiers: 0 }), latest_observation: parking({ parking_min: 0, parking_max: 0 }), automatic_observations: { vehicles: vehicles() } });
+    expect(result.groups.map(group => [group.kind, group.figure_count, group.source])).toEqual([['people', 0, 'sensor'], ['bikes', 0, 'manual'], ['cars', 2, 'candidate']]);
+    expect(result.groups[1].label).toBe('人工停车观察 0–0 辆');
+    expect(result.groups[0].quantity).toBe('0 个 BLE 标识');
+    expect(result.groups[1].quantity).toBe('0–0 辆 · 人工');
+    expect(render(result)).toContain('<strong class="field-illustration-quantity">0 个 BLE 标识</strong>');
+    const missing = read({ place, sensor: null });
+    expect(missing.groups).toEqual([]);
+    expect(missing.vehicle_status).toContain('车辆待观测');
+    expect(missing.elevator).not.toHaveProperty('wait_seconds');
+  });
+
+  test('keeps candidates separate, requires valid evidence, and prioritizes source freshness before manual preference', () => {
     const readVehicles = extra => read({ automatic_observations: { vehicles: vehicles(extra) } });
-    expect(readVehicles({ candidate_count: 0, car_related_count: 0, ecosystem_count: 10 })).toBeNull();
     expect(readVehicles({ candidate_count: null, status: 'unavailable' })).toBeNull();
     expect(readVehicles({ evidence_kind: 'none' })).toBeNull();
-    expect(readVehicles({ valid_until: iso(-1) })).toBeNull();
     expect(readVehicles({ candidate_count: -1 })).toBeNull();
-    const result = readVehicles({ candidate_count: 100, car_related_count: 1 });
-    expect(result.groups).toMatchObject([{ kind: 'bikes', figure_count: 2, source: 'candidate' }, { kind: 'cars', figure_count: 2, source: 'candidate' }]);
-    expect(result.figure_count).toBe(4);
+    expect(readVehicles({ observed_at: iso(1) })).toBeNull();
+    expect(readVehicles({ candidate_count: 0, car_related_count: 0, ecosystem_count: 10 }).groups).toMatchObject([{ kind: 'bikes', figure_count: 0, source: 'candidate' }]);
+    const fresh = read({ latest_observation: parking(), automatic_observations: { vehicles: vehicles({ valid_until: iso(-1) }) } });
+    expect(fresh.groups[0].source).toBe('manual');
+    const expired = read({ latest_observation: parking({ valid_until: iso(-1) }), automatic_observations: { vehicles: vehicles() } });
+    expect(expired.groups[0].source).toBe('candidate');
+    const retained = read({ latest_observation: parking(), automatic_observations: { vehicles: vehicles() }, last_known: { parking: 'source_unavailable' } });
+    expect(retained.groups[0].source).toBe('candidate');
+    expect(fresh.groups.map(group => group.kind)).toEqual(['bikes', 'cars']);
   });
 
-  test('does not add manual and automatic e-bike figures together', () => {
-    const result = read({ latest_observation: parking(), automatic_observations: { vehicles: vehicles() } });
-    expect(result.groups.map(group => [group.kind, group.source])).toEqual([['bikes', 'manual'], ['cars', 'candidate']]);
+  test('shows each real observed quantity prominently, without changing fixed schematic glyph budgets', () => {
+    const result = read({ sensor: sensor({ visible_identifiers: 16, unique_table_overflow: true }), automatic_observations: { vehicles: vehicles({ candidate_count: 37, car_related_count: 9 }) } });
+    expect(result.groups.map(group => [group.quantity, group.figure_count])).toEqual([['16 个 BLE 标识', 5], ['37 个候选标识', 2], ['9 个候选标识', 2]]);
+    const html = render(result);
+    for (const quantity of ['16 个 BLE 标识', '37 个候选标识', '9 个候选标识']) expect(html).toContain(`<strong class="field-illustration-quantity">${quantity}</strong>`);
+    expect(html).toContain('<small>已达上限</small>');
+    expect(html).not.toContain('16 人');
+    const noCandidates = read({ automatic_observations: { vehicles: vehicles({ candidate_count: 0, car_related_count: 0 }) } });
+    expect(noCandidates.groups[0]).toMatchObject({ quantity: '0 个候选标识', figure_count: 0 });
+    expect(render(noCandidates)).toContain('<strong class="field-illustration-quantity">0 个候选标识</strong>');
   });
 
-  test('prefers independently fresh completed manual elevator waits over the historical baseline', () => {
+  test('selects elevator sources independently by freshness, then direct manual precedence, retaining expired last values', () => {
     const data = { latest_observations: { parking: null, elevator: manualWait() }, automatic_observations: { elevator: baseline() } };
-    expect(read(data, { place }).elevator).toMatchObject({ status: 'manual', wait_seconds: 27, label: '已完成候梯 27 秒 · 人工' });
+    expect(read(data, { place }).elevator).toMatchObject({ status: 'manual', wait_seconds: 27 });
     const staleManual = { ...data, latest_observations: { elevator: manualWait({ valid_until: iso(-1) }) } };
     expect(read(staleManual, { place }).elevator).toMatchObject({ status: 'historical', wait_seconds: 55.5 });
-    const futureManual = { ...data, latest_observations: { elevator: manualWait({ observed_at: iso(1000) }) } };
-    expect(read(futureManual, { place }).elevator.status).toBe('historical');
-    expect(read({ ...data, automatic_observations: { elevator: baseline({ valid_until: iso(-1) }) } }, { place }).elevator.status).toBe('manual');
+    expect(read({ ...data, last_known: { elevator: 'source_unavailable' } }, { place }).elevator.status).toBe('historical');
+    expect(read({ ...staleManual, automatic_observations: undefined }, { place }).elevator).toMatchObject({ status: 'manual', wait_seconds: 27, stale: true });
+    expect(read({ ...data, latest_observations: { elevator: manualWait({ observed_at: iso(1000) }) } }, { place }).elevator.status).toBe('historical');
+    expect(read({ place, automatic_observations: { elevator: baseline({ valid_until: iso(-1) }) } }).elevator).toMatchObject({ status: 'historical', wait_seconds: 55.5, stale: true });
   });
 
-  test('shows enabled-purpose waiting states without zero vehicle figures or fabricated wait seconds', () => {
-    const result = read({ place, sensor: null });
-    expect(result.groups).toEqual([]);
-    expect(result.vehicle_status).toContain('车辆待观测');
+  test('shows purpose waiting states without fabricated wait seconds, and preserves real measured zero', () => {
+    const result = read({ place });
     expect(result.elevator).toMatchObject({ status: 'waiting', label: '候梯样本不足 / 待观测' });
     expect(result.elevator).not.toHaveProperty('wait_seconds');
-    const stale = read({ place, automatic_observations: { elevator: baseline({ valid_until: iso(-1) }) } });
-    expect(stale.elevator.status).toBe('waiting');
     expect(read({ place, automatic_observations: { elevator: baseline({ observed_at: iso(1000) }) } }).elevator.status).toBe('waiting');
     expect(read({ place, automatic_observations: { elevator: baseline({ wait_seconds: NaN }) } }).elevator.status).toBe('waiting');
     expect(read({ place }, { layers: { people: false, bikes: false, waits: false } })).toBeNull();
-    const html = renderToStaticMarkup(createElement(FieldIllustration, { illustration: result, point: { left: 150, top: 50 }, width: 300, height: 220, placeName: '图书馆' }));
-    expect(html).toContain('观测状态');
-    expect(html).toContain('候梯样本不足 / 待观测');
-    expect(html).not.toContain('0 秒');
-    expect(html).not.toContain('field-illustration-glyphs');
-  });
-
-  test('preserves a measured zero wait while keeping missing waits unknown', () => {
+    expect(render(result)).not.toContain('0 秒');
     expect(read({ place, latest_observations: { elevator: manualWait({ wait_seconds: 0 }) } }).elevator.label).toBe('已完成候梯 0 秒 · 人工');
     expect(read({ place, automatic_observations: { elevator: baseline({ wait_seconds: 0 }) } }).elevator.label).toBe('候梯参考约 0 秒 · 历史样本');
   });
 
-  test('replays only then-valid manual elevator measurements and never injects the current historical baseline', () => {
-    const records = [manualWait({ observed_at: iso(-65000), valid_until: iso(-55000), wait_seconds: 19 })];
-    const data = { place, latest_observations: { elevator: manualWait() }, automatic_observations: { elevator: baseline() } };
-    const at = cursor => read(data, { place, mode: 'replay', cursor, history: state({ records }) });
+  test('replay only uses cursor-covering sensors and then-valid manual observations, excluding all live snapshots and inference', () => {
+    const current = { sensor: sensor({ visible_identifiers: 100 }), latest_observations: { elevator: manualWait() }, automatic_observations: { vehicles: vehicles(), elevator: baseline() }, last_known: { sensor: 'read_failed' } };
+    const records = [sensor({ observed_at: iso(-60000), valid_until: iso(-1), visible_identifiers: 12 }), parking({ observed_at: iso(-65000), valid_until: iso(-55000) }), manualWait({ observed_at: iso(-65000), valid_until: iso(-55000), wait_seconds: 19 })];
+    const at = cursor => read(current, { place, mode: 'replay', cursor, history: state({ records }) });
+    expect(at(now - 60000).groups.map(group => [group.kind, group.source, group.figure_count])).toEqual([['people', 'sensor', 3], ['bikes', 'manual', 2]]);
+    expect(at(now - 60000).groups[0]).toMatchObject({ stale: false, last_known: undefined });
+    expect(at(now - 60000).groups.map(group => group.quantity)).toEqual(['12 个 BLE 标识', '2–5 辆 · 人工']);
+    expect(render(at(now - 60000))).toContain('<strong class="field-illustration-quantity">12 个 BLE 标识</strong>');
     expect(at(now - 60000).elevator).toMatchObject({ status: 'manual', wait_seconds: 19 });
+    expect(at(now - 30000).groups).toEqual([]);
     expect(at(now - 30000).elevator.status).toBe('waiting');
     expect(at(now - 30000).elevator).not.toHaveProperty('wait_seconds');
-  });
-
-  test('pins replay to captured sensor coverage and valid manual records, excluding current automatic results', () => {
-    const current = { sensor: sensor({ visible_identifiers: 100 }), automatic_observations: { vehicles: vehicles() } };
-    const records = [sensor({ observed_at: iso(-60000), valid_until: iso(30000), visible_identifiers: 12 }), parking({ observed_at: iso(-65000), valid_until: iso(-55000) })];
-    const result = read(current, { mode: 'replay', cursor: now - 60000, history: state({ records }) });
-    expect(result.replay).toBe(true);
-    expect(result.groups.map(group => [group.kind, group.source, group.figure_count])).toEqual([['people', 'sensor', 3], ['bikes', 'manual', 2]]);
-    expect(read(current, { mode: 'replay', cursor: now - 30000, history: state({ records }) })).toBeNull();
     expect(read(current, { mode: 'replay', cursor: now - 60000, history: { data: { records }, error: 'failure' } })).toBeNull();
   });
 
-  test('renders labelled glyphs as one anchored diagram without fabricated individual coordinates', () => {
+  test('renders a concise bounded card with quantities/times and keeps schematic explanation accessible', () => {
     const illustration = read({ sensor: sensor(), latest_observation: parking() });
-    const html = renderToStaticMarkup(createElement(FieldIllustration, { illustration, point: { left: 150, top: 50 }, width: 300, height: 190, compact: true, placeName: '图书馆' }));
+    const html = render(illustration);
     expect(html).toContain('5 个示意图形，非实际人数或车辆数');
-    expect(html).toContain('位置不代表个体定位');
-    expect(html).toContain('广播活动量级示意 1 档');
+    expect(html).not.toContain('<p>');
+    expect(html).not.toContain('<small>广播活动量级');
+    expect(html).not.toContain('<small>人工停车观察');
+    expect(html).toContain('最后观测');
+    expect(html).toContain('max-height:194px');
     expect(html).toContain('data-source="manual"');
     expect(html).not.toContain('trajectory');
     expect(renderToStaticMarkup(createElement(FieldIllustration, { illustration, point: { left: -1, top: 50 }, width: 300, height: 190 }))).toBe('');
