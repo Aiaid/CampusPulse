@@ -259,6 +259,12 @@ static void close_window(uint32_t duration) {
         }
         return;
     }
+    /* Capture the sealed window before the codec consumes it. */
+    __atomic_store_n(&s_health.last_window_reports, s_window.reports_seen, __ATOMIC_RELAXED);
+    __atomic_store_n(&s_health.last_window_identifiers, s_window.address_count, __ATOMIC_RELAXED);
+    __atomic_store_n(&s_health.last_rssi_min, (int32_t)s_window.rssi_min, __ATOMIC_RELAXED);
+    __atomic_store_n(&s_health.last_rssi_max, (int32_t)s_window.rssi_max, __ATOMIC_RELAXED);
+    __atomic_store_n(&s_health.has_window, 1u, __ATOMIC_RELAXED);
     cp_codec_t c = codec_context();
     if (!cp_codec_window(&c, &s_window, duration))
         bump(&s_health.windows_dropped);
@@ -642,6 +648,9 @@ static void uploader_task(void *arg) {
                 if (load(&s_stream_pending[stream]))
                     __atomic_sub_fetch(&s_stream_pending[stream], 1u, __ATOMIC_RELAXED);
                 cp_upload_scheduler_confirmed(&s_upload_scheduler, selected);
+                __atomic_store_n(&s_health.last_ack_uptime_ms, (uint32_t)mono_ms(),
+                                 __ATOMIC_RELAXED);
+                bump(&s_health.uploads_acked);
             } else {
                 bump(&s_health.ack_failures);
                 cp_upload_scheduler_retry(&s_upload_scheduler, selected, mono_ms(), esp_random());
@@ -972,7 +981,14 @@ void cp_pipeline_snapshot(cp_pipeline_snapshot_t *out) {
     COPY(reports_seen);
     COPY(windows_committed);
     COPY(summaries_committed);
+    COPY(last_window_reports);
+    COPY(last_window_identifiers);
+    COPY(uploads_acked);
+    COPY(last_ack_uptime_ms);
 #undef COPY
+    out->has_window = __atomic_load_n(&s_health.has_window, __ATOMIC_RELAXED);
+    out->last_rssi_min = (int32_t)load((const uint32_t *)&s_health.last_rssi_min);
+    out->last_rssi_max = (int32_t)load((const uint32_t *)&s_health.last_rssi_max);
     out->free_slots = load(&s_free_slots);
     out->last_error = s_health.last_error;
     out->capacity_slots = s_journal.count;

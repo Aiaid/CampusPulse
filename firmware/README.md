@@ -10,8 +10,9 @@ update/startup was verified while retaining protected data. Physical enrollment
 and capture/upload acceptance remain separate. The
 [short PIN and USB revision](../docs/specs/local-provisioning-v2.md) passes local
 native/SDK/browser checks and four C3 configurations; its physical acceptance
-is recorded separately. T-Energy-S3 and Waveshare support remain
-pending independently verified profiles and layouts.
+is recorded separately. The T-Energy-S3 boards and the Waveshare ePaper card
+remain pending independently verified profiles and layouts; the headless
+Waveshare collection target below has build-only acceptance.
 
 The project entry is [ai-passport-radar](ai-passport-radar/README.md), imported at
 the user's request on 2026-10-24. Shared components live under `components/`.
@@ -19,6 +20,17 @@ Normal boot waits for setup or starts the authenticated network/control path;
 collection requires an accepted, applied and unexpired policy. Optional UI does
 not own collection timing. The inherited Radar remains an explicit diagnostic
 mode, separate from canonical collection and cloud observations.
+
+A Waveshare ESP32-S3-ePaper-1.54 collection target with a status card builds
+from [epaper-collector](epaper-collector/). It runs the same canonical collector
+and v2 protocol with an S3 board adapter, keeps a 3 MB application plus the
+shared 4 MB `cpqueue` at `0x360000`, and uses the native USB Serial/JTAG setup
+path. One board has joined an enterprise PEAP network, applied a policy, scanned,
+completed ACKed uploads and rendered the card with last-window identifiers,
+reports, RSSI and the last ACK time. Power measurement and a fixed campus
+placement remain pending. Build with
+`idf.py --no-ccache -B build -D IDF_TARGET=esp32s3 build`, then check separate
+images with `firmware/tools/verify_images.py build --layout epaper`.
 
 Activate ESP-IDF 5.5.3 and its Python environment, then run:
 

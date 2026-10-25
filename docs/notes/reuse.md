@@ -680,3 +680,18 @@ Design a refined, memorable abstract identity for a campus activity map. One bol
 Visual discipline: one cohesive thick silhouette, a few decisive rounded corners, carefully balanced negative space. Prefer a beautiful simple symbol over literal explanation. Flat vector-like graphic, no texture, no glow, no shadows. Pale icy cyan for the main C, one restrained turquoise endpoint that belongs to the route. Deep midnight navy full-bleed square background. Symbol occupies about 68 percent of canvas width, centered optically. Crisp at 16px.
 No literal buildings, no gates, no towers, no roofs, no heart or ECG zigzag, no antennas, no shields, no pins, no tiny details, no text, no wordmark, no letters other than the abstract C shape, no presentation mockup, no outer border. Deliver exactly one finished square icon.
 ```
+
+## 2026-10-25 ePaper card font
+
+The 5x7 ASCII glyph table in
+`firmware/components/cp_ui_epaper/font5x7.c` is the standard Adafruit GFX
+`glcdfont.c` data for characters `0x00`-`0x7F`, five column bytes per glyph,
+copied unchanged from the BSD-licensed library already present in the local
+Arduino test dependency
+(`Adafruit GFX Library/glcdfont.c`). Copyright (c) 2012 Adafruit Industries,
+BSD-3-Clause; the notice is retained in the generated file. Only the ASCII
+table is reused. No Adafruit driver, class or example code was copied, and the
+SSD1681 command sequence in `epaper_card.c` was written for this repository
+from the controller's documented register settings. The ePaper driver, card
+layout and refresh throttling are newly authored. This reuse applies to the
+S3 target only and does not change the licenses of the rest of the project.

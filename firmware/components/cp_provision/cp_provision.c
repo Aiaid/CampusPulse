@@ -28,6 +28,8 @@ static protocomm_t *pc;
 static protocomm_security2_params_t srp;
 static SemaphoreHandle_t session_mutex;
 static bool security_fatal;
+/* Set once by the board adapter before any transport starts. */
+static char s_board[24] = "unknown";
 static httpd_handle_t http;
 static esp_netif_t *ap_netif;
 static bool wifi_initialized;
@@ -87,6 +89,7 @@ void cp_provision_snapshot(cp_provision_snapshot_t *out) {
     portENTER_CRITICAL(&lock);*out=state;portEXIT_CRITICAL(&lock);
 }
 void cp_provision_set_status(const char *value, const char *reason) { portENTER_CRITICAL(&lock); snprintf(state.state, sizeof(state.state), "%s", value ? value : "unknown"); snprintf(state.reason, sizeof(state.reason), "%s", reason ? reason : ""); portEXIT_CRITICAL(&lock); }
+void cp_provision_set_board(const char *board) { if (!board) return; snprintf(s_board, sizeof s_board, "%s", board); }
 esp_err_t cp_provision_bind_context(const char *node,const char *boot,uint32_t reset,
     cp_provision_credential_resolver_fn resolver,void *context) {
     if(!node||strlen(node)!=15||strncmp(node,"cp_",3)||!cp_provision_uuid_v4(boot))return ESP_ERR_INVALID_ARG;
@@ -175,7 +178,7 @@ static cJSON *handle(const cJSON *request, cp_provision_mode_t transport) {
             cJSON_AddBoolToObject(r,"has_saved_credential",has_saved)&&
             cJSON_AddNumberToObject(r,"uptime_ms",(double)(esp_timer_get_time()/1000))&&cJSON_AddNumberToObject(r,"reset_reason",reset);
         if(!strcmp(op,"info")) {
-            ok=ok&&cJSON_AddStringToObject(r,"board","FoloToy AI Passport / ESP32-C3")&&
+            ok=ok&&cJSON_AddStringToObject(r,"board",s_board)&&
                 cJSON_AddStringToObject(r,"firmware_version",esp_app_get_description()->version)&&cJSON_AddNumberToObject(r,"wifi_modes",7)&&
                 cJSON_AddStringToObject(r,"transport",transport==CP_PROVISION_USB?"usb":transport==CP_PROVISION_SOFTAP?"ap":"ble")&&
                 cJSON_AddStringToObject(r,"security",transport==CP_PROVISION_USB?"physical-usb":transport==CP_PROVISION_SOFTAP?"wpa2-local":"security2");

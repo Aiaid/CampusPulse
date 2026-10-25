@@ -2,14 +2,17 @@
 #include "cp_board.h"
 #include "cp_core.h"
 #include "cp_runtime.h"
+#include "cp_provision.h"
 #include "cp_usb.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
-#include "scan_ble.h"
 #include "sdkconfig.h"
+#if CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
+#include "scan_ble.h"
+#endif
 #include <stdio.h>
 
 static const char *TAG = "cp_app";
@@ -31,6 +34,15 @@ static void input_received(const cp_input_event_t *event, void *context) {
     (void)context;
     if (xQueueSend(s_input, event, 0) != pdTRUE)
         __atomic_add_fetch(&s_input_drops, 1u, __ATOMIC_RELAXED);
+}
+/* UTC+8 HH:MM for the retained ePaper card. Unknown time stays "--:--". */
+static void format_hhmm(uint64_t utc_ms, char out[6]) {
+    if (utc_ms < 1600000000000ULL) {
+        snprintf(out, 6, "--:--");
+        return;
+    }
+    const uint32_t day = (uint32_t)((utc_ms / 1000 + 8ULL * 3600) % 86400);
+    snprintf(out, 6, "%02u:%02u", (unsigned)(day / 3600), (unsigned)((day % 3600) / 60));
 }
 static void show_status(const cp_runtime_snapshot_t *runtime) {
     (void)runtime;
@@ -72,7 +84,9 @@ static void show_status(const cp_runtime_snapshot_t *runtime) {
              : runtime->pipeline.pressure_paused ? "STORAGE PAUSED"
              : cp_collection_allowed(runtime->collection) && !runtime->pipeline.collecting
                  ? "CAPTURE STOPPED"
-                 : cp_collection_state_name(runtime->collection));
+                 : cp_collection_allowed(runtime->collection)
+                     ? "COLLECTING"
+                     : cp_collection_state_name(runtime->collection));
     view.setup_active = runtime->provision.active;
     view.setup_softap = runtime->provision.mode == CP_PROVISION_SOFTAP;
     view.setup_usb = runtime->provision.mode == CP_PROVISION_USB;
@@ -80,6 +94,31 @@ static void show_status(const cp_runtime_snapshot_t *runtime) {
     snprintf(view.setup_proof, sizeof view.setup_proof, "%s", runtime->provision.proof);
     snprintf(view.setup_password, sizeof view.setup_password, "%s", runtime->provision.ap_password);
     snprintf(view.setup_state, sizeof view.setup_state, "%s", runtime->provision.state);
+#endif
+    snprintf(view.last_ack, sizeof view.last_ack, "--:--");
+#if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
+    if (runtime) {
+        view.has_window = runtime->pipeline.has_window;
+        view.window_reports = runtime->pipeline.last_window_reports;
+        view.window_identifiers = runtime->pipeline.last_window_identifiers;
+        view.rssi_min = runtime->pipeline.last_rssi_min;
+        view.rssi_max = runtime->pipeline.last_rssi_max;
+        if (runtime->pipeline.last_ack_uptime_ms) {
+            const uint32_t now_up = (uint32_t)(esp_timer_get_time() / 1000);
+            const uint32_t age_ms = now_up - runtime->pipeline.last_ack_uptime_ms;
+            view.has_last_ack = true;
+            if (runtime->network.clock_trusted && runtime->network.clock_utc_ms) {
+                const uint64_t now_utc = runtime->network.clock_utc_ms +
+                    ((uint64_t)now_up >= runtime->network.clock_mono_ms
+                         ? (uint64_t)now_up - runtime->network.clock_mono_ms
+                         : 0);
+                format_hhmm(now_utc > age_ms ? now_utc - age_ms : 0, view.last_ack);
+            }
+            view.stale = age_ms > 120000u;
+        } else {
+            view.stale = true;
+        }
+    }
 #endif
     cp_board_present(&view);
 #if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
@@ -144,6 +183,8 @@ esp_err_t cp_app_start(void) {
     if (s_task)
         return ESP_OK;
     const cp_board_profile_t *profile = cp_board_profile();
+    /* Report the real board family to the administrator wizard. */
+    cp_provision_set_board(profile->board_id);
     cp_core_init(&s_core, profile);
     uint8_t factory_mac[6];
     esp_err_t err = cp_board_factory_mac(factory_mac);

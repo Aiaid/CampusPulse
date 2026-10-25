@@ -303,6 +303,23 @@ collection and durable upload. Final local software verification passed on
       No flash, physical radio/phone/Flash acceptance, v2 deployment or private-source
       publication is included; hardware, S3 and manual/USB work remains open above.
 
+- [x] Build and physically accept a Waveshare ESP32-S3-ePaper-1.54 collection
+      target with a status card (2026-10-25): an S3 board adapter with factory
+      identity and panel-rail control, an S3 sdkconfig (8 MB DIO Flash, 8 MB OPI
+      PSRAM, native USB Serial/JTAG console), a 3 MB app plus the shared 4 MB
+      `cpqueue` at `0x360000`, and target-aware separate-image verification.
+      ESP-IDF 5.5.3 builds pass bootloader/partition/app checks at 1,322,848 app
+      bytes with 58% of the partition free. One board (ESP32-S3-PICO-1-N8R8)
+      joined CCNU-AUTO with PEAP/MSCHAPv2, validated TLS, applied a
+      controlled-test policy, started passive scanning and uploaded ACKed
+      window, address-summary and status batches. The 200x200 SSD1681 card
+      renders node/network/auth/policy/capture state plus last-window
+      identifiers, reports, RSSI and the last ACK time; key-state changes refresh
+      immediately while data refreshes at most every ten minutes. The queue must
+      stay at the pipeline's fixed `0x360000` / 4 MB position; other offsets fail
+      as `ESP_ERR_NOT_FOUND`. Power measurement and a fixed campus placement
+      remain open.
+
 - [x] Reduce lighting startup work with a bounded two-Worker compiler, scoped
       lamp/actor caches and cropped high-DPI library canvases. Matched warmed-tile
       visible Chromium at1920×1080/DPR2 improved readiness19.9→6.7s, longest

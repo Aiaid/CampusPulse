@@ -24,6 +24,11 @@ typedef struct {
     int battery_percent;
     bool setup_active,setup_softap,setup_usb;
     char setup_name[32],setup_proof[33],setup_password[33],setup_state[24];
+    /* Optional evidence for displays; zero/false when unavailable. */
+    bool has_window, has_last_ack, stale;
+    uint32_t window_reports, window_identifiers;
+    int rssi_min, rssi_max;
+    char last_ack[6]; /* HH:MM local, or "--:--" */
 } cp_board_view_t;
 
 const cp_board_profile_t *cp_board_profile(void);

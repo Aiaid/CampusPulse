@@ -1,0 +1,7 @@
+# Name, Type, SubType, Offset, Size, Flags
+nvs, data, nvs, 0x9000, 0x6000,
+phy_init, data, phy, 0xf000, 0x1000,
+# 3 MB application, matching the shared journal batch limits.
+factory, app, factory, 0x10000, 0x300000,
+# Queue at the shared 0x360000 / 4 MB position the pipeline expects on every board.
+cpqueue, data, 0x40, 0x360000, 0x400000,

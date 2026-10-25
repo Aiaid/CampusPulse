@@ -40,6 +40,8 @@ esp_err_t cp_provision_usb_exchange(const uint8_t *request, size_t length,
                                     uint8_t **response, size_t *response_length);
 void cp_provision_snapshot(cp_provision_snapshot_t *out);
 void cp_provision_set_status(const char *state, const char *reason);
+/* Board adapter label reported by the info reply; call once before start. */
+void cp_provision_set_board(const char *board);
 
 /* Nonblocking resolver over already validated application RAM. NULL output is a
  * capability query. Never access NVS/network from this callback. */

@@ -13,6 +13,12 @@ typedef struct {
     uint32_t windows_dropped, upload_failures, ack_failures, rejected_batches;
     uint32_t reports_seen, windows_committed, summaries_committed;
     esp_err_t last_error;
+    /* Card/status evidence: the most recently committed window and the last
+     * ACKed upload. Uptime is monotonic and wraps after roughly 49 days. */
+    bool has_window;
+    uint32_t last_window_reports, last_window_identifiers;
+    int32_t last_rssi_min, last_rssi_max;
+    uint32_t uploads_acked, last_ack_uptime_ms;
 } cp_pipeline_snapshot_t;
 esp_err_t cp_pipeline_init(const char *node_id, const char *boot_id);
 /* Stop seals/drains the original policy before it can be replaced. */
