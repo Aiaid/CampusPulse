@@ -17,9 +17,19 @@ bool cp_settings_validate(const cp_settings_t *s)
     size_t ssid = bounded_length(s->ssid, sizeof(s->ssid));
     size_t pass = bounded_length(s->password, sizeof(s->password));
     size_t token = bounded_length(s->device_token, sizeof(s->device_token));
-    if (!ssid || ssid > 32 || pass < 8 || pass > 64 || token < 32 || token > 192 ||
+    if (!ssid || ssid > 32 || pass > 64 || token < 32 || token > 192 ||
         bounded_length(s->api_origin, sizeof(s->api_origin)) != strlen(CP_API_ORIGIN) ||
         strcmp(s->api_origin, CP_API_ORIGIN)) return false;
+    if (s->wifi_security > CP_WIFI_ENTERPRISE_PEAP) return false;
+    if (s->wifi_security == CP_WIFI_PERSONAL && pass < 8) return false;
+    if (s->wifi_security != CP_WIFI_PERSONAL && pass != 0) return false;
+    const char *eap[] = {s->eap_username,s->eap_identity,s->eap_password};
+    for (unsigned field=0;field<3;++field) {
+        size_t n=bounded_length(eap[field],129);
+        if (n>128 || (s->wifi_security==CP_WIFI_ENTERPRISE_PEAP && !n) ||
+            (s->wifi_security!=CP_WIFI_ENTERPRISE_PEAP && n)) return false;
+        for (size_t i=0;i<n;++i) if ((unsigned char)eap[field][i]<32 || eap[field][i]==127) return false;
+    }
     for (size_t i=0; i<ssid; ++i) if ((unsigned char)s->ssid[i] < 32 || s->ssid[i]==127) return false;
     for (size_t i=0; i<pass; ++i) {
         unsigned char c=(unsigned char)s->password[i];

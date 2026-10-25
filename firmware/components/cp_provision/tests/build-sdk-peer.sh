@@ -26,10 +26,10 @@ CP_INCLUDES=(-I"$CP_DIR" -I"$CP_DIR/tests/host" -I"$CP_SDK/include/common" -I"$C
 printf '%s\n' "$CP_OUT/sdk-peer"
 "${CC:-clang}" "${CP_FLAGS[@]}" -Wno-deprecated-declarations -I"$IDF_PATH/components/json/cJSON" -c "$IDF_PATH/components/json/cJSON/cJSON.c" -o "$CP_OUT/cJSON.o"
 "${CC:-clang}" "${CP_FLAGS[@]}" "${CP_INCLUDES[@]}" -pthread \
- -I"$CP_DIR/include" -I"$CP_DIR/../cp_settings/include" -I"$CP_SDK/include/transports" \
+ -I"$CP_DIR/include" -I"$CP_DIR/../cp_settings/include" -I"$CP_DIR/../cp_network/include" -I"$CP_SDK/include/transports" \
  -I"$IDF_PATH/components/json/cJSON" \
  "$CP_DIR/tests/test_module.c" "$CP_DIR/cp_provision_guard.c" "$CP_DIR/cp_provision_security2.c" \
- "$CP_DIR/../cp_settings/settings_validate.c" \
+ "$CP_DIR/../cp_settings/settings_validate.c" "$CP_DIR/../cp_network/diagnostic.c" \
  "$CP_OUT/sdk-patch/security2_checked.c" "$CP_SDK/src/crypto/srp6a/esp_srp.c" "$CP_SDK/src/crypto/srp6a/esp_srp_mpi.c" \
  "$CP_SDK/proto-c/session.pb-c.c" "$CP_SDK/proto-c/sec0.pb-c.c" "$CP_SDK/proto-c/sec1.pb-c.c" "$CP_SDK/proto-c/sec2.pb-c.c" "$CP_SDK/proto-c/constants.pb-c.c" \
  "$IDF_PATH/components/protobuf-c/protobuf-c/protobuf-c/protobuf-c.c" "$CP_OUT/cJSON.o" \

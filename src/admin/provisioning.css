@@ -11,3 +11,14 @@
 .cp-provision-status { padding: .8rem; border-left: 3px solid #087f83; background: rgba(8,127,131,.06); }
 .cp-provision details { margin-top: 1rem; }
 .cp-provision .cp-admin-mono { overflow-wrap: anywhere; }
+.cp-provision-existing { padding: .8rem 1rem; border-radius: 8px; background: rgba(8,127,131,.07); }
+.cp-provision-existing p { margin-bottom: 0; }
+.cp-provision-option { display: flex; align-items: flex-start; gap: .65rem; padding: .8rem 0; cursor: pointer; }
+.cp-provision-option input { flex: 0 0 auto; margin-top: .25rem; }
+.cp-provision-option span { min-width: 0; overflow-wrap: anywhere; }
+.cp-provision-option small { display: block; margin-top: .25rem; line-height: 1.5; }
+.cp-provision-stage { display: grid; gap: .5rem; padding: .8rem; border-radius: 8px; background: rgba(8,127,131,.07); }
+.cp-provision-result.is-failed { border-color: #c58439; }
+.cp-provision-result.is-failed .cp-provision-stage { background: rgba(197,132,57,.1); }
+.cp-provision-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.cp-provision-diagnostic { max-width: 100%; overflow-wrap: anywhere; white-space: pre-wrap; padding: .8rem; border-radius: 6px; background: rgba(0,0,0,.035); }

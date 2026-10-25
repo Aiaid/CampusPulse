@@ -3,7 +3,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "esp_err.h"
-#define CP_SETTINGS_VERSION 1u
+#define CP_SETTINGS_VERSION 2u
+#define CP_WIFI_PERSONAL 0u
+#define CP_WIFI_OPEN 1u
+#define CP_WIFI_ENTERPRISE_PEAP 2u
 #define CP_API_ORIGIN "https://pulse.anend.net"
 #define CP_SETTINGS_TOKEN_SIZE 193u
 /* Application-owned ordinary NVS; this is not encryption at rest. */
@@ -14,6 +17,8 @@ typedef struct {
     char password[65];
     char device_token[CP_SETTINGS_TOKEN_SIZE];
     char api_origin[64];
+    uint32_t wifi_security;
+    char eap_username[129], eap_identity[129], eap_password[129];
 } cp_settings_t;
 /* Does not erase NVS on any initialization/recovery error. */
 esp_err_t cp_settings_init(void);

@@ -22,3 +22,8 @@ clang -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
     -I"$CP_JSON_DIR" "$CP_NETWORK_DIR/tests/test_control.c" "$CP_TEST_DIR/cJSON.o" \
     -o "$CP_TEST_DIR/test-control"
 "$CP_TEST_DIR/test-control"
+clang -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+    -I"$CP_NETWORK_DIR/include" -I"$CP_COMPONENTS_DIR/cp_settings/tests/host" \
+    "$CP_NETWORK_DIR/diagnostic.c" "$CP_NETWORK_DIR/diagnostic_store.c" \
+    "$CP_NETWORK_DIR/tests/test_diagnostic.c" -o "$CP_TEST_DIR/test-diagnostic"
+"$CP_TEST_DIR/test-diagnostic"

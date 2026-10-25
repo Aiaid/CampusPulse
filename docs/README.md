@@ -16,6 +16,7 @@ validation records are not evidence for this implementation.
 
 | Document | Purpose | Status |
 | --- | --- | --- |
+| [Onboarding and network diagnostics](notes/device-onboarding-diagnostics.md) | Existing-device Wi-Fi reconfiguration, direct versioned edits, retained safe diagnostics and observed serial-open reset | Implementation/verification in progress; original network failure not yet attributable |
 | [Lighting performance / 光照性能](notes/lighting-performance.md) | Background compilation, scoped caches, cropped high-DPI canvases and matched Chrome measurements | Locally optimized; hardware-accelerated Chrome comparison and renderer regression; production/Safari acceptance separate |
 | [GIS location settings](notes/gis-location-settings.md) | Full official image grid and four tile levels, shared location registry and admin image CSP | Corrected locally 2026-10-25; native Safari with real tiles, HTTP CSP and desktop/phone fixture regressions; deployment separate |
 | [Passport firmware chain](notes/firmware-chain.md) | Local provisioning, enrollment, strict TLS/control leases, canonical MAC summaries and durable ACK journal | Published 2026-10-25; one Passport app-only update, protected-data comparison, startup and native USB verified; real enrollment/capture acceptance remains separate |

@@ -1,6 +1,7 @@
 #pragma once
 #include "esp_err.h"
 #include "cp_settings.h"
+#include "cp_network_diag.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -39,3 +40,12 @@ esp_err_t cp_provision_usb_exchange(const uint8_t *request, size_t length,
                                     uint8_t **response, size_t *response_length);
 void cp_provision_snapshot(cp_provision_snapshot_t *out);
 void cp_provision_set_status(const char *state, const char *reason);
+
+/* Nonblocking resolver over already validated application RAM. NULL output is a
+ * capability query. Never access NVS/network from this callback. */
+typedef bool (*cp_provision_credential_resolver_fn)(const char *node_id,char *token,
+    size_t capacity,uint32_t *generation,void *context);
+esp_err_t cp_provision_bind_context(const char *node_id,const char *boot_id,uint32_t reset_reason,
+    cp_provision_credential_resolver_fn resolver,void *context);
+void cp_provision_set_diagnostic(const cp_network_diagnostic_t *diagnostic,const char *attempt_id);
+void cp_provision_set_previous_attempt(const cp_network_attempt_t *attempt,esp_err_t history_error);

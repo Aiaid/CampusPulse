@@ -40,6 +40,14 @@ static int64_t expires;
 static unsigned proof_failures;
 static uint32_t session_sequence;
 static uint8_t attempt_digest[32];
+static char diagnostic_boot_id[37],diagnostic_attempt_id[37];
+static uint32_t diagnostic_reset_reason;
+static cp_network_diagnostic_t diagnostic;
+static cp_network_attempt_t previous_attempt;
+static bool have_previous_attempt;
+static esp_err_t diagnostic_history_error;
+static cp_provision_credential_resolver_fn credential_resolver;
+static void *credential_context;
 static const char *str(const cJSON *obj, const char *key) {
     const cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, key);
     return cJSON_IsString(item) ? item->valuestring : NULL;
@@ -79,6 +87,42 @@ void cp_provision_snapshot(cp_provision_snapshot_t *out) {
     portENTER_CRITICAL(&lock);*out=state;portEXIT_CRITICAL(&lock);
 }
 void cp_provision_set_status(const char *value, const char *reason) { portENTER_CRITICAL(&lock); snprintf(state.state, sizeof(state.state), "%s", value ? value : "unknown"); snprintf(state.reason, sizeof(state.reason), "%s", reason ? reason : ""); portEXIT_CRITICAL(&lock); }
+esp_err_t cp_provision_bind_context(const char *node,const char *boot,uint32_t reset,
+    cp_provision_credential_resolver_fn resolver,void *context) {
+    if(!node||strlen(node)!=15||strncmp(node,"cp_",3)||!cp_provision_uuid_v4(boot))return ESP_ERR_INVALID_ARG;
+    if(!take_session())return ESP_ERR_INVALID_STATE;
+    if(state.active){give_session();return ESP_ERR_INVALID_STATE;}
+    portENTER_CRITICAL(&lock);snprintf(state.node_id,sizeof state.node_id,"%s",node);
+    snprintf(diagnostic_boot_id,sizeof diagnostic_boot_id,"%s",boot);diagnostic_reset_reason=reset;
+    if(!state.state[0])snprintf(state.state,sizeof state.state,"idle");
+    portEXIT_CRITICAL(&lock);
+    credential_resolver=resolver;credential_context=context;give_session();return ESP_OK;
+}
+void cp_provision_set_diagnostic(const cp_network_diagnostic_t *value,const char *attempt) {
+    if(!cp_network_diag_valid(value)||(attempt&&!cp_provision_uuid_v4(attempt)))return;
+    portENTER_CRITICAL(&lock);diagnostic=*value;
+    if(attempt)memcpy(diagnostic_attempt_id,attempt,37);
+    portEXIT_CRITICAL(&lock);
+}
+void cp_provision_set_previous_attempt(const cp_network_attempt_t *value,esp_err_t history_error) {
+    bool valid=cp_network_attempt_valid(value);
+    portENTER_CRITICAL(&lock);have_previous_attempt=valid;
+    if(valid)previous_attempt=*value;else memset(&previous_attempt,0,sizeof previous_attempt);
+    diagnostic_history_error=history_error;portEXIT_CRITICAL(&lock);
+}
+static bool saved_credential(const char *node,char *token,size_t capacity,uint32_t *generation) {
+    return credential_resolver&&credential_resolver(node,token,capacity,generation,credential_context);
+}
+static cJSON *diagnostic_json(const cp_network_diagnostic_t *d) {
+    cJSON *o=cJSON_CreateObject();if(!o)return NULL;
+    bool ok=cJSON_AddStringToObject(o,"stage",cp_network_diag_stage_name(d->stage)) &&
+        cJSON_AddStringToObject(o,"code",cp_network_diag_code_name(d->code)) &&
+        cJSON_AddNumberToObject(o,"esp_err",d->esp_err) && cJSON_AddNumberToObject(o,"http_status",d->http_status) &&
+        cJSON_AddNumberToObject(o,"wifi_reason",d->wifi_reason) && cJSON_AddNumberToObject(o,"tls_code",d->tls_code) &&
+        cJSON_AddNumberToObject(o,"tls_flags",d->tls_flags) && cJSON_AddNumberToObject(o,"elapsed_ms",d->elapsed_ms) &&
+        cJSON_AddBoolToObject(o,"retryable",d->retryable!=0);
+    if(!ok){cJSON_Delete(o);return NULL;}return o;
+}
 static bool copy_field(char *dest, size_t cap, const cJSON *obj, const char *key) { const char *v = str(obj, key); if (!v || strlen(v) >= cap) return false; memcpy(dest, v, strlen(v) + 1); return true; }
 static cJSON *parse_request(const char *data, size_t len) {
     /* All v1 fields are scalar. Bound nesting before cJSON recursion. */
@@ -101,8 +145,8 @@ static cJSON *parse_request(const char *data, size_t len) {
     return r;
 }
 static void delete_request(cJSON *request) {
-    const char *keys[] = { "password", "device_token", "proof" };
-    for (unsigned i = 0; request && i < 3; i++) { cJSON *v = cJSON_GetObjectItemCaseSensitive(request, keys[i]); if (cJSON_IsString(v)) wipe(v->valuestring, strlen(v->valuestring)); }
+    const char *keys[] = { "password", "device_token", "proof", "eap_username", "eap_identity", "eap_password" };
+    for (unsigned i = 0; request && i < sizeof(keys)/sizeof(keys[0]); i++) { cJSON *v = cJSON_GetObjectItemCaseSensitive(request, keys[i]); if (cJSON_IsString(v)) wipe(v->valuestring, strlen(v->valuestring)); }
     cJSON_Delete(request);
 }
 static cJSON *reply(bool ok, const char *reason) { cJSON *r = cJSON_CreateObject(); if (!r) return NULL; cJSON_AddNumberToObject(r, "v", 1); cJSON_AddBoolToObject(r, "ok", ok); if (reason) cJSON_AddStringToObject(r, "reason", reason); return r; }
@@ -119,33 +163,90 @@ static cJSON *handle(const cJSON *request, cp_provision_mode_t transport) {
     if(!usb_status && !session_allowed())return reply(false,proof_failures>=MAX_FAILURES?"setup_locked":"setup_expired");
     if(transport==CP_PROVISION_SOFTAP && (!same(str(request,"nonce"),nonce)||!same(str(request,"proof"),state.proof))){authentication_failure();return reply(false,proof_failures>=MAX_FAILURES?"setup_locked":"invalid_setup_pin");}
     if(!strcmp(op,"info")||!strcmp(op,"status")) {
-        cp_provision_snapshot_t snapshot;portENTER_CRITICAL(&lock);snapshot=state;portEXIT_CRITICAL(&lock);
+        cp_provision_snapshot_t snapshot;cp_network_diagnostic_t current;
+        cp_network_attempt_t previous;bool have_previous;char boot[37],attempt[37];uint32_t reset;esp_err_t history;
+        portENTER_CRITICAL(&lock);snapshot=state;current=diagnostic;previous=previous_attempt;have_previous=have_previous_attempt;
+        memcpy(boot,diagnostic_boot_id,sizeof boot);memcpy(attempt,diagnostic_attempt_id,sizeof attempt);
+        reset=diagnostic_reset_reason;history=diagnostic_history_error;portEXIT_CRITICAL(&lock);
         cJSON *r=reply(true,NULL);if(!r)return NULL;
-        cJSON_AddStringToObject(r,"node_id",snapshot.node_id);cJSON_AddStringToObject(r,"board","FoloToy AI Passport / ESP32-C3");
-        cJSON_AddStringToObject(r,"firmware_version",esp_app_get_description()->version);
-        cJSON_AddStringToObject(r,"transport",transport==CP_PROVISION_USB?"usb":transport==CP_PROVISION_SOFTAP?"ap":"ble");
-        cJSON_AddStringToObject(r,"security",transport==CP_PROVISION_USB?"physical-usb":transport==CP_PROVISION_SOFTAP?"wpa2-local":"security2");
-        cJSON_AddStringToObject(r,"state",snapshot.state);cJSON_AddStringToObject(r,"reason",snapshot.reason);cJSON_AddStringToObject(r,"attempt_id",snapshot.attempt_id);
-        cJSON_AddBoolToObject(r,"active",snapshot.active);
-        if(transport==CP_PROVISION_USB&&!strcmp(op,"info"))cJSON_AddStringToObject(r,"nonce",nonce);
-        int64_t left=expires-esp_timer_get_time();cJSON_AddNumberToObject(r,"session_expires_in_ms",left>0?left/1000:0);
-        return r;
+        bool has_saved=saved_credential(snapshot.node_id,NULL,0,NULL);
+        bool ok=cJSON_AddStringToObject(r,"node_id",snapshot.node_id)&&cJSON_AddStringToObject(r,"boot_id",boot)&&
+            cJSON_AddStringToObject(r,"state",snapshot.state)&&cJSON_AddBoolToObject(r,"active",snapshot.active)&&
+            cJSON_AddBoolToObject(r,"has_saved_credential",has_saved)&&
+            cJSON_AddNumberToObject(r,"uptime_ms",(double)(esp_timer_get_time()/1000))&&cJSON_AddNumberToObject(r,"reset_reason",reset);
+        if(!strcmp(op,"info")) {
+            ok=ok&&cJSON_AddStringToObject(r,"board","FoloToy AI Passport / ESP32-C3")&&
+                cJSON_AddStringToObject(r,"firmware_version",esp_app_get_description()->version)&&cJSON_AddNumberToObject(r,"wifi_modes",7)&&
+                cJSON_AddStringToObject(r,"transport",transport==CP_PROVISION_USB?"usb":transport==CP_PROVISION_SOFTAP?"ap":"ble")&&
+                cJSON_AddStringToObject(r,"security",transport==CP_PROVISION_USB?"physical-usb":transport==CP_PROVISION_SOFTAP?"wpa2-local":"security2");
+            if(transport==CP_PROVISION_USB)ok=ok&&cJSON_AddStringToObject(r,"nonce",nonce);
+            int64_t left=expires-esp_timer_get_time();ok=ok&&cJSON_AddNumberToObject(r,"session_expires_in_ms",left>0?left/1000:0);
+        } else {
+            ok=ok&&cJSON_AddStringToObject(r,"attempt_id",snapshot.attempt_id[0]?snapshot.attempt_id:attempt);
+            if(current.stage==CP_DIAG_IDLE)ok=ok&&cJSON_AddStringToObject(r,"reason",snapshot.reason);
+            cJSON *d=diagnostic_json(&current);
+            if(!d||!cJSON_AddItemToObject(r,"diagnostic",d)){cJSON_Delete(d);ok=false;}
+            /* Full previous-boot evidence is exposed on the 1024-byte physical
+             * USB status channel; BLE has only 496 plaintext bytes per reply. */
+            if(transport==CP_PROVISION_USB) {
+                ok=ok&&cJSON_AddNumberToObject(r,"history_error",history);
+                if(have_previous) {
+                    cJSON *old=cJSON_CreateObject(),*detail=diagnostic_json(&previous.diagnostic);
+                    bool old_ok=old&&detail&&cJSON_AddStringToObject(old,"attempt_id",previous.attempt_id)&&
+                        cJSON_AddStringToObject(old,"boot_id",previous.boot_id)&&
+                        cJSON_AddStringToObject(old,"state",previous.state==CP_ATTEMPT_SAVED?"saved":previous.state==CP_ATTEMPT_FAILED?"failed":"interrupted");
+                    if(old_ok)old_ok=cJSON_AddItemToObject(old,"diagnostic",detail);
+                    if(!old_ok){cJSON_Delete(detail);cJSON_Delete(old);ok=false;}
+                    else if(!cJSON_AddItemToObject(r,"previous_attempt",old)){cJSON_Delete(old);ok=false;}
+                }
+            }
+        }
+        if(!ok){cJSON_Delete(r);return NULL;}return r;
     }
     if(transport==CP_PROVISION_USB&&!same(str(request,"nonce"),nonce))return reply(false,"invalid_session_nonce");
     if (strcmp(op, "configure")) return reply(false, "invalid_operation");
     const char *attempt = str(request, "attempt_id");
     if (!cp_provision_uuid_v4(attempt)) return reply(false, "invalid_attempt_id");
+    const cJSON *reuse_field=cJSON_GetObjectItemCaseSensitive(request,"reuse_saved_credential");
+    bool reuse=cJSON_IsTrue(reuse_field);
+    if((reuse_field&&!reuse)||(reuse&&cJSON_GetObjectItemCaseSensitive(request,"device_token")))return reply(false,"invalid_credential_mode");
+    for(const cJSON *field=request->child;field;field=field->next) {
+        const char *allowed[]={"v","op","nonce","proof","node_id","attempt_id","ssid","password","device_token","reuse_saved_credential","wifi_security","eap_username","eap_identity","eap_password"};bool known=false;
+        for(unsigned i=0;i<sizeof allowed/sizeof allowed[0];++i)if(!strcmp(field->string,allowed[i]))known=true;
+        if(!known)return reply(false,"invalid_settings");
+    }
     cp_settings_t candidate = { .version = CP_SETTINGS_VERSION };
     snprintf(candidate.node_id, sizeof(candidate.node_id), "%s", state.node_id);
     snprintf(candidate.api_origin, sizeof(candidate.api_origin), "%s", CP_API_ORIGIN);
+    const char *security=str(request,"wifi_security");
+    if(!security) {
+        if(cJSON_GetObjectItemCaseSensitive(request,"wifi_security"))return reply(false,"invalid_wifi_security");
+        security="wpa2";
+    }
+    if(!strcmp(security,"open"))candidate.wifi_security=CP_WIFI_OPEN;
+    else if(!strcmp(security,"enterprise"))candidate.wifi_security=CP_WIFI_ENTERPRISE_PEAP;
+    else if(strcmp(security,"wpa2"))return reply(false,"invalid_wifi_security");
+    if(candidate.wifi_security==CP_WIFI_ENTERPRISE_PEAP) {
+        if(!copy_field(candidate.eap_username,sizeof candidate.eap_username,request,"eap_username")||
+           !copy_field(candidate.eap_password,sizeof candidate.eap_password,request,"eap_password")) {
+            wipe(&candidate,sizeof candidate);return reply(false,"invalid_enterprise_settings");
+        }
+        if(cJSON_GetObjectItemCaseSensitive(request,"eap_identity")) {
+            if(!copy_field(candidate.eap_identity,sizeof candidate.eap_identity,request,"eap_identity")){wipe(&candidate,sizeof candidate);return reply(false,"invalid_enterprise_settings");}
+        } else memcpy(candidate.eap_identity,candidate.eap_username,sizeof candidate.eap_identity);
+    } else if(cJSON_GetObjectItemCaseSensitive(request,"eap_username")||cJSON_GetObjectItemCaseSensitive(request,"eap_password")||cJSON_GetObjectItemCaseSensitive(request,"eap_identity"))return reply(false,"invalid_wifi_security");
+    uint32_t saved_generation=0;
+    bool credential_ok=reuse?saved_credential(state.node_id,candidate.device_token,sizeof candidate.device_token,&saved_generation):
+        copy_field(candidate.device_token,sizeof candidate.device_token,request,"device_token");
+    if(reuse&&!credential_ok){wipe(&candidate,sizeof candidate);return reply(false,"saved_credential_unavailable");}
     if (!copy_field(candidate.ssid, sizeof(candidate.ssid), request, "ssid") ||
         !copy_field(candidate.password, sizeof(candidate.password), request, "password") ||
-        !copy_field(candidate.device_token, sizeof(candidate.device_token), request, "device_token") ||
+        !credential_ok ||
         !same(str(request, "node_id"), state.node_id) || !cp_settings_validate(&candidate)) {
         wipe(&candidate, sizeof(candidate)); return reply(false, "invalid_settings");
     }
     uint8_t digest[32];
-    if (!cp_provision_settings_digest(&candidate, digest)) { wipe(&candidate, sizeof(candidate)); return reply(false, "settings_hash_failed"); }
+    if (!cp_provision_candidate_digest(&candidate,reuse,saved_generation,digest)) { wipe(&candidate, sizeof(candidate)); return reply(false, "settings_hash_failed"); }
     if (state.attempt_id[0]) {
         bool same_id = !strcmp(attempt, state.attempt_id);
         bool same_body = cp_provision_digest_equal(attempt_digest, digest);

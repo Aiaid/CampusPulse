@@ -21,7 +21,7 @@ PREFIX = b"\x1eCPSETUP/1 "
 MAX_JSON = 1024
 MAX_FRAME = len(PREFIX) + 36 + 1 + MAX_JSON
 FORBIDDEN = {"password", "proof", "pin", "device_token", "setup_secret", "ap_password",
-             "setup_proof", "master_secret"}
+             "setup_proof", "master_secret", "eap_username", "eap_identity", "eap_password"}
 
 
 class DeviceCheckError(Exception):
@@ -95,11 +95,16 @@ def main():
     parser.add_argument("--exercise-parser", action="store_true", help="Send bounded malformed frames, then verify recovery")
     args = parser.parse_args()
     port = serial.Serial(port=None, baudrate=115200, timeout=0.1, write_timeout=2)
-    port.dtr = False
-    port.rts = False
+    # Match ESP-IDF monitor's --no-reset sequence. On this native USB/JTAG
+    # interface, opening with False/False can briefly clear DTR before RTS and
+    # trigger USB_UART_CHIP_RESET. Pre-assert both, then release RTS first.
+    port.dtr = True
+    port.rts = True
     port.port = args.port
     try:
         port.open()
+        port.rts = False
+        port.dtr = False
         channel = Channel(port)
         if args.begin:
             started = channel.request({"op": "begin"})

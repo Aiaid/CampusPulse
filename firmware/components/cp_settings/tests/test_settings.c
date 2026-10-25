@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-typedef struct { bool have_slot[2],have_active,have_proof; uint8_t active; cp_settings_t slot[2]; char proof[33]; } db_t;
+typedef struct { bool have_slot[2],have_active,have_proof; uint8_t active; cp_settings_t slot[2]; size_t slot_size[2]; char proof[33]; } db_t;
 static db_t saved,pending;
 static int operation,fail_at,entropy_enabled,random_calls;
 static bool fail(void) { return fail_at && ++operation==fail_at; }
@@ -17,9 +17,9 @@ esp_err_t nvs_set_u8(nvs_handle_t h,const char *k,uint8_t v)
 { (void)h; assert(!strcmp(k,"active")); if(fail())return ESP_FAIL;pending.active=v;pending.have_active=true;return ESP_OK; }
 static unsigned slot_index(const char *k) { assert(!strcmp(k,"settings_a")||!strcmp(k,"settings_b")); return k[9]=='b'; }
 esp_err_t nvs_get_blob(nvs_handle_t h,const char *k,void *v,size_t *n)
-{ (void)h;unsigned i=slot_index(k); if(fail())return ESP_FAIL;if(!pending.have_slot[i])return ESP_ERR_NVS_NOT_FOUND; assert(*n>=sizeof(cp_settings_t));*n=sizeof(cp_settings_t);memcpy(v,&pending.slot[i],*n);return ESP_OK; }
+{ (void)h;unsigned i=slot_index(k); if(fail())return ESP_FAIL;if(!pending.have_slot[i])return ESP_ERR_NVS_NOT_FOUND; size_t size=pending.slot_size[i]?pending.slot_size[i]:sizeof(cp_settings_t);assert(*n>=size);*n=size;memcpy(v,&pending.slot[i],*n);return ESP_OK; }
 esp_err_t nvs_set_blob(nvs_handle_t h,const char *k,const void *v,size_t n)
-{ (void)h;unsigned i=slot_index(k);if(fail())return ESP_FAIL; assert(n==sizeof(cp_settings_t));memcpy(&pending.slot[i],v,n);pending.have_slot[i]=true;return ESP_OK; }
+{ (void)h;unsigned i=slot_index(k);if(fail())return ESP_FAIL; assert(n==sizeof(cp_settings_t));memcpy(&pending.slot[i],v,n);pending.slot_size[i]=n;pending.have_slot[i]=true;return ESP_OK; }
 esp_err_t nvs_get_str(nvs_handle_t h,const char *k,char *out,size_t *n)
 { (void)h;assert(!strcmp(k,"setup_proof"));if(fail())return ESP_FAIL;if(!pending.have_proof)return ESP_ERR_NVS_NOT_FOUND;assert(*n>=33);memcpy(out,pending.proof,33);*n=33;return ESP_OK; }
 esp_err_t nvs_set_str(nvs_handle_t h,const char *k,const char *v)
@@ -29,7 +29,7 @@ void bootloader_random_enable(void) { assert(!entropy_enabled);entropy_enabled=1
 void bootloader_random_disable(void) { assert(entropy_enabled);entropy_enabled=0; }
 void esp_fill_random(void *p,size_t n) { assert(entropy_enabled);++random_calls;memset(p,0xab,n); }
 static cp_settings_t good(void)
-{ cp_settings_t s={.version=1};strcpy(s.node_id,"cp_aabbccddeeff");strcpy(s.ssid,"synthetic-test-ap");strcpy(s.password,"test-only-pass");memset(s.device_token,'x',40);strcpy(s.api_origin,CP_API_ORIGIN);return s; }
+{ cp_settings_t s={.version=CP_SETTINGS_VERSION};strcpy(s.node_id,"cp_aabbccddeeff");strcpy(s.ssid,"synthetic-test-ap");strcpy(s.password,"test-only-pass");memset(s.device_token,'x',40);strcpy(s.api_origin,CP_API_ORIGIN);return s; }
 int main(void)
 {
     cp_settings_t s=good(),out;
@@ -41,10 +41,18 @@ int main(void)
     bad=s;bad.node_id[4]='A';assert(!cp_settings_validate(&bad));
     bad=s;memset(bad.password,'g',64);assert(!cp_settings_validate(&bad));
     bad=s;memset(bad.password,'a',64);assert(cp_settings_validate(&bad));
+    bad=s;bad.wifi_security=CP_WIFI_OPEN;bad.password[0]=0;assert(cp_settings_validate(&bad));
+    bad.wifi_security=CP_WIFI_PERSONAL;assert(!cp_settings_validate(&bad));
+    bad.wifi_security=CP_WIFI_ENTERPRISE_PEAP;strcpy(bad.eap_username,"test-user");strcpy(bad.eap_identity,"test-user");strcpy(bad.eap_password,"test-enterprise-password");assert(cp_settings_validate(&bad));
+    bad.eap_username[0]=0;assert(!cp_settings_validate(&bad));
     assert(cp_settings_load(&out)==ESP_ERR_NOT_FOUND);
     assert(cp_settings_save(&s)==ESP_OK);
     assert(cp_settings_load(&out)==ESP_OK&&!memcmp(&s,&out,sizeof(s)));
     db_t baseline=saved;
+    /* A real-size v1 blob remains loadable and is not rewritten on read. */
+    saved.slot[0].version=1;saved.slot_size[0]=376;
+    db_t legacy=saved;assert(cp_settings_load(&out)==ESP_OK);assert(out.version==CP_SETTINGS_VERSION&&out.wifi_security==CP_WIFI_PERSONAL&&!strcmp(out.ssid,s.ssid));
+    assert(!memcmp(&saved,&legacy,sizeof saved));saved=baseline;
     cp_settings_t candidate=s;strcpy(candidate.ssid,"replacement-test-ap");
     for(int n=1;n<=6;++n) {
         saved=baseline;operation=0;fail_at=n;

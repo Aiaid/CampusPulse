@@ -1,0 +1,139 @@
+# Device onboarding, configuration edits and network diagnostics
+
+Status: implementation and verification in progress, 2026-10-25. This follows
+the reported failed connection on the Passport running `cp-3fc2ec917f52`.
+It does not establish the original network failure's exact cause.
+
+## Observed failure and evidence boundary
+
+The user confirmed a 2.4 GHz WPA2 personal target network. Chrome held the
+physical USB port; the user released it for inspection. Opening that port with
+pyserial's prior `dtr=False, rts=False` setup produced
+`rst:0x15 (USB_UART_CHIP_RESET)`, application initialization, an initial
+`session_busy`, then `waiting` with approximately 299 seconds remaining.
+A separate passive open, without sending any application command or explicit
+reset, also captured that reset reason. The former failed attempt's RAM-only
+status was therefore unavailable; no Wi-Fi disconnect reason or IP event was
+recovered. Do not infer a wrong password, blocked NTP or rejected credential
+from this lost scene.
+
+The installed official ESP-IDF monitor uses another no-reset opening sequence:
+pre-assert DTR/RTS, open, release RTS first, then release DTR. One controlled
+comparison on this Mac/Passport captured zero boot bytes over eight seconds and
+returned the existing session with about 97 seconds remaining. This is evidence
+for that pyserial path, not proof that Chromium's `port.open()` always resets.
+The local physical smoke helper now uses the monitor sequence. See the
+[official monitor source](https://github.com/espressif/esp-idf-monitor/blob/master/esp_idf_monitor/base/serial_reader.py),
+[pyserial opening caveat](https://pyserial.readthedocs.io/en/latest/pyserial_api.html#serial.Serial.open)
+and [C3 technical reference](https://documentation.espressif.com/esp32-c3_technical_reference_manual_en.pdf).
+
+A minimal read-only cloud-registry query could not run under the host's current
+Cloudflare authorization (provider error 7403). This was a management API error,
+not an observed response from the device's HTTPS request. No registry row,
+credential or production observation was modified. Raw serial/query material
+stays ignored and private under `captures/network-debug-*`.
+
+## Registration and reconfiguration
+
+A factory node has one cloud identity. Initial registration creates its independent
+`cpd_` credential once; duplicate registration is a conflict, not an instruction
+to replace its identity. Reconfiguring Wi-Fi must retain that identity, placement
+and valid desired capture policy by default.
+
+The wizard first reads the physical factory identity, then explicitly inspects
+cloud enrollment. Only the API's specific unknown-device 404 permits the new
+registration branch. Network/auth/API failures must not be treated as absence.
+A lost registration reply requires reconciliation, never a blind second POST.
+An existing credential cannot be recovered from the server. An already-enrolled
+physical device may explicitly reuse its validated saved credential in RAM,
+without returning that secret to the browser. Otherwise the user supplies a
+saved credential or explicitly confirms rotation. Old/unsupported firmware
+must not pretend it supports local credential reuse.
+
+Local submission, successful Wi-Fi validation, saved settings, cloud contact and
+fresh configuration ACK are separate states. A fresh heartbeat cannot turn an
+older applied ACK into proof of the current reconfiguration.
+
+## Direct position and policy edits
+
+The UI adds direct editing and publishing of a new version, including v2 address
+summary/control fields, bounded raw capture, and a device-detail entry for
+Wi-Fi reconfiguration. Existing values prefill the form; history and already
+queued observations retain their original version/placement references.
+
+The current API registers placement and publishes configuration in separate
+transactions. A successful placement write can close the prior open interval
+before publication succeeds. The form reports this intermediate state and
+retains fixed IDs for read-before-retry recovery; it does not claim cross-API
+atomicity or device application. A new version is desired until a matching
+applied ACK arrives.
+
+## Network diagnostics and remaining verification
+
+### Network authentication modes
+
+The administrator wizard and device-hosted setup page explicitly select WPA2
+personal, open Wi-Fi, or WPA2 Enterprise PEAP/MSCHAPv2. An empty personal-network
+password remains invalid; it never silently downgrades to open. Enterprise
+configuration takes a username, password and optional outer identity (defaults
+to username). These values travel only over the selected local provisioning
+transport and are excluded from cloud API bodies and retained diagnostics.
+Firmware advertises the supported modes so older devices cannot appear to
+accept unsupported settings. Long enterprise payloads can exceed BLE's 496-byte
+plaintext limit; use USB or the device-hosted page in that case.
+
+At the user's explicit request, enterprise authentication clears the RADIUS CA
+and disables the EAP default certificate bundle and certificate time checking.
+This setting is confined to the EAP client. The independent HTTPS upload client
+still validates its CA chain, hostname and certificate dates. See the
+[Espressif EAP API](https://docs.espressif.com/projects/esp-idf/en/v5.3.1/esp32/api-reference/network/esp_wifi.html).
+Captive-portal browser login, EAP-TLS client certificates and TTLS are not
+implemented by this selection.
+
+Settings format v2 appends the authentication mode and EAP fields. The exact
+376-byte v1 settings layout loads as personal WPA2 in RAM without a Flash
+rewrite. Only a successfully validated explicit candidate is saved in v2 via
+the existing two-slot path. No migration erases NVS, the capture queue or cardid.
+
+### Failure progress
+
+The former firmware has one SNTP source, a 45-second overall validation window,
+30-second cloud contact retries, and a final generic `network_or_auth_failed`.
+These are confirmed diagnostic/flow limitations, not proof of the reported
+network's particular failure. Candidate network authentication and capture
+policy compatibility also need separate outcomes.
+
+The revision adds bounded stages and fixed safe error codes for association,
+DHCP, clock, DNS, TLS, cloud authentication, settings save and recovery. TLS chain,
+hostname and certificate-date validation stay enabled. Failure/history fields
+must survive transport teardown and identify a new boot instead of presenting
+new `waiting` as proof that the old attempt did not fail. Only bounded numeric
+errors, stages and attempt/boot correlation belong in retained diagnostics;
+never SSIDs, MACs, passwords, nonces or device/admin credentials. Polling must
+not write Flash. Persistence failure must not erase old settings or silently
+convert a successful network/settings operation into success/failure elsewhere.
+
+Final acceptance must distinguish native/module tests, simulated browser tests,
+C3 builds, physical USB inspection, and the user's actual network retry. A new
+browser handshake may retry bounded `begin`/`info` on the same connection;
+a configure timeout must retain its credential/attempt and inspect status,
+not automatically resend or rotate. Physical network attribution remains pending
+until the diagnostic firmware observes another real attempt.
+
+Verified locally on 2026-10-25:
+
+- The full firmware chain passes ASan/UBSan, including 26 runtime scenarios,
+  actual provisioning-module open/PEAP validation and credential-generation
+  binding, safe diagnostic history encoding and corrupt/write-failure recovery.
+  Pinned Security2 SDK interoperability and firmware-produced uploads against
+  ephemeral workerd/D1/R2 also pass.
+- Normal and headless ESP32-C3 builds pass. Separate-image validation preserves
+  the existing 3 MiB app, cardid and queue layout. A build proves neither network
+  authentication nor radio completeness.
+- Web unit tests pass (505 tests in 50 files, excluding the unrelated untracked
+  ingestion-audit test) and the production build passes. Chromium provisioning
+  covers open/enterprise credentials, optional outer identity, old-firmware
+  capability gates and local-only secret handling. WebKit also exercises the
+  embedded setup page's open/enterprise branches. Configuration editing passes desktop
+  and 390 px Chromium tests using synthetic API fixtures. These tests do not
+  establish production authentication or successful physical PEAP association.
