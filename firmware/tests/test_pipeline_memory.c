@@ -6,6 +6,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include "pipeline/host.h"
+static unsigned capture_depth;
+static void capture_enter(void) { ++capture_depth; }
+static void capture_exit(void) { assert(capture_depth); --capture_depth; }
+#undef portENTER_CRITICAL
+#undef portEXIT_CRITICAL
+#define portENTER_CRITICAL(lock) do { (void)(lock); capture_enter(); } while (0)
+#define portEXIT_CRITICAL(lock) do { (void)(lock); capture_exit(); } while (0)
 #include "../components/cp_pipeline/pipeline.c"
 
 static bool memory_owned, http_active, http_finishes_during_wait, store_owned, store_fails;
@@ -20,6 +27,14 @@ static unsigned char flash_bytes[24 * CP_JOURNAL_SLOT_BYTES];
 static unsigned char upload_copy[CP_JOURNAL_MAX_BODY];
 static size_t upload_length;
 static int store_mutex, worker_signal, worker_task;
+static bool capture_queue_enabled, stop_during_timestamp, capture_queue_full;
+static cp_report_t captured_report;
+static unsigned captured_count;
+static const char *fixture_directory;
+static cp_net_upload_result_t upload_result = CP_NET_UPLOAD_RETRY;
+static bool run_collector, inject_report_after_timeout, collector_completed;
+static unsigned capture_read_count;
+static struct ble_gap_event report_event(void);
 test_ble_hs_cfg_t ble_hs_cfg;
 
 static void *checked_malloc(size_t n) {
@@ -67,15 +82,21 @@ bool cp_network_sha256(const void *p, size_t n, char out[65]) {
 cp_net_upload_result_t cp_network_upload_frozen(const void *p, size_t n,
                                                 const cp_network_batch_t *m,
                                                 cp_network_ack_t *ack) {
-    (void)ack;
+    *ack = (cp_network_ack_t){.http_status = upload_result == CP_NET_UPLOAD_REJECTED ? 422 : 503};
     assert(!memory_owned && !live_allocations && !store_owned && m->accepted_count);
     assert(n <= sizeof upload_copy);
     memcpy(upload_copy, p, n);
     upload_length = n;
     ++upload_calls;
-    return CP_NET_UPLOAD_RETRY;
+    return upload_result;
 }
-int64_t esp_timer_get_time(void) { return (int64_t)(now_ms * 1000); }
+int64_t esp_timer_get_time(void) {
+    if (stop_during_timestamp) {
+        stop_during_timestamp = false;
+        request_stop_at(now_ms - 1);
+    }
+    return (int64_t)(now_ms * 1000);
+}
 size_t esp_get_free_heap_size(void) { return internal_heap; }
 size_t heap_caps_get_free_size(uint32_t caps) { (void)caps; return internal_heap; }
 size_t heap_caps_get_largest_free_block(uint32_t caps) { (void)caps; return internal_heap; }
@@ -97,6 +118,10 @@ int xSemaphoreTake(SemaphoreHandle_t h, TickType_t wait) {
     return pdTRUE;
 }
 int xSemaphoreGive(SemaphoreHandle_t h) {
+    if (run_collector && h == &worker_signal) {
+        collector_completed = true;
+        return pdTRUE;
+    }
     assert(h == &store_mutex && store_owned);
     store_owned = false;
     return pdTRUE;
@@ -122,13 +147,37 @@ QueueHandle_t xQueueCreate(unsigned capacity, size_t width) {
     (void)capacity; (void)width; assert(false); return NULL;
 }
 int xQueueReceive(QueueHandle_t q, void *item, TickType_t wait) {
-    (void)q; (void)item; (void)wait; assert(false); return pdFALSE;
+    (void)q;
+    assert(run_collector);
+    if (inject_report_after_timeout) {
+        assert(wait);
+        inject_report_after_timeout = false;
+        struct ble_gap_event event = report_event();
+        assert(discovery(&event, NULL) == 0);
+        request_stop_at(now_ms);
+        return pdFALSE; /* Snapshot was empty before callback admission/stop. */
+    }
+    if (capture_read_count < captured_count) {
+        *(cp_report_t *)item = captured_report;
+        ++capture_read_count;
+        return pdTRUE;
+    }
+    return pdFALSE;
 }
 int xQueueSend(QueueHandle_t q, const void *item, TickType_t wait) {
-    (void)q; (void)item; (void)wait; assert(false); return pdFALSE;
+    (void)q;
+    assert(capture_queue_enabled && capture_depth == 1 && !wait);
+    if (capture_queue_full)
+        return pdFALSE;
+    captured_report = *(const cp_report_t *)item;
+    ++captured_count;
+    return pdTRUE;
 }
 void vQueueDelete(QueueHandle_t h) { (void)h; assert(false); }
-void vTaskSuspend(TaskHandle_t h) { (void)h; assert(false); }
+void vTaskSuspend(TaskHandle_t h) {
+    assert(!h && run_collector && collector_completed);
+    longjmp(task_yield, 1);
+}
 SemaphoreHandle_t xSemaphoreCreateMutex(void) { assert(false); return NULL; }
 SemaphoreHandle_t xSemaphoreCreateBinary(void) { assert(false); return NULL; }
 void vSemaphoreDelete(SemaphoreHandle_t h) { (void)h; assert(false); }
@@ -216,6 +265,15 @@ static void reset(void) {
     s_accept = true;
     s_stop = false;
     s_idle_pause_tick = s_idle_status_at = s_stop_at = s_raw_paused_ms = 0;
+    s_last_ingress_ms = s_lease_deadline = 0;
+    s_origin = 1000;
+    s_first_window = 1;
+    s_report_seq = 0;
+    capture_queue_enabled = stop_during_timestamp = capture_queue_full = false;
+    captured_count = capture_depth = 0;
+    upload_result = CP_NET_UPLOAD_RETRY;
+    run_collector = inject_report_after_timeout = collector_completed = false;
+    capture_read_count = 0;
     s_resource_exhaustions_seen = s_raw_queue_drops = s_raw_pressure_skips = 0;
     s_unpersisted_window_reports = s_status_dropped = s_address_overflow_reports = 0;
     s_status_seq = s_summary_seq = s_loss_overruns = 0;
@@ -264,7 +322,123 @@ static void read_slot(unsigned slot, char out[CP_JOURNAL_MAX_BODY + 1]) {
     out[n] = 0;
 }
 static void assert_released(void) {
-    assert(!memory_owned && !store_owned && !live_allocations);
+    assert(!memory_owned && !store_owned && !live_allocations && !capture_depth);
+}
+static void write_fixtures(const char *prefix) {
+    if (!fixture_directory)
+        return;
+    for (unsigned slot = 0; slot < s_journal.count; slot++) {
+        if (s_journal.slots[slot].state != CP_SLOT_PENDING)
+            continue;
+        char body[CP_JOURNAL_MAX_BODY + 1], path[512];
+        read_slot(slot, body);
+        int n = snprintf(path, sizeof path, "%s/%s-%u.json", fixture_directory, prefix, slot);
+        assert(n > 0 && (size_t)n < sizeof path);
+        FILE *file = fopen(path, "wb");
+        assert(file && fwrite(body, 1, strlen(body), file) == strlen(body));
+        assert(fclose(file) == 0);
+    }
+}
+static struct ble_gap_event report_event(void) {
+    static const uint8_t payload[] = {2, 1, 6};
+    return (struct ble_gap_event){.type = BLE_GAP_EVENT_DISC,
+        .disc = {.addr = {.val = {6, 5, 4, 3, 2, 1}, .type = 0}, .rssi = -50,
+                 .length_data = sizeof payload, .data = payload}};
+}
+static void test_stop_boundary_and_inflight_ingress(void) {
+    reset();
+    capture_queue_enabled = true;
+    now_ms = 6000;
+    struct ble_gap_event event = report_event();
+    assert(discovery(&event, NULL) == 0 && captured_count == 1);
+    assert(cp_collect_observe(&s_window, &captured_report));
+    request_stop_at(now_ms);
+    assert(s_stop_at == 6001 && !s_accept && s_last_ingress_ms == 6000);
+    close_window((uint32_t)(s_stop_at - s_window.start_ms));
+    assert(s_health.summaries_committed == 1 && !s_health.summary_drops);
+    write_fixtures("exclusive-stop");
+    assert_released();
+
+    reset();
+    capture_queue_enabled = stop_during_timestamp = true;
+    now_ms = 6000;
+    assert(discovery(&event, NULL) == 0);
+    assert(!captured_count && !s_report_seq && !s_health.reports_seen && !s_last_ingress_ms);
+    assert(s_stop_at == 5999 && !s_accept);
+    assert_released();
+
+    reset();
+    capture_queue_enabled = capture_queue_full = true;
+    now_ms = 6000;
+    assert(discovery(&event, NULL) == 0);
+    request_stop_at(now_ms);
+    assert(!captured_count && s_stop_at == 6001 && s_losses[1].drops == 1);
+    close_window((uint32_t)(s_stop_at - s_window.start_ms));
+    assert(s_health.aggregation_drops == 1 && !s_health.windows_dropped);
+    assert_released();
+
+    reset();
+    capture_queue_enabled = true;
+    now_ms = s_lease_deadline = 6000;
+    assert(discovery(&event, NULL) == 0);
+    assert(!captured_count && !s_report_seq && s_stop_at == 6000);
+    assert_released();
+}
+static void test_sub_bin_partial_windows(void) {
+    const unsigned durations[] = {1488, 1880, 4999, 5000, 5001};
+    for (unsigned i = 0; i < sizeof durations / sizeof durations[0]; i++) {
+        reset();
+        s_policy.raw_enabled = false;
+        assert(cp_collect_begin(&s_window, 1000, 30000, 5000, 1, 4, false));
+        cp_report_t report = {.mono_ms = 1000 + durations[i] - 1, .report_seq = 1,
+            .address = {2, 0, 0, 0, 0, 1}, .rssi = -50};
+        static const uint8_t evidence[][11] = {
+            {6,9,'Y','A','D','E','A'}, {4,9,'B','Y','D'}, {5,9,'X'},
+            {6,9,'Y','A','D','E','A',3,3,0x12,0x18}, {3,0xff,0x20,0x00}
+        };
+        static const uint8_t lengths[] = {7,5,3,11,4};
+        report.payload_length = lengths[i];
+        memcpy(report.payload, evidence[i], lengths[i]);
+        assert(cp_collect_observe(&s_window, &report));
+        close_window(durations[i]);
+        assert(s_health.windows_committed == 1 && s_health.summaries_committed == 1);
+        assert(!s_health.windows_dropped && !s_health.summary_drops);
+        char prefix[32];
+        snprintf(prefix, sizeof prefix, "partial-%u", durations[i]);
+        write_fixtures(prefix);
+        assert_released();
+    }
+}
+static void test_full_vehicle_summary_window(void) {
+    reset();
+    s_policy.raw_enabled = false;
+    s_policy.max_addresses = 64;
+    s_policy.max_body_bytes = 8192;
+    assert(cp_collect_begin(&s_window, 1000, 30000, 5000, 1, 64, false));
+    for (unsigned i = 0; i < 64; ++i) {
+        cp_report_t report = {.mono_ms = 1001 + i, .report_seq = i + 1,
+            .address = {2,0,0,0,0,(uint8_t)i}, .rssi = -50,
+            .payload_length = 7, .payload = {6,9,'Y','A','D','E','A'}};
+        assert(cp_collect_observe(&s_window, &report));
+    }
+    close_window(30000);
+    assert(s_health.windows_committed == 1 && s_health.summaries_committed == 64);
+    assert(s_health.pending == 13 && !s_health.windows_dropped && !s_health.summary_drops);
+    assert(s_window.raw_count == 0 && s_window.address_count == 64);
+    write_fixtures("vehicle-full64");
+    assert_released();
+}
+static void test_final_drain_after_timeout(void) {
+    reset();
+    capture_queue_enabled = run_collector = inject_report_after_timeout = true;
+    now_ms = 6000;
+    if (!setjmp(task_yield))
+        collector_worker(NULL);
+    assert(collector_completed && captured_count == 1 && capture_read_count == 1);
+    assert(s_stop_at == 6001 && s_health.windows_committed == 1 && s_health.summaries_committed == 1);
+    assert(s_window.reports_seen == 1 && !s_health.windows_dropped && !s_health.summary_drops);
+    write_fixtures("exclusive-stop-drain");
+    assert_released();
 }
 static void test_window_and_status_share_claim(void) {
     reset();
@@ -392,6 +566,35 @@ static void test_metadata_failure_and_upload_preserve_frozen_bytes(void) {
     assert(!memcmp(upload_copy, frozen, upload_length));
     assert_released();
 }
+static void test_rejected_slot_preserved_without_blocking_later_batches(void) {
+    reset();
+    observe(1);
+    flush_raw_if_idle();
+    cp_report_t report = {.mono_ms = 1002, .report_seq = 2, .address = {1, 2, 3, 4, 5, 6},
+        .raw = CP_RAW_SELECTED, .rssi = -50};
+    assert(cp_collect_observe(&s_window, &report));
+    flush_raw_if_idle();
+    char before[CP_JOURNAL_MAX_BODY + 1], after[CP_JOURNAL_MAX_BODY + 1];
+    read_slot(0, before);
+    upload_result = CP_NET_UPLOAD_REJECTED;
+    run_uploader = true;
+    if (!setjmp(task_yield))
+        uploader_task(NULL);
+    assert(upload_calls == 1 && s_upload_scheduler.blocked[0]);
+    assert(s_journal.slots[0].state == CP_SLOT_PENDING && s_health.pending == 2);
+    read_slot(0, after);
+    assert(!strcmp(before, after));
+    if (!setjmp(task_yield))
+        uploader_task(NULL);
+    assert(upload_calls == 2 && s_upload_scheduler.blocked[1]);
+    assert(s_health.rejected_batches == 2 && s_health.pending == 2);
+    if (!setjmp(task_yield))
+        uploader_task(NULL);
+    assert(upload_calls == 2 && s_health.pending == 2);
+    read_slot(0, after);
+    assert(!strcmp(before, after));
+    assert_released();
+}
 static void test_apply_refusal_does_not_reenter_claim(void) {
     reset();
     internal_heap = 20000;
@@ -418,7 +621,9 @@ static void test_stop_budget_and_failed_ownership(void) {
     assert(s_stop_failed && s_initialized && s_worker == &worker_task);
     assert(cp_pipeline_stop() == ESP_ERR_INVALID_STATE && !worker_deletes);
 }
-int main(void) {
+int main(int argc, char **argv) {
+    assert(argc == 1 || argc == 2);
+    fixture_directory = argc == 2 ? argv[1] : NULL;
     cJSON_Hooks hooks = {.malloc_fn = checked_malloc, .free_fn = checked_free};
     cJSON_InitHooks(&hooks);
     test_window_and_status_share_claim();
@@ -427,8 +632,13 @@ int main(void) {
     test_invalid_ingress_loss_preserves_raw_and_releases();
     test_allocation_and_store_failures_release();
     test_metadata_failure_and_upload_preserve_frozen_bytes();
+    test_rejected_slot_preserved_without_blocking_later_batches();
     test_apply_refusal_does_not_reenter_claim();
     test_stop_budget_and_failed_ownership();
+    test_stop_boundary_and_inflight_ingress();
+    test_sub_bin_partial_windows();
+    test_full_vehicle_summary_window();
+    test_final_drain_after_timeout();
     assert_released();
     cJSON_InitHooks(NULL);
     puts("Pipeline memory serialization, allocation failures, durable retry and stop: PASS");

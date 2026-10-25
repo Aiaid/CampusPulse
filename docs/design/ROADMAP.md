@@ -152,6 +152,18 @@ collection and durable upload. Final local software verification passed on
 
 ## Completed archive
 
+- [x] Connect experimental versioned vehicle candidates and elevator historical
+      references to compact raw-off firmware evidence, bounded private backend
+      analysis and independent public cards. Keep car/ecosystem categories,
+      confidence, source validity, missing/conflicting inputs and replay apart.
+      Correct short-window server validation and collector stop/drain boundaries;
+      verify original-boot queued receipts after normal device recovery. Local
+      acceptance: 832 tests / 65 files, production build, normal/headless C3
+      builds, sanitizer/OOM/C-to-server checks and real ephemeral D1 desktop/
+      390px browser workflows. Field-calibrated vehicle totals and BLE-assisted
+      waiting predictions remain pending. See
+      [automatic observation references](../specs/automatic-observations.md).
+
 - [x] Support concurrent activity, parking and elevator observations at one
       physical place, with independent result validity and backward-compatible
       migration. Existing devices directly change their place and selected work

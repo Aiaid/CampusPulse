@@ -38,6 +38,24 @@ bool cp_collect_observe(cp_collect_t *c, const cp_report_t *r) {
          r->raw != CP_RAW_PRESSURE) ||
         c->reports_seen == UINT32_MAX)
         return false;
+    cp_address_summary_t *a = NULL;
+    for (unsigned i = 0; i < c->address_count; i++)
+        if (c->addresses[i].address_type == r->address_type &&
+            !memcmp(c->addresses[i].address, r->address, 6)) {
+            a = &c->addresses[i];
+            break;
+        }
+    /* Parse only in the collector worker, independently of optional raw
+     * retention. Prepare before changing any counters so an exhausted or
+     * inconsistent evidence state is an explicit rejected report, not a
+     * successful aggregate with fabricated zero evidence. */
+    cp_vehicle_evidence_t evidence = a ? a->vehicle_evidence : (cp_vehicle_evidence_t){0};
+    if (a && (a->reports == UINT32_MAX ||
+        (uint64_t)evidence.parsed_reports + evidence.malformed_reports != a->reports))
+        return false;
+    if ((a || c->address_count < c->address_capacity) &&
+        !cp_vehicle_observe(&evidence, r->payload, r->payload_length))
+        return false;
     c->reports_seen++;
     c->reports_aggregated++;
     if (r->report_type == 4)
@@ -64,13 +82,6 @@ bool cp_collect_observe(cp_collect_t *c, const cp_report_t *r) {
             return false;
         }
     }
-    cp_address_summary_t *a = NULL;
-    for (unsigned i = 0; i < c->address_count; i++)
-        if (c->addresses[i].address_type == r->address_type &&
-            !memcmp(c->addresses[i].address, r->address, 6)) {
-            a = &c->addresses[i];
-            break;
-        }
     if (!a) {
         if (c->address_count == c->address_capacity) {
             c->address_overflow = true;
@@ -83,6 +94,7 @@ bool cp_collect_observe(cp_collect_t *c, const cp_report_t *r) {
         memcpy(a->address, r->address, 6);
         a->first_ms = (uint32_t)(r->mono_ms - c->start_ms);
     }
+    a->vehicle_evidence = evidence;
     a->reports++;
     if (r->report_type == 4)
         a->scan_responses++;

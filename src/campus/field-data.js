@@ -4,6 +4,40 @@ const ranges = [1, 5, 15, 60, 1440];
 const timestamp = value => typeof value === 'string' && Number.isFinite(Date.parse(value));
 const integer = value => Number.isInteger(value) && value >= 0;
 const invalid = () => { throw new Error('现场服务返回了无效记录'); };
+const object = value => value && typeof value === 'object' && !Array.isArray(value);
+const strings = value => Array.isArray(value) && value.every(item => typeof item === 'string');
+const waitSeconds = value => Number.isFinite(value) && value >= 0 && value <= 7200;
+
+/** Optional inference stays separate from sensor and manual observations. */
+export function normalizeAutomaticObservations(value) {
+  if (value === undefined) return undefined; // Older API deployments remain readable.
+  if (!object(value) || !object(value.vehicles) || !object(value.elevator)) invalid();
+  for (const record of [value.vehicles, value.elevator]) {
+    if (typeof record.model_version !== 'string' || !record.model_version.trim() || !integer(record.sample_count)
+      || (record.reason !== null && typeof record.reason !== 'string')
+      || (record.observed_at !== null && !timestamp(record.observed_at))
+      || (record.valid_until !== null && !timestamp(record.valid_until))) invalid();
+    if (record.status !== 'unavailable' && (!timestamp(record.observed_at) || !timestamp(record.valid_until)
+      || Date.parse(record.valid_until) <= Date.parse(record.observed_at) || !record.sample_count)) invalid();
+  }
+  const { vehicles, elevator } = value;
+  if (vehicles.source !== 'ble_rule_inference' || !['candidate_estimate', 'unavailable'].includes(vehicles.status)
+    || !['compact', 'raw', 'none'].includes(vehicles.evidence_kind) || !strings(vehicles.quality_flags)) invalid();
+  for (const key of ['candidate_count', 'car_related_count', 'ecosystem_count']) {
+    if (vehicles[key] !== null && !integer(vehicles[key])) invalid();
+  }
+  if (vehicles.status === 'candidate_estimate' && (vehicles.candidate_count === null || vehicles.evidence_kind === 'none')) invalid();
+  if (vehicles.status === 'unavailable' && vehicles.candidate_count !== null) invalid();
+  if (elevator.source !== 'manual_historical_baseline' || !['historical_estimate', 'unavailable'].includes(elevator.status)
+    || elevator.calibrated !== false || !integer(elevator.day_count)
+    || (elevator.wait_seconds !== null && !waitSeconds(elevator.wait_seconds))) invalid();
+  if (elevator.range_seconds !== null && (!object(elevator.range_seconds) || !waitSeconds(elevator.range_seconds.lower)
+    || !waitSeconds(elevator.range_seconds.upper) || elevator.range_seconds.lower > elevator.range_seconds.upper)) invalid();
+  if (elevator.status === 'historical_estimate' && (elevator.wait_seconds === null || elevator.range_seconds === null || !elevator.day_count
+    || elevator.wait_seconds < elevator.range_seconds.lower || elevator.wait_seconds > elevator.range_seconds.upper)) invalid();
+  if (elevator.status === 'unavailable' && (elevator.wait_seconds !== null || elevator.range_seconds !== null)) invalid();
+  return value;
+}
 
 function validateRecord(record, source, placeId) {
   if (!record || record.source !== source || !timestamp(record.observed_at) || !timestamp(record.valid_until)
@@ -67,7 +101,8 @@ export function normalizeFieldResponse(body, { placeId, mode }) {
       }
     }
   }
-  return { ...body, latest_observations: latestManualObservations(body) };
+  return { ...body, latest_observations: latestManualObservations(body),
+    ...(body.automatic_observations !== undefined ? { automatic_observations: normalizeAutomaticObservations(body.automatic_observations) } : {}) };
 }
 
 export function fieldRecordKey(record) {

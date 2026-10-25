@@ -317,8 +317,38 @@ export function createOpenApiDocument(): Record<string, unknown> {
             latest_observations: { type: 'object', additionalProperties: false, required: ['parking', 'elevator'], properties: {
               parking: { oneOf: [ref('Observation'), { type: 'null' }] }, elevator: { oneOf: [ref('Observation'), { type: 'null' }] },
             }, description: 'Latest active record independently per manual purpose, including retained history after a purpose is disabled. Each record keeps its own valid_until; sensor windows remain shared observations and do not predict people or vehicles.' },
+            automatic_observations: ref('AutomaticObservations'),
             freshness: { type: 'string', enum: ['no_data', 'fresh', 'stale'] }, as_of: timestamp,
           },
+        },
+        AutomaticObservations: {
+          type: 'object', additionalProperties: false, required: ['vehicles', 'elevator'],
+          properties: { vehicles: ref('AutomaticVehicleObservation'), elevator: ref('AutomaticElevatorObservation') },
+          description: 'Optional additive live analysis. Source timestamps and expiry are independent of manual/sensor freshness. No addresses, names or private feature masks are public. Current analysis is not archived into replay.',
+        },
+        AutomaticVehicleObservation: {
+          type: 'object', additionalProperties: false,
+          required: ['status','source','model_version','observed_at','valid_until','candidate_count','car_related_count','ecosystem_count','sample_count','reason','quality_flags','evidence_kind'],
+          properties: {
+            status: { type: 'string', enum: ['candidate_estimate','unavailable'] }, source: { type: 'string', const: 'ble_rule_inference' },
+            model_version: { type: 'string' }, observed_at: { oneOf: [timestamp, { type: 'null' }] }, valid_until: { oneOf: [timestamp, { type: 'null' }] },
+            candidate_count: nullableCount, car_related_count: nullableCount, ecosystem_count: nullableCount, sample_count: count,
+            reason: { type: ['string','null'] }, quality_flags: { type: 'array', maxItems: 32, items: { type: 'string' } },
+            evidence_kind: { type: 'string', enum: ['compact','raw','none'] },
+          },
+          description: 'Rule-positive BLE identifiers in the newest eligible single-node parking-purpose window. E-bike, car and ecosystem clues remain separate; counts are neither physical vehicles nor parking occupancy. Missing/conflicting input is unavailable with null counts, not zero. Incomplete reception can hide positive clues or exclusions. The current implementation uses compact evidence and does not read private raw archives.',
+        },
+        AutomaticElevatorObservation: {
+          type: 'object', additionalProperties: false,
+          required: ['status','source','model_version','wait_seconds','range_seconds','sample_count','day_count','observed_at','valid_until','reason','calibrated'],
+          properties: {
+            status: { type: 'string', enum: ['historical_estimate','unavailable'] }, source: { type: 'string', const: 'manual_historical_baseline' },
+            model_version: { type: 'string' }, wait_seconds: { type: ['number','null'], minimum: 0, maximum: 7200 },
+            range_seconds: { oneOf: [{ type: 'object', additionalProperties: false, required: ['lower','upper'], properties: { lower: { type: 'number', minimum: 0, maximum: 7200 }, upper: { type: 'number', minimum: 0, maximum: 7200 } } }, { type: 'null' }] },
+            sample_count: count, day_count: count, observed_at: { oneOf: [timestamp, { type: 'null' }] }, valid_until: { oneOf: [timestamp, { type: 'null' }] },
+            reason: { type: ['string','null'] }, calibrated: { type: 'boolean', const: false },
+          },
+          description: 'Uncalibrated median and empirical p20/p80 range of comparable completed manual waits from the last 14 days. Engineering gates require at least five records on two local dates, matched by local hour and weekday/weekend. This is a historical reference, not a measured current wait, boarding detection or guaranteed prediction interval. Insufficient evidence leaves seconds and range null.',
         },
         PlaceHistory: {
           type: 'object', additionalProperties: false, required: ['place_id', 'observations', 'sensor_windows', 'from', 'to', 'truncated', 'sensor_truncated'],

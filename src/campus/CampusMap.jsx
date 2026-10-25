@@ -267,7 +267,7 @@ export const CampusMap = forwardRef(function CampusMap({
         })}
       </div>
       {tileAvailability.unavailable > 0 && <div className="cp-map__tile-notice" role="status">部分学校 GIS 图块暂不可用，地点与图层操作仍可使用。<button type="button" onClick={() => { setFailedTiles(new Set()); setLoadedTiles(new Set()); setTileAttempt(value => value + 1); }}>重试图块</button></div>}
-      <span className="cp-map__source" title={`${sceneAttribution.notice}${tileAvailability.fallback ? ' 部分精细图块暂不可用，当前区域保留标准底图。' : ''}`}>底图：华师校园 GIS 在线图块{tileAvailability.fallback > 0 ? '（标准清晰度回退）' : ''}　/　{demo ? '活动合成示意' : '无实时活动数据'}</span>
+      <span className="cp-map__source" title={`${sceneAttribution.notice}${tileAvailability.fallback ? ' 部分精细图块暂不可用，当前区域保留标准底图。' : ''}`}>底图：华师校园 GIS 在线图块{tileAvailability.fallback > 0 ? '（标准清晰度回退）' : ''}　/　{demo ? '活动合成示意' : '现场地点定位 · 观察见详情'}</span>
     </div>
   );
 });

@@ -5,6 +5,7 @@ import { handleDeviceV2 } from './device-v2';
 import { readPublicWindows } from './sensors';
 import { expireIngestion } from './retention';
 import { handleAdmin, readPublicSettings, readRuntimeSettings } from './admin';
+import { readAutomaticObservations } from './place-inference';
 
 const MAX_BODY = 8192;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -137,7 +138,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
         const windows = await readPublicWindows(env, place.id, now - 86_400_000, now);
         const summary = summarize(place, latest, now, latestByKind);
         const sensor = windows[0] ?? null;
-        return json({ ...summary, sensor, freshness: sensor?.freshness === 'fresh' || summary.freshness === 'fresh' ? 'fresh' : sensor || latest ? 'stale' : 'no_data' });
+        const automatic_observations = await readAutomaticObservations(env, place, windows, now);
+        return json({ ...summary, sensor, automatic_observations, freshness: sensor?.freshness === 'fresh' || summary.freshness === 'fresh' ? 'fresh' : sensor || latest ? 'stale' : 'no_data' });
       }
       const minutesText = url.searchParams.get('minutes') ?? '15';
       if (!['1', '5', '15', '60', '1440'].includes(minutesText)) throw new ApiError(422, 'invalid_range', 'minutes must be 1, 5, 15, 60, or 1440.');

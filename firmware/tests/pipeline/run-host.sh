@@ -22,9 +22,13 @@ clang "${CP_FLAGS[@]}" -I"$CP_TEST_DIR/include" -I"$CP_FW/tests/pipeline" \
     -I"$CP_FW/components/cp_core/include" -I"$CP_FW/components/cp_settings/include" \
     -I"$CP_FW/components/cp_network/include" -I"$CP_FW/components/cp_pipeline/include" \
     -I"$CP_FW/components/cp_collect/include" -I"$CP_FW/components/cp_journal/include" \
+    -I"$CP_FW/components/cp_vehicle/include" \
     "$CP_FW/tests/test_pipeline_memory.c" "$CP_FW/components/cp_pipeline/codec.c" \
     "$CP_FW/components/cp_pipeline/codec_status.c" "$CP_FW/components/cp_pipeline/scheduler.c" \
     "$CP_FW/components/cp_pipeline/memory_guard.c" "$CP_FW/components/cp_collect/cp_collect.c" \
-    "$CP_FW/components/cp_journal/cp_journal.c" "$CP_TEST_DIR/cJSON.o" \
+    "$CP_FW/components/cp_journal/cp_journal.c" "$CP_FW/components/cp_vehicle/cp_vehicle.c" \
+    "$CP_TEST_DIR/cJSON.o" \
     -o "$CP_TEST_DIR/test-pipeline-memory"
-"$CP_TEST_DIR/test-pipeline-memory"
+mkdir "$CP_TEST_DIR/fixtures"
+"$CP_TEST_DIR/test-pipeline-memory" "$CP_TEST_DIR/fixtures"
+node "$CP_FW/tests/pipeline/validate-fixtures.mjs" "$CP_TEST_DIR"

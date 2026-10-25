@@ -246,12 +246,43 @@ bool cp_codec_window(cp_codec_t *c, cp_collect_t *w, uint32_t duration) {
         c->unpersisted_window_reports += w->reports_seen;
         return false;
     }
-    /* Reserve envelope space and a conservative full 16-bin record budget.
-     * Pack larger policies more tightly to avoid a 12 KiB Flash slot for each
-     * four tiny summaries. The final serialized length is still checked. */
-    unsigned target = (c->max_body_bytes - 1024) / 768;
+    /* A partial stop must contain every admitted report. Never silently clamp
+     * offsets, discard trailing bins or expand scan coverage to repair a bad
+     * boundary. Preserve selected raw and account for the unrepresentable
+     * aggregate instead of freezing a batch the server can never accept. */
+    for (unsigned i = 0; i < w->address_count; i++) {
+        const cp_address_summary_t *a = &w->addresses[i];
+        uint64_t reports = 0;
+        bool valid = a->first_ms <= a->last_ms && a->last_ms < duration;
+        const cp_vehicle_evidence_t *e = &a->vehicle_evidence;
+        if ((uint64_t)e->parsed_reports + e->malformed_reports != a->reports ||
+            (e->name_brand_mask & ~CP_VEHICLE_NAME_MASK_ALL) ||
+            (e->exclusion_mask & ~CP_VEHICLE_EXCLUSION_MASK_ALL) ||
+            (e->ecosystem_mask & ~CP_VEHICLE_ECOSYSTEM_MASK_ALL) ||
+            (!e->parsed_reports && (e->name_brand_mask || e->exclusion_mask || e->ecosystem_mask)))
+            valid = false;
+        for (unsigned k = 0; k < CP_COLLECT_BINS; k++) {
+            reports += a->bins[k];
+            if (a->bins[k] && (k < a->first_ms / w->bin_ms || k > a->last_ms / w->bin_ms))
+                valid = false;
+        }
+        if (!valid || reports != a->reports || !a->bins[a->first_ms / w->bin_ms] ||
+            !a->bins[a->last_ms / w->bin_ms]) {
+            dropped(c, "ble_windows", 1);
+            dropped(c, "address_summaries", w->address_count);
+            c->unpersisted_window_reports += w->reports_seen;
+            return false;
+        }
+    }
+    /* Reserve envelope space and budget a full 16-bin record plus compact
+     * evidence. Cap at six addresses even under a larger body policy: cJSON
+     * retains the tree and print buffer simultaneously on the no-PSRAM C3.
+     * The final serialized body limit is checked independently below. */
+    unsigned target = (c->max_body_bytes - 1024) / 1024;
     if (!target)
         target = 1;
+    if (target > 6)
+        target = 6;
     if (target > c->max_items)
         target = c->max_items;
     for (unsigned first = 0; first < w->address_count; first += target) {
@@ -289,6 +320,14 @@ bool cp_codec_window(cp_codec_t *c, cp_collect_t *w, uint32_t duration) {
             cJSON *bins = cp_codec_array(c, o, "bins");
             for (unsigned k = 0; k < (duration + w->bin_ms - 1) / w->bin_ms; k++)
                 cp_codec_number(c, bins, NULL, a->bins[k]);
+            const cp_vehicle_evidence_t *e = &a->vehicle_evidence;
+            cJSON *vehicle = cp_codec_object(c, o, "vehicle_evidence");
+            cp_codec_string(c, vehicle, "schema_version", CP_VEHICLE_SCHEMA_VERSION);
+            cp_codec_number(c, vehicle, "parsed_reports", e->parsed_reports);
+            cp_codec_number(c, vehicle, "malformed_reports", e->malformed_reports);
+            cp_codec_number(c, vehicle, "name_brand_mask", e->name_brand_mask);
+            cp_codec_number(c, vehicle, "exclusion_mask", e->exclusion_mask);
+            cp_codec_number(c, vehicle, "ecosystem_mask", e->ecosystem_mask);
         }
         if (cp_codec_emit_items(c, "address_summaries", items, false))
             c->summaries_committed += count;

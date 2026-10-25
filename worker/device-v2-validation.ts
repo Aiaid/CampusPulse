@@ -1,6 +1,7 @@
 /** Explicit v2 policy and wire validation. The v1 validators remain unchanged. */
 import { IngestError, validateCaptureConfig, time, windowItem, reportItem, statusItem,
   type CaptureConfig, type BleWindow, type BleReport, type NodeStatus, type IngestTime, type AddressType } from './ingest-validation';
+import { COMPACT_VEHICLE_SCHEMA_VERSION, type CompactVehicleEvidence } from './vehicle-rules';
 
 export const ID = /^[a-z0-9_-]{1,64}$/;
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -70,6 +71,8 @@ export interface AddressSummary {
   seq: number; time: IngestTime; window_seq: number; duration_ms: number; bin_ms: number;
   address: string; address_type: AddressType; reports: number; adv_reports: number; scan_response_reports: number;
   first_offset_ms: number; last_offset_ms: number; rssi: BleWindow['rssi']; bins: number[];
+  /** Absent on older firmware: unknown feature evidence, never a zero result. */
+  vehicle_evidence?: CompactVehicleEvidence;
 }
 export interface NodeStatusV2 extends NodeStatus {
   queue_pending: Record<V2Stream, number>; queue_capacity: Record<V2Stream, number>;
@@ -82,7 +85,7 @@ interface Envelope<S extends V2Stream, T> {
 export type BatchV2 = Envelope<'ble_windows', BleWindow> | Envelope<'address_summaries', AddressSummary> |
   Envelope<'node_status', NodeStatusV2> | Envelope<'ble_reports', BleReport>;
 function summaryItem(value: unknown, path: string): AddressSummary {
-  const o = object(value, path, ['seq','time','window_seq','duration_ms','bin_ms','address','address_type','reports','adv_reports','scan_response_reports','first_offset_ms','last_offset_ms','rssi','bins']);
+  const o = object(value, path, ['seq','time','window_seq','duration_ms','bin_ms','address','address_type','reports','adv_reports','scan_response_reports','first_offset_ms','last_offset_ms','rssi','bins'], ['vehicle_evidence']);
   const seq = integer(o.seq, `${path}.seq`, 1, 0xffffffff), timestamp = time(o.time, `${path}.time`);
   const window_seq = integer(o.window_seq, `${path}.window_seq`, 1, 0xffffffff);
   const duration_ms = integer(o.duration_ms, `${path}.duration_ms`, 1000, 300000);
@@ -106,10 +109,26 @@ function summaryItem(value: unknown, path: string): AddressSummary {
     reports_aggregated: reports, aggregation_drops: 0, adv_reports, scan_response_reports, visible_identifiers: 1,
     unique_table_capacity: 1, unique_table_overflow: false, rssi: o.rssi,
     raw_capture: { mode: 'off', selected_reports: 0, intentional_skips: 0, pressure_skips: 0, drops: 0 }, quality_flags: [] }, path);
+  let vehicle_evidence: CompactVehicleEvidence | undefined;
+  if (Object.hasOwn(o, 'vehicle_evidence')) {
+    const featurePath = `${path}.vehicle_evidence`;
+    const feature = object(o.vehicle_evidence, featurePath,
+      ['schema_version','parsed_reports','malformed_reports','name_brand_mask','exclusion_mask','ecosystem_mask']);
+    vehicle_evidence = {
+      schema_version: choice(feature.schema_version, `${featurePath}.schema_version`, [COMPACT_VEHICLE_SCHEMA_VERSION]),
+      parsed_reports: integer(feature.parsed_reports, `${featurePath}.parsed_reports`, 0, 0xffffffff),
+      malformed_reports: integer(feature.malformed_reports, `${featurePath}.malformed_reports`, 0, 0xffffffff),
+      name_brand_mask: integer(feature.name_brand_mask, `${featurePath}.name_brand_mask`, 0, (1 << 20) - 1),
+      exclusion_mask: integer(feature.exclusion_mask, `${featurePath}.exclusion_mask`, 0, 2047),
+      ecosystem_mask: integer(feature.ecosystem_mask, `${featurePath}.ecosystem_mask`, 0, 3),
+    };
+    if (vehicle_evidence.parsed_reports + vehicle_evidence.malformed_reports !== reports) invalid(`${featurePath}.reports`);
+  }
   return { seq, time: timestamp, window_seq, duration_ms, bin_ms,
     address: string(o.address, `${path}.address`, /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/),
     address_type: choice(o.address_type, `${path}.address_type`, ['public','random','public_identity','random_identity','unknown']),
-    reports, adv_reports, scan_response_reports, first_offset_ms, last_offset_ms, rssi: validWindow.rssi, bins };
+    reports, adv_reports, scan_response_reports, first_offset_ms, last_offset_ms, rssi: validWindow.rssi, bins,
+    ...(vehicle_evidence === undefined ? {} : { vehicle_evidence }) };
 }
 function statusV2(value: unknown, path: string): NodeStatusV2 {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid(path);

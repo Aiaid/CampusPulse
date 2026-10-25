@@ -4,6 +4,7 @@ import { fieldRecordKey, latestManualObservations, recordFreshness } from './fie
 import { recordsAtTime } from './field-timeline';
 import { formatObservationKinds, observationKinds, observationKindLabels } from '../shared/observation-kinds.js';
 import './field-data.css';
+import AutomaticObservations from './AutomaticObservations.jsx';
 
 const stamp = value => new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 const valueText = record => record.source === 'sensor' ? `${record.visible_identifiers} 个 BLE 可见标识` : record.kind === 'parking' ? `${record.parking_min}–${record.parking_max} 辆` : `${record.wait_seconds} 秒已完成候梯`;
@@ -39,8 +40,10 @@ export default function FieldDataPanel({ place, mode = 'live', session, cursor, 
         {error ? <div className="field-data-error" role="alert"><strong>现场数据不可用</strong><p>{error}。可点击刷新重试；未使用模拟数据替代。</p></div> : !data && loading ? <p className="field-data-empty" role="status">正在读取现场服务…</p> : data && (replay ? <>
           {!selectedRecords.length ? <p className="field-data-empty">{data.records.length ? '该时刻没有已载入的观测记录；不延用相邻窗口或补值。' : '所选时段没有保留的现场记录；不生成补点，也不表示无人或空闲。'}</p> : selectedRecords.map(record => <FieldRecord key={fieldRecordKey(record)} record={record} replay now={session.now} />)}
           <p className="field-data-caption">下方时间轴可拖动回看；点击「返回实时」继续跟随最新数据。地图只定位地点，不还原个体轨迹。</p>
+          <p className="field-data-caption">自动分析尚未归档到此历史时间轴；当前自动候选与历史样本参考不会带入所选时刻。</p>
         </> : <>
-          {data.sensor ? <FieldRecord record={data.sensor} now={session.now} /> : <p className="field-data-empty">暂无可展示的传感器窗口；未确认当前传感器覆盖，空白不表示无人。</p>}
+          {data.sensor ? <FieldRecord record={data.sensor} now={session.now} /> : <p className="field-data-empty">暂无可展示的传感器窗口。设备联网后，仍需上传符合此地点与现场数据要求的采集窗口。地图标记地点，不单独标记设备；空白不表示无人。</p>}
+          <AutomaticObservations observations={data.automatic_observations} now={session.now} />
           {manualKinds.length ? manualKinds.map(kind => manual[kind]
             ? <FieldRecord key={kind} record={manual[kind]} now={session.now} />
             : <p key={kind} className="field-data-empty">{observationKindLabels[kind]}：暂无人工现场记录；空白不表示空闲。</p>)

@@ -1,5 +1,29 @@
 # Prior work and reuse
 
+## 2026-10-25 — Compact Radar evidence and versioned candidates
+
+The new `firmware/components/cp_vehicle/` and `worker/vehicle-rules.ts` adapt
+selected pure tables and ASCII matching semantics from the imported Radar
+`main/veh_rules.c`, `main/dev_phone.c` and `main/ad_parse.h`, pinned upstream at
+`5fb8ab532414eb0029fc5ea131a03cb0993db180`. Original license: MIT,
+Copyright (c) 2026 FoloToy; the complete notice remains in
+`firmware/ai-passport-radar/LICENSE` and the adapted sources retain attribution.
+No neighboring repository, observed capture, identifying example or credential
+is newly imported. The normal runtime does not enable the legacy scanner.
+
+Direct primitive parity is tested against the actual compiled imported C;
+the effective classifier intentionally differs: bounded brand matches, explicit
+e-bike/car/ecosystem separation, exclusions that win, strict repeated-field AD
+parsing, and abstention for malformed/conflicting clues. Generic radio shape and
+the old dwell constant do not prove vehicle identity or parking occupancy.
+The new C and TypeScript compact adapters are also compared directly. The
+versioned compact mask never preserves an observed name or payload.
+
+Elevator historical quantiles, private visibility candidates and the public
+projection are new repository code, with no external model or runtime dependency.
+They keep manual labels and uncertain inference separate. See the
+[automatic-observation contract](../specs/automatic-observations.md).
+
 ## 2026-10-25 — Pinned asynchronous TLS transport repair
 
 The firmware reads the installed ESP-IDF 5.5.3 Apache-2.0 source

@@ -13,11 +13,17 @@ CP_CC="${CC:-clang}"
 cd "$CP_REPO"
 bash "$CP_FW/tools/check-passport.sh"
 for CP_PART in collect journal; do
+    CP_EXTRA=()
+    if [[ "$CP_PART" == collect ]]; then
+        CP_EXTRA=(-I"$CP_FW/components/cp_vehicle/include" "$CP_FW/components/cp_vehicle/cp_vehicle.c")
+    fi
     "$CP_CC" "${CP_FLAGS[@]}" -I"$CP_FW/components/cp_${CP_PART}/include" \
         "$CP_FW/tests/test_${CP_PART}.c" "$CP_FW/components/cp_${CP_PART}/cp_${CP_PART}.c" \
+        "${CP_EXTRA[@]}" \
         -o "$CP_BUILD/test_${CP_PART}"
     "$CP_BUILD/test_${CP_PART}"
 done
+bash "$CP_FW/tests/run-vehicle.sh"
 "$CP_CC" "${CP_FLAGS[@]}" -I"$CP_FW/components/cp_pipeline/include" \
     -I"$CP_FW/components/cp_journal/include" "$CP_FW/tests/test_scheduler.c" \
     "$CP_FW/components/cp_pipeline/scheduler.c" -o "$CP_BUILD/test_scheduler"
@@ -30,9 +36,10 @@ bash "$CP_FW/tests/pipeline/run-host.sh"
 for CP_TEST in test_codec generate_fixtures; do
     "$CP_CC" "${CP_FLAGS[@]}" -I"$CP_JSON" \
         -I"$CP_FW/components/cp_pipeline/include" -I"$CP_FW/components/cp_collect/include" \
+        -I"$CP_FW/components/cp_vehicle/include" \
         "$CP_FW/tests/$CP_TEST.c" "$CP_FW/components/cp_pipeline/codec.c" \
         "$CP_FW/components/cp_pipeline/codec_status.c" "$CP_FW/components/cp_collect/cp_collect.c" \
-        "$CP_BUILD/cJSON.o" -o "$CP_BUILD/$CP_TEST"
+        "$CP_FW/components/cp_vehicle/cp_vehicle.c" "$CP_BUILD/cJSON.o" -o "$CP_BUILD/$CP_TEST"
 done
 "$CP_BUILD/test_codec"
 bash "$CP_FW/components/cp_settings/tests/run-host.sh"

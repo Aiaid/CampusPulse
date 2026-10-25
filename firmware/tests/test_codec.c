@@ -13,6 +13,7 @@ typedef union {
     size_t size;
 } allocation_t;
 static size_t live_allocations, allocation_calls, fail_at;
+static size_t live_json_bytes, peak_json_bytes, largest_body_bytes;
 static bool inside_sink;
 static unsigned sink_items[4], sink_batches[4], uuid_counter;
 static double expected_uncertainty = 23;
@@ -25,7 +26,10 @@ static void *checked_malloc(size_t bytes) {
     allocation_t *p = malloc(sizeof(*p) + bytes);
     if (!p)
         return NULL;
-    p->size = bytes;
+    p->size = inside_sink ? 0 : bytes;
+    live_json_bytes += p->size;
+    if (live_json_bytes > peak_json_bytes)
+        peak_json_bytes = live_json_bytes;
     live_allocations++;
     return p + 1;
 }
@@ -34,7 +38,10 @@ static void checked_free(void *pointer) {
         return;
     assert(live_allocations);
     live_allocations--;
-    free((allocation_t *)pointer - 1);
+    allocation_t *p = (allocation_t *)pointer - 1;
+    assert(live_json_bytes >= p->size);
+    live_json_bytes -= p->size;
+    free(p);
 }
 static const cJSON *field(const cJSON *o, const char *key) {
     const cJSON *v = cJSON_GetObjectItemCaseSensitive(o, key);
@@ -77,6 +84,8 @@ static bool sink(void *ctx, const char *body, size_t bytes, const char *stream, 
     if (ctx)
         assert(bytes <= *(const unsigned *)ctx);
     assert(bytes == strlen(body));
+    if (bytes > largest_body_bytes)
+        largest_body_bytes = bytes;
     inside_sink = true;
     cJSON *j = cJSON_Parse(body);
     assert(j);
@@ -109,7 +118,14 @@ static bool sink(void *ctx, const char *body, size_t bytes, const char *stream, 
         } else if (index == 1) {
             REQUIRED(item, "seq", "time", "window_seq", "duration_ms", "bin_ms", "address",
                      "address_type", "reports", "adv_reports", "scan_response_reports",
-                     "first_offset_ms", "last_offset_ms", "rssi", "bins");
+                     "first_offset_ms", "last_offset_ms", "rssi", "bins", "vehicle_evidence");
+            const cJSON *vehicle = field(item, "vehicle_evidence");
+            REQUIRED(vehicle, "schema_version", "parsed_reports", "malformed_reports",
+                     "name_brand_mask", "exclusion_mask", "ecosystem_mask");
+            assert(!strcmp(field(vehicle, "schema_version")->valuestring, CP_VEHICLE_SCHEMA_VERSION));
+            assert(field(vehicle, "parsed_reports")->valuedouble + field(vehicle, "malformed_reports")->valuedouble ==
+                   field(item, "reports")->valuedouble);
+            assert(!strstr(body, "payload_hex") && !strstr(body, "display_text"));
             check_rssi(item);
             double sum = 0;
             const cJSON *b = NULL;
@@ -213,6 +229,8 @@ static cp_codec_status_t status(void) {
 }
 static void reset(size_t fail) {
     assert(!live_allocations);
+    assert(!live_json_bytes);
+    peak_json_bytes = largest_body_bytes = 0;
     allocation_calls = 0;
     fail_at = fail;
     inside_sink = false;
@@ -303,14 +321,38 @@ static void packed_summaries(void) {
             a->rssi_min = -127;
             a->rssi_max = 126;
             a->last_ms = 29999;
+            a->vehicle_evidence = (cp_vehicle_evidence_t){
+                .parsed_reports = 30000000, .malformed_reports = 30000000,
+                .name_brand_mask = CP_VEHICLE_NAME_MASK_ALL,
+                .exclusion_mask = CP_VEHICLE_EXCLUSION_MASK_ALL,
+                .ecosystem_mask = CP_VEHICLE_ECOSYSTEM_MASK_ALL};
             for (unsigned bin = 0; bin < 15; bin++)
                 a->bins[bin] = 4000000;
         }
         w.reports_seen = w.reports_aggregated = w.adv = w.rssi_samples = 3840000000u;
         assert(cp_codec_window(&c, &w, 30000));
         assert(c.summaries_committed == 64 && c.failed_items == 0);
-        assert(sink_batches[1] == (budget == 4096 ? 16u : 8u));
+        assert(sink_batches[1] == (budget == 4096 ? 22u : 11u));
+        assert(peak_json_bytes < 40000); /* Host cJSON nodes are larger than C3. */
+        printf("Full 64-address packing: body limit %u, %u batches, largest body %zu, host JSON peak %zu bytes\n",
+               budget, sink_batches[1], largest_body_bytes, peak_json_bytes);
         assert(live_allocations == 0);
+    }
+}
+static void invalid_vehicle_evidence(void) {
+    for (unsigned variant = 0; variant < 4; ++variant) {
+        reset(0);
+        uint32_t seq = 0;
+        cp_codec_t c = context(&seq);
+        cp_collect_t w = window();
+        cp_vehicle_evidence_t *e = &w.addresses[0].vehicle_evidence;
+        if (variant == 0) e->parsed_reports++;
+        if (variant == 1) e->name_brand_mask = 1u << 20;
+        if (variant == 2) e->exclusion_mask = 1u << 11;
+        if (variant == 3) e->ecosystem_mask = 1u << 2;
+        assert(!cp_codec_window(&c, &w, 30000));
+        assert(sink_items[1] == 0 && c.summaries_dropped == 3);
+        assert(c.windows_dropped == 1 && c.raw_committed == 4 && !live_allocations);
     }
 }
 static void short_windows(void) {
@@ -326,6 +368,25 @@ static void short_windows(void) {
         assert(c.unpersisted_window_reports == 15 && w.aggregation_drops == 3);
         assert(seq == 0 && sink_items[0] == 0 && sink_items[1] == 0);
         assert(live_allocations == 0);
+    }
+}
+static void invalid_partial_boundaries(void) {
+    const unsigned durations[] = {1000, 5000, 5001};
+    for (unsigned i = 0; i < sizeof durations / sizeof durations[0]; i++) {
+        reset(0);
+        uint32_t seq = 0;
+        cp_codec_t c = context(&seq);
+        cp_collect_t w;
+        assert(cp_collect_begin(&w, 1000, 30000, 5000, 1, 64, true));
+        cp_report_t report = {.mono_ms = 1000 + durations[i], .report_seq = 1,
+            .address = {2, 0, 0, 0, 0, 1}, .rssi = -50, .raw = CP_RAW_SELECTED};
+        assert(cp_collect_observe(&w, &report));
+        assert(!cp_codec_window(&c, &w, durations[i]));
+        assert(c.raw_committed == 1 && !c.raw_dropped && !w.raw_count);
+        assert(c.windows_dropped == 1 && c.summaries_dropped == 1);
+        assert(c.unpersisted_window_reports == 1 && !seq);
+        assert(!sink_items[0] && !sink_items[1] && sink_items[2] == 1);
+        assert(!live_allocations);
     }
 }
 static void recovered_unknown_metadata(void) {
@@ -376,7 +437,9 @@ int main(void) {
     (void)run(false, 0, 1);
     clocks();
     packed_summaries();
+    invalid_vehicle_evidence();
     short_windows();
+    invalid_partial_boundaries();
     recovered_unknown_metadata();
     memory_pause_status();
     cJSON_InitHooks(NULL);

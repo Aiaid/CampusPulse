@@ -1,6 +1,7 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#include "cp_vehicle.h"
 #define CP_COLLECT_ADDRESSES 64u
 #define CP_COLLECT_BINS 16u
 #define CP_COLLECT_RAW 4u
@@ -24,6 +25,7 @@ typedef struct {
     int16_t rssi_min, rssi_max;
     int64_t rssi_sum;
     uint32_t bins[CP_COLLECT_BINS];
+    cp_vehicle_evidence_t vehicle_evidence;
 } cp_address_summary_t;
 typedef struct {
     uint64_t start_ms;

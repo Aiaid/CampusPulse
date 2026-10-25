@@ -44,7 +44,7 @@ static EventGroupHandle_t s_radio_events;
 static QueueHandle_t s_reports;
 static TaskHandle_t s_worker, s_host, s_uploader;
 static char s_node[16], s_boot[37];
-static uint64_t s_origin, s_stop_at, s_lease_deadline;
+static uint64_t s_origin, s_stop_at, s_lease_deadline, s_last_ingress_ms;
 static uint32_t s_report_seq, s_summary_seq, s_status_seq, s_next_window = 1, s_first_window;
 static uint32_t s_stream_pending[4], s_free_slots, s_loss_overruns, s_raw_queue_drops,
     s_raw_pressure_skips;
@@ -281,6 +281,11 @@ static bool next_window(void) {
 }
 static void request_stop_at(uint64_t at) {
     portENTER_CRITICAL(&s_capture_mux);
+    /* Window ends are exclusive, while the callback clock has millisecond
+     * resolution. Include reports already admitted in this same millisecond.
+     * The lease gate rejects ingress at/after expiry before it is admitted. */
+    if (s_last_ingress_ms >= at)
+        at = s_last_ingress_ms + 1;
     if (!s_stop_at || at < s_stop_at)
         s_stop_at = at;
     __atomic_store_n(&s_accept, false, __ATOMIC_RELEASE);
@@ -299,6 +304,17 @@ static uint64_t lease_deadline(void) {
     portEXIT_CRITICAL(&s_capture_mux);
     return result;
 }
+static void consume_report(const cp_report_t *report) {
+    while (report->mono_ms >= s_window.start_ms + s_window.window_ms) {
+        close_window(s_window.window_ms);
+        if (!next_window()) {
+            request_stop();
+            break;
+        }
+    }
+    if (!cp_collect_observe(&s_window, report))
+        bump(&s_health.aggregation_drops);
+}
 static void collector_worker(void *arg) {
     (void)arg;
     cp_report_t report;
@@ -306,17 +322,8 @@ static void collector_worker(void *arg) {
     bool storage_raw_paused = false;
     for (;;) {
         bool got = xQueueReceive(s_reports, &report, pdMS_TO_TICKS(100)) == pdTRUE;
-        if (got) {
-            while (report.mono_ms >= s_window.start_ms + s_window.window_ms) {
-                close_window(s_window.window_ms);
-                if (!next_window()) {
-                    request_stop();
-                    break;
-                }
-            }
-            if (!cp_collect_observe(&s_window, &report))
-                bump(&s_health.aggregation_drops);
-        }
+        if (got)
+            consume_report(&report);
         uint64_t tick = mono_ms();
         uint64_t expiry = lease_deadline();
         if (expiry && tick >= expiry && !__atomic_load_n(&s_stop, __ATOMIC_ACQUIRE))
@@ -339,6 +346,11 @@ static void collector_worker(void *arg) {
         if (!got) {
             uint64_t now = mono_ms();
             if (stop) {
+                /* The timed receive may have returned empty just before the
+                 * last callback queued and stop closed admission. Recheck only
+                 * after observing stop; no callback can now enqueue behind us. */
+                while (xQueueReceive(s_reports, &report, 0) == pdTRUE)
+                    consume_report(&report);
                 portENTER_CRITICAL(&s_capture_mux);
                 uint64_t end = s_stop_at;
                 portEXIT_CRITICAL(&s_capture_mux);
@@ -403,12 +415,22 @@ static int discovery(struct ble_gap_event *event, void *arg) {
     }
     uint32_t window = s_first_window + (uint32_t)index;
     portENTER_CRITICAL(&s_capture_mux);
+    /* The optimistic check above can race with a supervisor stop. Admission,
+     * its loss accounting and the nonblocking queue send share the stop lock,
+     * so the collector cannot drain an empty queue before an in-flight callback
+     * appends a report outside the sealed interval. */
+    if (!__atomic_load_n(&s_accept, __ATOMIC_ACQUIRE)) {
+        portEXIT_CRITICAL(&s_capture_mux);
+        return 0;
+    }
     if (s_report_seq == UINT32_MAX) {
         portEXIT_CRITICAL(&s_capture_mux);
         request_stop();
         return 0;
     }
     r.report_seq = ++s_report_seq;
+    if (r.mono_ms > s_last_ingress_ms)
+        s_last_ingress_ms = r.mono_ms;
     bump(&s_health.reports_seen);
     loss_bucket_t *b = &s_losses[window % LOSS_BUCKETS];
     if (b->window && b->window != window) {
@@ -433,9 +455,7 @@ static int discovery(struct ble_gap_event *event, void *arg) {
         r.raw = CP_RAW_SELECTED;
         b->selected++;
     }
-    portEXIT_CRITICAL(&s_capture_mux);
     if (xQueueSend(s_reports, &r, 0) != pdTRUE) {
-        portENTER_CRITICAL(&s_capture_mux);
         b->drops++;
         if (r.raw == CP_RAW_SELECTED)
             b->selected_drops++;
@@ -443,8 +463,8 @@ static int discovery(struct ble_gap_event *event, void *arg) {
             b->intentional++;
         else if (r.raw == CP_RAW_PRESSURE)
             b->pressure++;
-        portEXIT_CRITICAL(&s_capture_mux);
     }
+    portEXIT_CRITICAL(&s_capture_mux);
     return 0;
 }
 static void radio_reset(int reason) {
@@ -458,6 +478,7 @@ static void radio_sync(void) {
         rc = ble_hs_id_infer_auto(0, &s_own_address);
     if (!rc) {
         s_origin = mono_ms();
+        s_last_ingress_ms = 0;
         s_first_window = s_next_window;
         if (!cp_collect_begin(&s_window, s_origin, s_policy.summary_window_ms,
                               s_policy.summary_bin_ms, s_first_window, s_policy.max_addresses,

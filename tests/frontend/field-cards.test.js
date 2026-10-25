@@ -49,6 +49,14 @@ describe('independent public observation cards', () => {
     expect(html).not.toContain('42 秒已完成候梯');
   });
 
+  test('explains why an online device can have no public sensor window', () => {
+    const data = { ...summary(), sensor: null };
+    const html = renderPanel({ now, live: state(data), history: state(null), refresh() {} });
+    expect(html).toContain('设备联网后，仍需上传符合此地点与现场数据要求的采集窗口');
+    expect(html).toContain('地图标记地点，不单独标记设备');
+    expect(html).not.toContain('0 个 BLE 可见标识');
+  });
+
   test('selects both purposes at a pinned instant while later refreshed history remains in its own time', () => {
     const cursor = now - 25_000;
     const session = { now, live: state(summary()), history: state(history([parking, elevator])), refresh() {} };
