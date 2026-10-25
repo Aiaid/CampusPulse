@@ -23,6 +23,9 @@ static bool network_started,entropy_enabled,apply_actually_starts=true;
 static bool memory_refuse_start;
 static bool radio_resource_busy,radio_resource_held,reject_on_radio_claim;
 static unsigned radio_claims,radio_releases;
+static bool worker_needs_flush,reject_on_pipeline_stop;
+static unsigned pipeline_stops,worker_flushes;
+static uint64_t stop_delay_ms;
 static char capture_state[20],last_report_id[65];static bool last_report_applied;
 static cp_provision_submit_fn submit_callback;static void *submit_context;
 static cp_provision_credential_resolver_fn credential_callback;static void *credential_context;
@@ -107,6 +110,13 @@ bool cp_network_begin_radio_transition(void)
 }
 void cp_network_end_radio_transition(void)
 {assert(radio_resource_held);radio_resource_held=false;++radio_releases;}
+bool cp_network_begin_memory_work(uint32_t timeout_ms)
+{
+    /* Model a worker resuming after the current HTTP call releases the gate.
+     * A supervisor that holds it while joining this worker cannot progress. */
+    assert(timeout_ms>0&&!radio_resource_held);radio_resource_held=true;return true;
+}
+void cp_network_end_memory_work(void){assert(radio_resource_held);radio_resource_held=false;}
 esp_err_t cp_network_report_activation(const char*id,bool applied,const char*why)
 {assert(!radio_resource_held&&why&&strlen(id)<65);record(applied?APPLIED:FAILED);++report_count;strcpy(last_report_id,id);last_report_applied=applied;return ESP_OK;}
 void cp_network_set_capture_state(const char*state){assert(strlen(state)<sizeof capture_state);strcpy(capture_state,state);}
@@ -129,9 +139,20 @@ esp_err_t cp_network_attempt_load(cp_network_attempt_t *out)
 esp_err_t cp_network_attempt_save(const cp_network_attempt_t *attempt)
 {assert(cp_network_attempt_valid(attempt)&&history_save_count<2);history_records[history_save_count++]=*attempt;return history_save_error;}
 esp_err_t cp_pipeline_init(const char*node,const char*boot){assert(node&&boot);return ESP_OK;}
-esp_err_t cp_pipeline_stop(void){record(PIPE_STOP);if(pipeline_stop_error==ESP_OK)pipe_state.collecting=false;return pipeline_stop_error;}
+esp_err_t cp_pipeline_stop(void)
+{
+    /* The real worker may need the same resource to serialize its final batch.
+     * Stopping under the radio claim would wait for a worker that cannot run. */
+    assert(!radio_resource_held);record(PIPE_STOP);++pipeline_stops;
+    if(worker_needs_flush){assert(cp_network_begin_memory_work(1000));++worker_flushes;cp_network_end_memory_work();worker_needs_flush=false;}
+    clock_ms+=stop_delay_ms;stop_delay_ms=0;
+    if(reject_on_pipeline_stop){net.policy_valid=false;net.policy_rejected=true;++net.policy_response_sequence;reject_on_pipeline_stop=false;}
+    if(pipeline_stop_error==ESP_OK)pipe_state.collecting=false;
+    else pipe_state.stop_failed=true;
+    return pipeline_stop_error;
+}
 esp_err_t cp_pipeline_apply(const cp_network_policy_t*p)
-{assert(radio_resource_held&&!provision.active&&p->core.collection_enabled&&!pipe_state.radio_restart_required);record(PIPE_APPLY);++apply_count;
+{assert(radio_resource_held&&!provision.active&&!pipe_state.collecting&&!worker_needs_flush&&p->core.collection_enabled&&!pipe_state.radio_restart_required);record(PIPE_APPLY);++apply_count;
  if(memory_refuse_start){pipe_state.memory_paused=true;pipe_state.memory_restart_ready=false;return ESP_ERR_NO_MEM;}
  if(apply_error==ESP_OK){pipe_state.collecting=apply_actually_starts;pipe_state.memory_paused=false;pipe_state.memory_raw_paused=false;}return apply_error;}
 esp_err_t cp_pipeline_maintain(void){return pipe_state.stop_failed?ESP_ERR_TIMEOUT:ESP_OK;}
@@ -199,6 +220,55 @@ static void policy_reject_tick(unsigned n)
 }
 static void renewal_tick(unsigned n)
 {if(n==2){assert(pipe_state.collecting);publish_policy(2,clock_ms-200,120000);}}
+static void busy_renewal_tick(unsigned n)
+{
+    if(n==2){assert(pipe_state.collecting);clock_ms=100000;publish_policy(2,clock_ms-200,120000);net.http_in_flight=true;radio_resource_busy=true;}
+    if(n==3){clock_ms=150000;assert(lease_renewals==1&&last_lease_deadline==219800);}
+    if(n==4){clock_ms=200000;publish_policy(3,clock_ms-100,120000);}
+    if(n==5){clock_ms=250000;assert(lease_renewals==2&&last_lease_deadline==319900);}
+}
+static void busy_bad_renewal_tick(unsigned n)
+{
+    if(n==2){publish_policy(2,clock_ms,120000);net.http_in_flight=true;radio_resource_busy=true;
+        net.policy.core.max_addresses=32;worker_needs_flush=true;}
+}
+static void busy_expired_renewal_tick(unsigned n)
+{if(n==2){publish_policy(2,0,1000);net.http_in_flight=true;radio_resource_busy=true;worker_needs_flush=true;}}
+static void busy_revoked_renewal_tick(unsigned n)
+{if(n==2){net.http_in_flight=true;radio_resource_busy=true;net.policy_valid=false;net.policy_rejected=true;net.policy_response_sequence=2;worker_needs_flush=true;}}
+static void busy_cached_policy_tick(unsigned n)
+{if(n==2){net.http_in_flight=true;radio_resource_busy=true;clock_ms=150000;}}
+static void staged_http_deferral_tick(unsigned n)
+{
+    if(n==2){assert(s_core.policy_state==CP_POLICY_STAGED&&!last_report_applied);memory_refuse_start=false;pipe_state.memory_restart_ready=true;publish_policy(2,clock_ms,120000);net.http_in_flight=true;}
+    if(n==3){assert(apply_count==1&&s_policy_attempted_sequence==1&&s_core.latest_request_sequence==1&&s_core.policy_state==CP_POLICY_STAGED&&!lease_renewals&&!pipe_state.collecting);net.http_in_flight=false;}
+}
+static void changed_policy_tick(unsigned n)
+{
+    if(n==2){publish_policy(2,clock_ms,120000);strcpy(net.policy.core.config_id,"replacement-policy");strcpy(net.desired_config_id,"replacement-policy");worker_needs_flush=true;}
+}
+static void changed_http_deferral_tick(unsigned n)
+{
+    changed_policy_tick(n);
+    if(n==2)net.http_in_flight=true;
+    if(n==3){assert(apply_count==1&&pipeline_stops==1&&s_policy_attempted_sequence==1&&s_core.latest_request_sequence==1);net.http_in_flight=false;}
+}
+static void changed_radio_deferral_tick(unsigned n)
+{
+    changed_policy_tick(n);
+    if(n==2)radio_resource_busy=true;
+    if(n==3){assert(apply_count==1&&!pipe_state.collecting&&worker_flushes==1&&s_policy_attempted_sequence==1&&s_core.latest_request_sequence==1);radio_resource_busy=false;}
+}
+static void changed_stop_failure_tick(unsigned n)
+{changed_policy_tick(n);if(n==2)pipeline_stop_error=ESP_ERR_TIMEOUT;}
+static void stop_rejection_tick(unsigned n)
+{changed_policy_tick(n);if(n==2)reject_on_pipeline_stop=true;}
+static void stop_expiry_tick(unsigned n)
+{changed_policy_tick(n);if(n==2)stop_delay_ms=120000;}
+static void recovery_stop_expiry_tick(unsigned n)
+{if(n==2){pipe_state.collecting=false;worker_needs_flush=true;stop_delay_ms=120000;}}
+static void recovery_apply_failure_tick(unsigned n)
+{if(n==2){pipe_state.collecting=false;worker_needs_flush=true;apply_error=ESP_ERR_NO_MEM;}}
 static void transient_tick(unsigned n)
 {if(n==2){net.last_http_status=503;net.last_error=ESP_FAIL;clock_ms=15000;}}
 static void no_actual_scan_tick(unsigned n)
@@ -274,6 +344,19 @@ static void scenario(const char*name)
     else if(!strcmp(name,"pipeline_stop_failure")){prepare(true);pipeline_stop_error=ESP_ERR_TIMEOUT;pipe_state.collecting=true;assert(run(1,stop_failure_tick)==1);assert(!provision_start_count&&pipe_state.collecting&&network_started);}
     else if(!strcmp(name,"fresh_policy_age")){prepare(true);publish_policy(1,9000,120000);assert(run(1,NULL)==1);assert(s_core.lease_started_ms==10500&&s_core.lease_duration_ms==118500&&s_core.latest_request_sequence==1);assert(apply_count==1&&last_report_applied&&pipe_state.collecting&&!strcmp(capture_state,"running"));}
     else if(!strcmp(name,"same_policy_lease_renewal")){prepare(true);publish_policy(1,9000,120000);assert(run(2,renewal_tick)==1);assert(apply_count==1&&report_count==1&&lease_renewals==1&&last_lease_deadline==130800);assert(s_core.lease_started_ms==11000&&s_core.lease_duration_ms==119800);}
+    else if(!strcmp(name,"same_policy_busy_renewal")){prepare(true);publish_policy(1,9000,120000);assert(run(5,busy_renewal_tick)==1);assert(apply_count==1&&report_count==1&&pipeline_stops==1&&radio_claims==1&&radio_releases==1&&lease_renewals==2);assert(s_core.latest_request_sequence==3&&s_policy_attempted_sequence==3&&pipe_state.collecting&&s_core.lease_valid&&!strcmp(capture_state,"running"));}
+    else if(!strcmp(name,"same_policy_busy_semantic_rejection")){prepare(true);publish_policy(1,9000,120000);assert(run(3,busy_bad_renewal_tick)==1);assert(apply_count==1&&report_count==2&&!last_report_applied&&!lease_renewals&&!pipe_state.collecting&&!s_core.lease_valid&&s_core.policy_state==CP_POLICY_FAILED&&worker_flushes==1&&radio_claims==1);}
+    else if(!strcmp(name,"same_policy_busy_expired")){prepare(true);publish_policy(1,9000,120000);assert(run(3,busy_expired_renewal_tick)==1);assert(apply_count==1&&report_count==2&&!last_report_applied&&!lease_renewals&&!pipe_state.collecting&&!s_core.lease_valid&&worker_flushes==1&&radio_claims==1);}
+    else if(!strcmp(name,"same_policy_busy_revoked")){prepare(true);publish_policy(1,9000,120000);assert(run(3,busy_revoked_renewal_tick)==1);assert(apply_count==1&&report_count==2&&!last_report_applied&&!lease_renewals&&!pipe_state.collecting&&!s_core.lease_valid&&worker_flushes==1&&radio_claims==1&&s_policy_attempted_sequence==1);}
+    else if(!strcmp(name,"same_policy_busy_cached_expiry")){prepare(true);publish_policy(1,9000,120000);assert(run(3,busy_cached_policy_tick)==1);assert(apply_count==1&&report_count==1&&!lease_renewals&&!pipe_state.collecting&&!s_core.lease_valid&&radio_claims==1&&s_policy_attempted_sequence==1&&!strcmp(capture_state,"expired"));}
+    else if(!strcmp(name,"staged_policy_http_deferral")){prepare(true);publish_policy(1,9000,120000);memory_refuse_start=true;assert(run(3,staged_http_deferral_tick)==1);assert(apply_count==2&&report_count==2&&last_report_applied&&pipe_state.collecting&&s_core.latest_request_sequence==2&&!lease_renewals);}
+    else if(!strcmp(name,"changed_policy_http_deferral")){prepare(true);publish_policy(1,9000,120000);assert(run(3,changed_http_deferral_tick)==1);assert(apply_count==2&&report_count==2&&last_report_applied&&pipe_state.collecting&&worker_flushes==1&&s_core.latest_request_sequence==2&&!strcmp(s_core.applied_config_id,"replacement-policy"));}
+    else if(!strcmp(name,"changed_policy_radio_deferral")){prepare(true);publish_policy(1,9000,120000);assert(run(3,changed_radio_deferral_tick)==1);assert(apply_count==2&&report_count==2&&last_report_applied&&pipe_state.collecting&&worker_flushes==1&&s_core.latest_request_sequence==2&&radio_claims==3&&radio_releases==2);}
+    else if(!strcmp(name,"changed_policy_stop_failure")){prepare(true);publish_policy(1,9000,120000);assert(run(3,changed_stop_failure_tick)==1);assert(apply_count==1&&radio_claims==1&&report_count==2&&!last_report_applied&&s_core.policy_state==CP_POLICY_FAILED&&!s_core.lease_valid&&s_policy_attempted_sequence==1&&!strcmp(s_reason,"capture_stop_failed"));}
+    else if(!strcmp(name,"policy_rejected_during_stop")){prepare(true);publish_policy(1,9000,120000);assert(run(3,stop_rejection_tick)==1);assert(apply_count==1&&report_count==2&&!last_report_applied&&!pipe_state.collecting&&s_policy_attempted_sequence==1&&s_core.latest_request_sequence==1&&radio_claims==2&&radio_releases==2&&worker_flushes==1);}
+    else if(!strcmp(name,"policy_expired_during_stop")){prepare(true);publish_policy(1,9000,120000);assert(run(3,stop_expiry_tick)==1);assert(apply_count==1&&report_count==2&&!last_report_applied&&!pipe_state.collecting&&!s_core.lease_valid&&radio_claims==2&&radio_releases==2&&worker_flushes==1);}
+    else if(!strcmp(name,"recovery_expired_during_stop")){prepare(true);publish_policy(1,9000,120000);assert(run(3,recovery_stop_expiry_tick)==1);assert(apply_count==1&&report_count==1&&!pipe_state.collecting&&!s_core.lease_valid&&radio_claims==2&&radio_releases==2&&worker_flushes==1&&!strcmp(capture_state,"expired"));}
+    else if(!strcmp(name,"recovery_apply_error_releases")){prepare(true);publish_policy(1,9000,120000);assert(run(2,recovery_apply_failure_tick)==1);assert(apply_count==2&&report_count==1&&!pipe_state.collecting&&radio_claims==2&&radio_releases==2&&worker_flushes==1&&!strcmp(s_reason,"capture_recovery_failed"));}
     else if(!strcmp(name,"expired_policy_once")){prepare(true);publish_policy(1,0,1000);assert(run(3,NULL)==1);assert(!apply_count&&!pipe_state.collecting&&report_count==1&&!last_report_applied);}
     else if(!strcmp(name,"explicit_unassigned")){prepare(true);publish_policy(1,9000,120000);assert(run(3,policy_invalidate_tick)==1);assert(!pipe_state.collecting&&s_core.policy_state==CP_POLICY_NONE&&!s_core.lease_valid&&report_count==1);}
     else if(!strcmp(name,"unsupported_policy")){prepare(true);publish_policy(1,9000,120000);assert(run(3,policy_reject_tick)==1);assert(!pipe_state.collecting&&s_core.policy_state==CP_POLICY_FAILED&&report_count==2&&!last_report_applied);assert(!strcmp(last_report_id,"unsupported-policy"));}

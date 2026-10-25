@@ -30,6 +30,10 @@
 #define LOSS_BUCKETS 8
 #define READY_BIT 1u
 #define FAILED_BIT 2u
+/* TLS has a 12 s request budget. Seal a window after it releases its heap,
+ * while keeping shutdown bounded if the shared allocation gate stays busy. */
+#define MEMORY_WORK_WAIT_MS 15000u
+#define COLLECTOR_STOP_WAIT_MS 25000u
 static const char *TAG = "cp_pipeline";
 static cp_journal_t s_journal;
 static cp_collect_t s_window;
@@ -137,9 +141,11 @@ static cp_codec_t codec_context(void) {
                     .sink = store_body};
     return c;
 }
-static void persist_status(void) {
+/* Caller owns the network memory gate. Keep this separate from the idle
+ * wrapper so closing a window never recursively acquires the HTTP mutex. */
+static bool persist_status_locked(void) {
     if (s_status_seq == UINT32_MAX)
-        return;
+        return false;
     cp_network_snapshot_t net;
     cp_network_snapshot(&net);
     cp_codec_t c = codec_context();
@@ -171,7 +177,7 @@ static void persist_status(void) {
                                 .critical_pct = s_policy.critical_pct};
     if (xSemaphoreTake(s_store_lock, pdMS_TO_TICKS(100)) != pdTRUE) {
         bump(&s_status_dropped);
-        return;
+        return false;
     }
     status.free_slots = load(&s_free_slots);
     uint32_t classified = 0;
@@ -180,8 +186,35 @@ static void persist_status(void) {
     unsigned pending = load(&s_health.pending);
     status.unclassified_pending_slots = pending >= classified ? pending - classified : 0;
     xSemaphoreGive(s_store_lock);
-    if (!cp_codec_status(&c, &status, ++s_status_seq))
+    if (!cp_codec_status(&c, &status, ++s_status_seq)) {
         bump(&s_status_dropped);
+        return false;
+    }
+    return true;
+}
+static bool persist_status(void) {
+    if (!cp_network_begin_memory_work(0)) {
+        bump(&s_status_dropped);
+        return false;
+    }
+    bool ok = persist_status_locked();
+    cp_network_end_memory_work();
+    return ok;
+}
+static void flush_raw_if_idle(void) {
+    /* Optional raw work may wait in the bounded array until TLS finishes.
+     * Further selected reports retain the collector's explicit raw-drop count. */
+    if (!cp_network_begin_memory_work(0))
+        return;
+    cp_codec_t c = codec_context();
+    (void)cp_codec_flush_raw(&c, &s_window);
+    cp_network_end_memory_work();
+}
+static void account_window_health(void) {
+    __atomic_add_fetch(&s_health.aggregation_drops, s_window.aggregation_drops, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&s_address_overflow_reports, s_window.summary_drops, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&s_health.raw_drops, s_window.raw_drops, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&s_raw_pressure_skips, s_window.pressure, __ATOMIC_RELAXED);
 }
 static void close_window(uint32_t duration) {
     loss_bucket_t lost = {0};
@@ -193,14 +226,37 @@ static void close_window(uint32_t duration) {
     }
     portEXIT_CRITICAL(&s_capture_mux);
     __atomic_add_fetch(&s_raw_queue_drops, lost.selected_drops, __ATOMIC_RELAXED);
-    if (!cp_collect_losses(&s_window, lost.drops, lost.selected_drops, lost.intentional,
-                           lost.pressure)) {
+    bool losses_valid = cp_collect_losses(&s_window, lost.drops, lost.selected_drops,
+                                         lost.intentional, lost.pressure);
+    bool admitted = cp_network_begin_memory_work(MEMORY_WORK_WAIT_MS);
+    if (!losses_valid || !admitted) {
         bump(&s_health.windows_dropped);
         __atomic_add_fetch(&s_unpersisted_window_reports, s_window.reports_seen, __ATOMIC_RELAXED);
         __atomic_add_fetch(&s_health.summary_drops, s_window.address_count, __ATOMIC_RELAXED);
-        cp_codec_t c = codec_context();
-        (void)cp_codec_flush_raw(&c, &s_window);
-        persist_status();
+        if (!losses_valid) {
+            /* cp_collect_losses is all-or-nothing. Keep rejected ingress loss
+             * visible even when that window cannot be represented faithfully. */
+            __atomic_add_fetch(&s_unpersisted_window_reports, lost.drops, __ATOMIC_RELAXED);
+            __atomic_add_fetch(&s_health.aggregation_drops, lost.drops, __ATOMIC_RELAXED);
+            __atomic_add_fetch(&s_health.raw_drops, lost.selected_drops, __ATOMIC_RELAXED);
+            __atomic_add_fetch(&s_raw_pressure_skips, lost.pressure, __ATOMIC_RELAXED);
+        }
+        if (admitted) {
+            cp_codec_t c = codec_context();
+            (void)cp_codec_flush_raw(&c, &s_window);
+        } else {
+            /* No JSON allocation or fabricated window on admission timeout.
+             * Previously frozen raw batches stay in the journal unchanged. */
+            s_window.raw_drops += s_window.raw_count;
+            s_window.raw_count = 0;
+        }
+        account_window_health();
+        if (admitted) {
+            (void)persist_status_locked();
+            cp_network_end_memory_work();
+        } else {
+            bump(&s_status_dropped);
+        }
         return;
     }
     cp_codec_t c = codec_context();
@@ -208,15 +264,13 @@ static void close_window(uint32_t duration) {
         bump(&s_health.windows_dropped);
     __atomic_add_fetch(&s_health.windows_committed, c.windows_committed, __ATOMIC_RELAXED);
     __atomic_add_fetch(&s_health.summaries_committed, c.summaries_committed, __ATOMIC_RELAXED);
-    __atomic_add_fetch(&s_health.aggregation_drops, s_window.aggregation_drops, __ATOMIC_RELAXED);
-    __atomic_add_fetch(&s_address_overflow_reports, s_window.summary_drops, __ATOMIC_RELAXED);
     __atomic_add_fetch(&s_health.summary_drops, c.summaries_dropped, __ATOMIC_RELAXED);
-    __atomic_add_fetch(&s_health.raw_drops, s_window.raw_drops, __ATOMIC_RELAXED);
+    account_window_health();
     ESP_LOGI(TAG,"collector_stack_free=%lu",(unsigned long)uxTaskGetStackHighWaterMark(NULL));
-    __atomic_add_fetch(&s_raw_pressure_skips, s_window.pressure, __ATOMIC_RELAXED);
     __atomic_add_fetch(&s_unpersisted_window_reports, c.unpersisted_window_reports,
                        __ATOMIC_RELAXED);
-    persist_status();
+    (void)persist_status_locked();
+    cp_network_end_memory_work();
 }
 static bool next_window(void) {
     if (s_window.window_seq == UINT32_MAX)
@@ -280,8 +334,7 @@ static void collector_worker(void *arg) {
         bool stop = __atomic_load_n(&s_stop, __ATOMIC_ACQUIRE);
         if (!stop && s_window.raw_count &&
             mono_ms() - s_window.raw[0].mono_ms >= s_policy.flush_max_age_ms) {
-            cp_codec_t c = codec_context();
-            (void)cp_codec_flush_raw(&c, &s_window);
+            flush_raw_if_idle();
         }
         if (!got) {
             uint64_t now = mono_ms();
@@ -435,9 +488,13 @@ static void host_task(void *arg) {
         vTaskSuspend(NULL);
 }
 static bool batch_metadata(const char *body, cp_network_batch_t *out) {
-    cJSON *j = cJSON_Parse(body);
-    if (!j)
+    if (!cp_network_begin_memory_work(MEMORY_WORK_WAIT_MS))
         return false;
+    cJSON *j = cJSON_Parse(body);
+    if (!j) {
+        cp_network_end_memory_work();
+        return false;
+    }
     memset(out, 0, sizeof *out);
     struct {
         const char *key;
@@ -461,6 +518,9 @@ static bool batch_metadata(const char *body, cp_network_batch_t *out) {
     ok = ok && out->accepted_count > 0 && stream_index(out->stream) >= 0 &&
          cp_network_sha256(body, strlen(body), out->body_sha256);
     cJSON_Delete(j);
+    /* Upload takes the same mutex itself; all metadata allocations must be
+     * gone before releasing this claim and attempting HTTP. */
+    cp_network_end_memory_work();
     return ok;
 }
 /* Call only under s_store_lock: local read failures never discard a valid
@@ -545,6 +605,12 @@ static void uploader_task(void *arg) {
         }
         cp_net_upload_result_t result =
             cp_network_upload_frozen(s_upload_body, length, &meta, &ack);
+        /* Numeric, content-free proof of exact receipt validation by stream.
+         * Stream order: windows, address summaries, raw reports, status. */
+        ESP_LOGI(TAG,"upload_stream=%u upload_result=%u batch_items=%lu confirmed_items=%lu current_boot=%u http=%d",
+            stream+1u,(unsigned)result,(unsigned long)meta.accepted_count,
+            (unsigned long)(result==CP_NET_UPLOAD_ACKED?meta.accepted_count:0),
+            (unsigned)!strcmp(meta.boot_id,s_boot),ack.http_status);
         if (xSemaphoreTake(s_store_lock, pdMS_TO_TICKS(5000)) != pdTRUE) {
             bump(&s_health.ack_failures);
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -648,7 +714,7 @@ esp_err_t cp_pipeline_init(const char *node, const char *boot) {
             }
         }
     update_store_health();
-    if (xTaskCreate(uploader_task, "cp_upload", 8192, NULL, 3, &s_uploader) != pdPASS) {
+    if (xTaskCreate(uploader_task, "cp_upload", 6144, NULL, 3, &s_uploader) != pdPASS) {
         s_uploader = NULL;
         cleanup_storage_startup();
         return ESP_ERR_NO_MEM;
@@ -669,7 +735,7 @@ esp_err_t cp_pipeline_stop(void) {
     request_stop();
     (void)ble_gap_disc_cancel();
     if (s_worker) {
-        if (xSemaphoreTake(s_worker_done, pdMS_TO_TICKS(10000)) != pdTRUE) {
+        if (xSemaphoreTake(s_worker_done, pdMS_TO_TICKS(COLLECTOR_STOP_WAIT_MS)) != pdTRUE) {
             s_stop_failed = true;
             return ESP_ERR_TIMEOUT;
         }
@@ -746,8 +812,8 @@ esp_err_t cp_pipeline_maintain(void) {
         s_idle_pause_tick = now;
         if (!net.http_in_flight && (stopped || !s_idle_status_at ||
                                     now - s_idle_status_at >= 30000)) {
-            persist_status();
-            s_idle_status_at = now;
+            if (persist_status())
+                s_idle_status_at = now;
         }
     }
     return ESP_OK;
@@ -795,8 +861,10 @@ esp_err_t cp_pipeline_apply(const cp_network_policy_t *p) {
     if (!admitted || (s_memory.scan_paused && p->request_sequence <= s_memory_policy_sequence)) {
         s_idle_pause_tick = now;
         if (!net.http_in_flight && (!s_idle_status_at || now - s_idle_status_at >= 30000)) {
-            persist_status();
-            s_idle_status_at = now;
+            /* The supervisor owns the radio-transition memory claim during
+             * apply. Coalesce this sample; maintain retries after it releases
+             * that claim, without allocating on a rejected memory budget. */
+            bump(&s_status_dropped);
         }
         return apply_failed(111, ESP_ERR_NO_MEM);
     }
@@ -852,7 +920,7 @@ esp_err_t cp_pipeline_apply(const cp_network_policy_t *p) {
         (void)cp_pipeline_stop();
         return apply_failed(107,s_health.last_error?s_health.last_error:ESP_FAIL);
     }
-    if (xTaskCreate(collector_worker, "cp_collect", 8192, NULL, 4, &s_worker) != pdPASS) {
+    if (xTaskCreate(collector_worker, "cp_collect", 6144, NULL, 4, &s_worker) != pdPASS) {
         cp_memory_guard_pause(&s_memory, mono_ms());
         s_memory_policy_sequence = p->request_sequence;
         publish_memory_guard();

@@ -175,6 +175,25 @@ static bool claim_radio_policy(const cp_network_policy_t *policy) {
     }
     return true;
 }
+static cp_policy_result_t receive_policy(const cp_network_policy_t *policy) {
+    uint64_t current = now_ms();
+    uint64_t age = current >= policy->fetched_mono_ms
+        ? current - policy->fetched_mono_ms : UINT64_MAX;
+    s_policy_attempted_sequence = policy->request_sequence;
+    return age < policy->lease_ms
+        ? cp_core_receive_desired(&s_core, &policy->core, policy->request_sequence,
+                                  current, policy->lease_ms - age)
+        : CP_POLICY_STALE;
+}
+static void reject_policy(const cp_network_policy_t *policy) {
+    /* A collector may flush while stopping; never own the HTTP/memory resource
+     * while waiting for that worker. Activation reporting also takes it. */
+    esp_err_t err = cp_pipeline_stop();
+    cp_core_mark_apply_failed(&s_core);
+    const char *failure = err == ESP_OK ? "unsupported_policy" : "capture_stop_failed";
+    (void)cp_network_report_activation(policy->core.config_id, false, failure);
+    reason(failure);
+}
 static void apply_control(void) {
     cp_network_snapshot_t net;
     cp_network_snapshot(&net);
@@ -205,25 +224,35 @@ static void apply_control(void) {
     }
     cp_network_policy_t p = net.policy;
     if (cp_network_get_policy(&p) && p.request_sequence > s_policy_attempted_sequence &&
-        !net.http_in_flight && maintenance == ESP_OK && !pipe.stop_failed) {
-        if (!claim_radio_policy(&p)) {
+        maintenance == ESP_OK && !pipe.stop_failed) {
+        bool same_applied = s_core.policy_state == CP_POLICY_APPLIED &&
+            !strcmp(s_core.desired.config_id, p.core.config_id);
+        if (same_applied) {
+            /* Fresh same-policy grants do not allocate a radio or HTTP working
+             * set. Validate their complete core semantics even during uploads,
+             * rather than starving renewal behind a continuously busy client. */
+            if (receive_policy(&p) == CP_POLICY_OK)
+                cp_pipeline_renew_lease(p.fetched_mono_ms + p.lease_ms);
+            else
+                reject_policy(&p);
+        } else if (net.http_in_flight) {
             reason("capture_waiting_for_network");
         } else {
-            /* Contention must leave this sequence available for the next tick. */
-            s_policy_attempted_sequence = p.request_sequence;
-            uint64_t current = now_ms();
-            uint64_t age = current >= p.fetched_mono_ms ? current - p.fetched_mono_ms : UINT64_MAX;
-            cp_policy_result_t result =
-                age < p.lease_ms ? cp_core_receive_desired(&s_core, &p.core, p.request_sequence,
-                                                           current, p.lease_ms - age)
-                                 : CP_POLICY_STALE;
-            if (result != CP_POLICY_OK) {
-                (void)cp_pipeline_stop();
+            /* Stop/flush the old worker before claiming its memory resource.
+             * apply() also stops defensively, but that stop must be a no-op. */
+            esp_err_t stop = cp_pipeline_stop();
+            cp_pipeline_snapshot(&pipe);
+            if (stop != ESP_OK || pipe.stop_failed) {
                 cp_core_mark_apply_failed(&s_core);
+                (void)cp_network_report_activation(p.core.config_id, false, "capture_stop_failed");
+                reason("capture_stop_failed");
+            } else if (!claim_radio_policy(&p)) {
+                /* Contention or replacement leaves this sequence retryable. */
+                reason("capture_waiting_for_network");
+            } else if (receive_policy(&p) != CP_POLICY_OK) {
                 cp_network_end_radio_transition();
-                (void)cp_network_report_activation(p.core.config_id, false, "unsupported_policy");
-                reason("unsupported_policy");
-            } else if (s_core.policy_state != CP_POLICY_APPLIED) {
+                reject_policy(&p);
+            } else {
                 cp_core_set_setup_active(&s_core, false);
                 /* A deferred memory recovery stays staged until a fresh policy and
                  * healthy heap permit actual capture. Do not claim activation. */
@@ -245,9 +274,6 @@ static void apply_control(void) {
                     (void)cp_network_report_activation(p.core.config_id, false, failure);
                     reason(failure);
                 }
-            } else {
-                cp_pipeline_renew_lease(p.fetched_mono_ms + p.lease_ms);
-                cp_network_end_radio_transition();
             }
         }
     }
@@ -261,20 +287,28 @@ static void apply_control(void) {
     if (cp_collection_allowed(state) && !pipe.collecting && pipe.storage_ready &&
         maintenance == ESP_OK && !pipe.stop_failed && !pipe.radio_restart_required &&
         !net.http_in_flight && (!pipe.memory_paused || pipe.memory_restart_ready) &&
-        cp_network_get_policy(&p) &&
+        cp_network_get_policy(&p) && p.request_sequence == s_core.latest_request_sequence &&
+        !strcmp(p.core.config_id, s_core.applied_config_id) &&
         (!pipe.pressure_paused ||
          pipe.free_slots * 100u >= pipe.capacity_slots * (100u - p.resume_pct))) {
-        if (!claim_radio_policy(&p)) {
+        esp_err_t stop = cp_pipeline_stop();
+        cp_pipeline_snapshot(&pipe);
+        if (stop != ESP_OK || pipe.stop_failed) {
+            cp_core_mark_apply_failed(&s_core);
+            reason("capture_stop_failed");
+        } else if (!claim_radio_policy(&p)) {
             reason("capture_waiting_for_network");
         } else {
             uint64_t current = now_ms();
-            bool fresh = current >= p.fetched_mono_ms && current - p.fetched_mono_ms < p.lease_ms;
+            bool fresh = current >= p.fetched_mono_ms && current - p.fetched_mono_ms < p.lease_ms &&
+                cp_collection_allowed(cp_core_decide(&s_core, current));
             esp_err_t err = fresh ? cp_pipeline_apply(&p) : ESP_ERR_INVALID_STATE;
             cp_network_end_radio_transition();
             reason(!fresh ? "collection_lease_expired" : err != ESP_OK
                 ? "capture_recovery_failed" : "policy_applied");
         }
     }
+    state = cp_core_decide(&s_core, now_ms());
     cp_pipeline_snapshot(&pipe);
     bool policy_current = net.policy_valid && s_core.policy_state != CP_POLICY_FAILED &&
         s_core.lease_valid && now_ms() >= p.fetched_mono_ms &&

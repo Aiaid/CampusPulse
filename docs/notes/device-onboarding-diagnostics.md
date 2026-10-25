@@ -248,6 +248,39 @@ across HTTP requests so frequent cloud work cannot indefinitely prevent recovery
 An actual-raster ASan/UBSan regression also catches an existing cross-call DMA
 buffer reuse problem, preserving ping-pong phase across odd-stripe renders.
 
+The `cp-90972afd3300` run started both BLE and the collector, generated multiple
+30-second windows and received successful ingestion responses. It also exposed
+a remaining overlap: JSON encoding and HTTPS could drive the minimum free heap
+to 16 bytes. Same-policy lease renewal could wait behind sustained HTTP work,
+allowing the original 120-second grant to expire despite newer validated GETs.
+
+Encoding windows/status, parsing frozen-batch metadata and HTTPS now share one
+bounded memory resource. Worker encoding waits at most 15 seconds; optional
+raw/status work defers when busy. A timeout records the unpersisted window,
+address and raw losses, and frozen upload bytes remain unchanged for retry.
+Stopping a collector waits up to 25 seconds without the supervisor holding that
+resource; radio initialization claims it only after the old worker has stopped.
+Fresh same-policy renewal validates age and core semantics without waiting for
+an HTTP allocation resource. It neither restarts the collector nor extends an
+expired or rejected policy.
+
+HTTP admission requires at least 32 KiB free internal RAM and an 18 KiB
+contiguous block before client allocation. Insufficient admission is reported
+as `resource_exhausted` for automatic collection pressure handling. Actual
+8 KiB worker stack minima were 4,336 bytes (network), 3,960 bytes (uploader) and
+4,272 bytes (collector); these three workers now use 6 KiB stacks, retaining
+about 2 KiB of measured spare stack while recovering 6 KiB of heap. Control,
+USB and NimBLE host stacks retain their previous sizes. Content-free numeric
+upload logs distinguish stream, validated receipt result, item count and whether
+the frozen batch belongs to this boot.
+
+The screen shows `RAW MEMORY PAUSED` only if raw capture was enabled and the
+collector is running. An internal warning while raw is configured off must not
+claim a sampling pause. Expired/failed-policy state also takes precedence over
+a retained memory label. Actual-supervisor tests cover these display cases;
+54 runtime scenarios cover renewal/admission, and actual-pipeline allocator
+tests verify the shared gate, timeout losses, safe stop and unchanged retries.
+
 ### Network authentication modes
 
 The administrator wizard and device-hosted setup page explicitly select WPA2

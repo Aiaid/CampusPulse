@@ -17,6 +17,12 @@ typedef struct {
     esp_err_t abort_reason;
     bool read_stopped;
 } cp_http_response_t;
+/* Budget admission, before allocating a TLS client. Total RAM cannot replace
+ * a large-enough contiguous record buffer. Preserve margin for the application. */
+static inline bool cp_http_working_set_available(size_t free_bytes,size_t largest_bytes)
+{
+    return free_bytes>=32u*1024u && largest_bytes>=18u*1024u;
+}
 /* Separate from transport IO so size, cancellation and continuous-response
  * deadline admission are tested directly. Pinned IDF ignores callback return
  * values, so the response adapter also stops local body reads on rejection. */

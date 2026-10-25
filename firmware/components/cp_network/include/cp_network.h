@@ -73,6 +73,10 @@ void cp_network_snapshot(cp_network_snapshot_t *out);
 /* Returns latest validated policy; root uses request_sequence to renew core's
  * monotonic lease but only applies hardware when config ID actually changes. */
 bool cp_network_get_policy(cp_network_policy_t *out);
+/* Worker-task memory admission, shared with HTTPS and radio startup. A zero
+ * timeout is nonblocking; waits are bounded to 15 seconds. Never nest claims. */
+bool cp_network_begin_memory_work(uint32_t timeout_ms);
+void cp_network_end_memory_work(void);
 /* Runtime task only: nonblocking admission against HTTPS working-set
  * allocations. Pair every successful claim with end in the same task, before
  * calling report_activation (which acquires the same resource). */

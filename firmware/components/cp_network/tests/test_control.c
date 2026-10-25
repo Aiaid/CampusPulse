@@ -34,6 +34,9 @@ static void free_response(cp_http_response_t *response)
 }
 static void test_lazy_response(void)
 {
+    assert(cp_http_working_set_available(32u*1024u,18u*1024u));
+    assert(!cp_http_working_set_available(32u*1024u-1,18u*1024u));
+    assert(!cp_http_working_set_available(128u*1024u,18u*1024u-1));
     response_allocations=response_fail_at=0;
     cp_http_response_t response={.deadline_ms=100};
     int fake_client=1;

@@ -23,6 +23,7 @@ done
     "$CP_FW/components/cp_pipeline/scheduler.c" -o "$CP_BUILD/test_scheduler"
 "$CP_BUILD/test_scheduler"
 bash "$CP_FW/tests/run-memory-guard.sh"
+bash "$CP_FW/tests/pipeline/run-host.sh"
 # Only the pinned upstream JSON implementation needs platform deprecation suppression.
 "$CP_CC" -std=c11 -Wall -Wextra -Werror -Wno-deprecated-declarations -g \
     -fsanitize=address,undefined -I"$CP_JSON" -c "$CP_JSON/cJSON.c" -o "$CP_BUILD/cJSON.o"

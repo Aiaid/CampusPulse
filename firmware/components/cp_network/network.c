@@ -81,7 +81,7 @@ typedef enum {
     NET_PHASE_DNS=1,NET_PHASE_CLIENT_INIT,NET_PHASE_HTTP_END,
     NET_PHASE_CONTACT_JSON,NET_PHASE_CONTACT_RESPONSE,NET_PHASE_POLICY_RESPONSE,
     NET_PHASE_ACTIVATION_JSON,NET_PHASE_ACTIVATION_RESPONSE,NET_PHASE_ACTIVATION_PARSE,
-    NET_PHASE_UPLOAD_RESPONSE,NET_PHASE_START,
+    NET_PHASE_UPLOAD_RESPONSE,NET_PHASE_START,NET_PHASE_HTTP_BUDGET,
 } net_phase_t;
 static void log_evidence(net_phase_t phase,esp_err_t error,int socket_errno,
     esp_err_t tls_error,int tls_code,int tls_flags,int status,uint64_t started)
@@ -202,6 +202,12 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
     const uint64_t started=now_ms();
     lock(); bool eligible=s_link && s_synced; unlock();
     if (!running() || !eligible) return ESP_ERR_INVALID_STATE;
+    const uint32_t caps=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;
+    if(!cp_http_working_set_available(heap_caps_get_free_size(caps),
+                                      heap_caps_get_largest_free_block(caps))) {
+        allocation_failed(NET_PHASE_HTTP_BUDGET);
+        return ESP_ERR_NO_MEM;
+    }
     esp_err_t resolved=resolve_api();
     if(resolved!=ESP_OK)return resolved;
     lock();
@@ -509,7 +515,9 @@ esp_err_t cp_network_start(const cp_settings_t *settings)
     s_snapshot.clock_trusted=false; s_snapshot.policy_valid=false; s_snapshot.policy_present=false; s_snapshot.policy_rejected=false; s_snapshot.policy_expired=false; s_snapshot.policy_response_sequence=0; s_snapshot.desired_config_id[0]=0;
     unlock();
     __atomic_store_n(&s_running,true,__ATOMIC_RELEASE);
-    if (xTaskCreate(service,"cp_network",8192,NULL,4,&s_task)!=pdPASS) { s_task=NULL; e=ESP_ERR_NO_MEM; goto failed; }
+    /* Actual 8 KB stack watermark remained >= 4,336 bytes through TLS/config
+     * requests. Retain over 2 KB of that observed margin with a 6 KB worker. */
+    if (xTaskCreate(service,"cp_network",6144,NULL,4,&s_task)!=pdPASS) { s_task=NULL; e=ESP_ERR_NO_MEM; goto failed; }
     return ESP_OK;
 failed:
     lock();s_snapshot.last_error=e;unlock();
@@ -566,9 +574,17 @@ bool cp_network_get_policy(cp_network_policy_t *out)
 }
 bool cp_network_begin_radio_transition(void)
 {
-    return s_http && xSemaphoreTake(s_http,0)==pdTRUE;
+    return cp_network_begin_memory_work(0);
 }
 void cp_network_end_radio_transition(void)
+{
+    cp_network_end_memory_work();
+}
+bool cp_network_begin_memory_work(uint32_t timeout_ms)
+{
+    return s_http && timeout_ms<=15000 && xSemaphoreTake(s_http,pdMS_TO_TICKS(timeout_ms))==pdTRUE;
+}
+void cp_network_end_memory_work(void)
 {
     xSemaphoreGive(s_http);
 }

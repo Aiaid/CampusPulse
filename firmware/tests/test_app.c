@@ -465,6 +465,23 @@ static void test_actual_capture_and_pressure_status(void)
     runtime_view.pipeline.collecting = true;
     run_one_supervisor_round(false);
     assert(!strcmp(last_view.collection, cp_collection_state_name(CP_COLLECTION_ALLOWED)));
+    /* An internal warning cannot pause raw capture that was already off. */
+    runtime_view.pipeline.memory_raw_paused = true;
+    runtime_view.network.policy.raw_enabled = false;
+    run_one_supervisor_round(false);
+    assert(!strcmp(last_view.collection, cp_collection_state_name(CP_COLLECTION_ALLOWED)));
+    runtime_view.network.policy.raw_enabled = true;
+    run_one_supervisor_round(false);
+    assert(!strcmp(last_view.collection, "RAW MEMORY PAUSED"));
+    runtime_view.pipeline.memory_raw_paused = false;
+    runtime_view.network.policy.raw_enabled = false;
+    runtime_view.pipeline.memory_paused = true;
+    runtime_view.network.policy_valid = true;
+    runtime_view.collection = CP_COLLECTION_LEASE_EXPIRED;
+    run_one_supervisor_round(false);
+    assert(!strcmp(last_view.collection, cp_collection_state_name(CP_COLLECTION_LEASE_EXPIRED)));
+    runtime_view.pipeline.memory_paused = false;
+    runtime_view.collection = CP_COLLECTION_ALLOWED;
     runtime_view.pipeline.collecting = false;
     runtime_view.pipeline.pressure_paused = true;
     run_one_supervisor_round(false);

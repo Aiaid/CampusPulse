@@ -64,8 +64,11 @@ static void show_status(const cp_runtime_snapshot_t *runtime) {
              : !runtime->pipeline.storage_ready  ? "JOURNAL UNAVAILABLE"
              : runtime->pipeline.stop_failed     ? "CAPTURE STOP FAILED"
              : runtime->pipeline.radio_restart_required ? "BLE NEEDS RESTART"
-             : runtime->pipeline.memory_paused   ? "MEMORY PAUSED"
-             : runtime->pipeline.memory_raw_paused ? "RAW MEMORY PAUSED"
+             : runtime->pipeline.memory_paused && runtime->network.policy_valid &&
+                 runtime->collection != CP_COLLECTION_LEASE_EXPIRED &&
+                 runtime->collection != CP_COLLECTION_POLICY_FAILED ? "MEMORY PAUSED"
+             : runtime->pipeline.memory_raw_paused && runtime->network.policy.raw_enabled &&
+                 runtime->pipeline.collecting ? "RAW MEMORY PAUSED"
              : runtime->pipeline.pressure_paused ? "STORAGE PAUSED"
              : cp_collection_allowed(runtime->collection) && !runtime->pipeline.collecting
                  ? "CAPTURE STOPPED"
