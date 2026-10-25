@@ -46,9 +46,26 @@ registration branch. Network/auth/API failures must not be treated as absence.
 A lost registration reply requires reconciliation, never a blind second POST.
 An existing credential cannot be recovered from the server. An already-enrolled
 physical device may explicitly reuse its validated saved credential in RAM,
-without returning that secret to the browser. Otherwise the user supplies a
-saved credential or explicitly confirms rotation. Old/unsupported firmware
-must not pretend it supports local credential reuse.
+without returning that secret to the browser. When a verified USB/BLE device
+explicitly reports no saved credential, the network form offers one explicit
+"reauthorize and connect" action instead of requiring a manually copied key.
+Its adjacent notice explains that the old credential becomes invalid; the
+existing administrator reauthentication and rotation endpoint remain in force.
+Saved credentials use the internal reuse path without rotation. Unknown/old
+firmware cannot claim this recovery capability; backup-key entry stays under
+advanced options.
+
+Before issuing a replacement, the form validates the Wi-Fi fields and the exact
+escaped local payload length (496 BLE plaintext bytes or 1024 USB JSON bytes).
+The recovery helper rereads the same physical identity, supported transport,
+configurable session state, cloud enabled state and current desired config
+before each actual POST, including after an administrator reauthentication
+dialog. If the device now has a saved credential, it reuses it instead. A
+returned replacement stays only in wizard memory and is retained through a
+local preflight or network-validation failure; those retries never issue again.
+A lost/malformed issuance reply is uncertain and blocks another automatic
+issuance in that wizard. Only an explicit server reauthentication rejection can
+be retried automatically, after repeating the readiness checks.
 
 Local submission, successful Wi-Fi validation, saved settings, cloud contact and
 fresh configuration ACK are separate states. A fresh heartbeat cannot turn an

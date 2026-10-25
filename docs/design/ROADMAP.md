@@ -143,6 +143,15 @@ collection and durable upload. Final local software verification passed on
 
 ## Completed archive
 
+- [x] Replace the manual-key roadblock for verified, registered USB/BLE nodes
+      with no saved credential: offer one explicit reauthorize-and-connect
+      action, retain a returned replacement across local/network retry, recheck
+      device/cloud readiness after reauthentication, preflight escaped transport
+      size, and block uncertain issuance replay. Existing saved credentials
+      continue to reuse without rotation. Verify 569 tests, build and synthetic
+      Chromium/WebKit recovery flows; actual network authorization is user-owned.
+      See [onboarding diagnostics](../notes/device-onboarding-diagnostics.md).
+
 - [x] Keep prepared device settings editable after Save. Load current values,
       save edits as the current desired settings, preserve capture/retention
       choices, and allow configuration/Wi-Fi entry before device credentials.

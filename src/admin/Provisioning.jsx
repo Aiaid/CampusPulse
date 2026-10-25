@@ -6,6 +6,7 @@ import { PIN_PATTERN } from './provisioning/security2.js';
 import { serialSupport, selectProvisioningPort, connectSerialProvisioning, connectSerialDiagnostics } from './provisioning/serial.js';
 import { saveProvisionSettings, cloudProgress, inspectEnrollment, currentProvisionConfig, NODE_PATTERN, TOKEN_PATTERN } from './provisioning/enrollment.js';
 import { diagnosticView, previousDiagnostic, bootEvidence } from './provisioning/diagnostics.js';
+import { prepareNetworkCredential } from './provisioning/credential-recovery.js';
 import { wifiPayload, supportsWifiMode } from './provisioning/network.js';
 import './provisioning.css';
 
@@ -38,6 +39,8 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
   const reusableCredential = registered && !credentialChanged && identity?.has_saved_credential === true;
   const mayRequestSavedCredential = reusableCredential || (registered && !credentialChanged && mode === 'ap');
   const credentialReady = credentialMode === 'saved' ? mayRequestSavedCredential : credentialMode === 'provided' && TOKEN_PATTERN.test(token.current);
+  const authorizationNeeded = registered && physicalReady && !disconnected && mode !== 'ap' &&
+    identity?.has_saved_credential === false && !credentialReady && !credentialChanged && !registerUncertain;
   const currentConfig = currentProvisionConfig(detail);
   const progress = submitted ? cloudProgress(detail, configId, started.current) : { contact: false, applied: false };
   const diagnosis = diagnosticView(localStatus), previous = previousDiagnostic(localStatus), boot = bootEvidence(localStatus);
@@ -47,7 +50,7 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
     : writeComplete ? '本次配网已完成。再次发送前，点击重新配置网络。'
       : !registered ? '请先确认设备的云端登记。'
         : !physicalReady || disconnected ? '发送前请连接同一台现场设备。'
-          : !credentialReady ? '发送前请在上方准备设备凭证；现在仍可编辑配置和 Wi-Fi。'
+          : !credentialReady && !authorizationNeeded ? registerUncertain ? '上次联网授权结果尚未确认，不能再次自动签发。请先核对设备和上次操作。' : '当前连接未确认可用的联网授权，请重连设备或使用备份凭证。'
             : configDirty || !configId ? '位置或采集设置尚未保存，请先点击保存配置。'
               : currentConfig?.id !== configId ? '云端当前配置已变化或失效，请重新检查并保存配置。'
               : detail?.device?.enabled === false ? '此设备已停用，请先在设备详情启用。'
@@ -199,7 +202,40 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
     if (!supportsWifiMode(identity, wifiSecurity)) throw new Error('当前设备固件未报告此认证方式，请先升级固件。');
     const network = wifiPayload({ mode: wifiSecurity, ssid, password, username: eapUsername, identity: eapIdentity, enterprisePassword: eapPassword });
     if (localStatus?.state === 'failed' || (submitted && localStatus?.state === 'waiting')) attempt.current = crypto.randomUUID();
-    const body = { op: 'configure', node_id: node, attempt_id: attempt.current, ...network, ...(credentialMode === 'saved' ? { reuse_saved_credential: true } : { device_token: token.current }) };
+    let sendMode = credentialMode, sendCredential = token.current;
+    // Check the exact serialized local payload before changing a cloud key.
+    // A valid enterprise form may still exceed BLE/USB bounds after escaping.
+    const estimated = { v: 1, op: 'configure', node_id: node, attempt_id: attempt.current, ...network,
+      ...(sendMode === 'saved' ? { reuse_saved_credential: true } : { device_token: authorizationNeeded ? `cpd_${'0'.repeat(64)}` : sendCredential }),
+      ...(mode === 'usb' ? { nonce: identity.nonce || '0'.repeat(32) } : {}) };
+    if (new TextEncoder().encode(JSON.stringify(estimated)).length > (mode === 'usb' ? 1024 : 496)) {
+      throw new Error(mode === 'usb' ? '认证信息过长，请缩短企业身份字段后再试；尚未更改设备授权。' : '认证信息超出蓝牙传输限制，请缩短身份字段或改用 USB；尚未更改设备授权。');
+    }
+    if (authorizationNeeded) {
+      try {
+        const prepared = await prepareNetworkCredential({ node, identity, client: client.current, api, sensitiveAction,
+          beforeIssue: async () => {
+            if (!mounted.current || selectedNode.current !== node || disconnected) throw new Error('现场设备连接已变化，请重新连接后再试。');
+            const fresh = await api(`/devices/${node}`);
+            if (fresh.device?.id !== node || fresh.device.enabled === false || currentProvisionConfig(fresh)?.id !== configId) {
+              throw new Error('云端设备或采集配置已变化，请重新检查并保存配置后再连接。');
+            }
+          } });
+        if (!mounted.current || selectedNode.current !== node) return;
+        sendMode = prepared.mode; sendCredential = prepared.credential || '';
+        token.current = sendCredential; setCredentialMode(sendMode); setCredentialChanged(sendMode === 'provided');
+        setRegisterUncertain(false); setIdentity(prepared.identity);
+        setMessage(sendMode === 'provided' ? '设备联网授权已准备，正在发送网络设置；本次重试会继续使用这份授权。' : '设备已有保存的授权，直接用于本次连接。');
+      } catch (error) {
+        if (error.credentialIssuanceUncertain) {
+          token.current = ''; setCredentialMode(''); setCredentialChanged(true); setRegisterUncertain(true);
+          setLocalError('联网授权的返回结果尚未确认，已停止发送，不能自动再次签发。');
+        }
+        throw error;
+      }
+    }
+    const body = { op: 'configure', node_id: node, attempt_id: attempt.current, ...network,
+      ...(sendMode === 'saved' ? { reuse_saved_credential: true } : { device_token: sendCredential }) };
     const wasSubmitted = submitted, previousStarted = started.current, previousStatus = localStatus;
     started.current = Date.now(); setWriteComplete(false); setSubmitted(true); setLocalError(''); setCloudError('');
     setLocalStatus({ state: 'sending' });
@@ -244,14 +280,14 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
         {identity && <p className="cp-admin-mono">{node} · {identity.board} {disconnected ? '（本机连接已断开）' : mode === 'usb' ? '（USB 工厂身份已读取）' : '（已验证身份）'}</p>}
         {initialNodeId && !identity && <p>已选择云端节点。写入前仍需核对同一台现场设备。</p>}
       </section>
-      <section><h3>2 · 云端身份与设备凭证</h3>
+      <section><h3>2 · 设备登记与联网授权</h3>
         {lookup === 'idle' && <p>确认工厂节点 ID 后会自动检查登记状态。</p>}{lookup === 'checking' && <p role="status">正在查询云端是否已有此节点…</p>}
         {lookup === 'new' && <><Notice>这是尚未登记的节点。首次登记只创建一次云端身份；连接 Wi-Fi 需要下一步现场写入。</Notice><Field label="设备名称"><input value={name} maxLength={80} onChange={e => setName(e.target.value)} /></Field><button className="cp-admin-button" disabled={mutation.pending || !physicalReady || registerUncertain || !name.trim()} onClick={register}>首次登记并取得设备凭证</button></>}
         {registered && <><div className="cp-provision-existing"><strong>已登记设备 · {detail?.device?.name || '现场节点'}</strong><p>本次重新配置网络，沿用现有云端身份。不会再次创建设备记录。</p></div>
           {detail?.device?.enabled === false && <Notice>此云端节点已停用，设备认证会被拒绝。请在设备详情启用后重新检查登记状态，再提交 Wi-Fi。</Notice>}
           {mayRequestSavedCredential && <label className="cp-provision-option"><input type="radio" name="credential-source" checked={credentialMode === 'saved'} disabled={mutation.pending || registerUncertain || submitted} onChange={() => { token.current = ''; setCredentialMode('saved'); }} /><span><strong>保留设备内现有凭证</strong><small>{mode === 'ap' ? '由设备本地页面核验是否支持复用；旧页面拒绝时请改用备份凭证。不会在浏览器读取设备内凭证。' : '设备已报告可复用保存的凭证；凭证不会被读取到浏览器。'}</small></span></label>}
           {credentialMode === 'provided' && <p role="status">设备凭证已准备，仅保留于当前向导。</p>}
-          {!mayRequestSavedCredential && credentialMode !== 'provided' && <p>此连接尚未提供可复用凭证能力。请使用已保存的凭证；无法取得时才考虑明确轮换。</p>}
+          {!mayRequestSavedCredential && credentialMode !== 'provided' && !registerUncertain && <p>{authorizationNeeded ? '设备还没有保存联网授权。填写 Wi-Fi 后，直接点击下方的重新授权并连接，无需手动复制密钥。' : '当前连接尚未确认设备的联网授权状态。请重连现场设备，或使用备份的设备凭证。'}</p>}
           <details><summary>使用已保存的设备凭证或更换凭证</summary><Field label="已有的独立设备凭证"><input type="password" autoComplete="off" value={existingToken} onChange={e => setExistingToken(e.target.value)} disabled={submitted && !diagnosis.failed} /></Field><button className="cp-admin-button" disabled={mutation.pending || (submitted && !diagnosis.failed)} onClick={useSaved}>使用已有设备凭证</button><details><summary>无法取得旧凭证：明确轮换</summary><Notice>轮换会立即使旧凭证失效，设备可能暂停联网。只在确实需要更换凭证时使用。</Notice><label className="cp-admin-checkbox"><input type="checkbox" checked={rotateConsent} onChange={e => setRotateConsent(e.target.checked)} />我确认旧凭证会立即失效，并将新凭证写入这台设备。</label><button className="cp-admin-button cp-admin-danger" disabled={mutation.pending || !rotateConsent || (submitted && !diagnosis.failed)} onClick={rotate}>确认轮换并重新配网</button></details></details>
         </>}
         {registerUncertain && <Notice>上次登记或轮换的结果尚不确定。请先查询结果；不会自动再次登记或轮换。已有凭证无法由服务器再次取回。</Notice>}
@@ -266,10 +302,11 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
         {configDirty ? <p role="status">有尚未保存的配置修改。</p> : configId && <p role="status">当前配置已准备好，仍可继续修改并保存。</p>}
       </fieldset>
       <fieldset disabled={mutation.pending || validating}><legend>4 · 设置 Wi-Fi</legend>
+        {authorizationNeeded && <Notice>点击“重新授权并连接 Wi-Fi”会为已连接的这台设备重新签发联网凭证，旧凭证立即失效；设备登记、位置和采集配置继续保留。</Notice>}
         <p>支持 2.4 GHz WPA2、开放网络和 PEAP/MSCHAPv2 企业认证。企业认证不校验服务器证书；云端 HTTPS 仍严格验证。网页登录 / Portal 需要另行处理。</p>
         {mode !== 'ap' ? <form onSubmit={e => { e.preventDefault(); transmit(); }}>
           <Field label="Wi-Fi 认证方式"><select value={wifiSecurity} disabled={validating} onChange={e => { setWifiSecurity(e.target.value); setPassword(''); setEapPassword(''); }}><option value="wpa2">WPA2 个人网络</option><option value="open">开放网络（无密码）</option><option value="enterprise">企业网络 · PEAP/MSCHAPv2（不校验证书）</option></select></Field><Field label="Wi-Fi SSID"><input value={ssid} onChange={e => setSsid(e.target.value)} required autoComplete="off" disabled={validating} /></Field>{wifiSecurity === 'enterprise' && <><Field label="企业认证用户名"><input value={eapUsername} onChange={e => setEapUsername(e.target.value)} required autoComplete="off" disabled={validating} /></Field><Field label="外层身份（可选）" hint="留空使用用户名。"><input value={eapIdentity} onChange={e => setEapIdentity(e.target.value)} autoComplete="off" disabled={validating} /></Field><Field label="企业认证密码"><input type="password" value={eapPassword} onChange={e => setEapPassword(e.target.value)} required autoComplete="new-password" disabled={validating} /></Field></>}{wifiSecurity === 'open' && <p>开放网络不发送 Wi-Fi 密码；设备凭据仍只在严格验证的 HTTPS 连接中使用。</p>}{wifiSecurity === 'wpa2' && <Field label="Wi-Fi 密码" hint={diagnosis.failed ? '修改密码后重试。设备凭证和已选云端配置继续保留。' : '仅经本机连接发往设备，不发送给云端 API。'}><input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8} autoComplete="new-password" disabled={validating} /></Field>}
-          <button type="submit" className="cp-admin-button cp-admin-primary" disabled={!!submitReason}>{diagnosis.failed ? '使用修正后的 Wi-Fi 重试' : mode === 'usb' ? '通过 USB 发送给设备' : '加密发送给设备'}</button>{validating && <p role="status">设备正在处理本次设置，请先查看下方阶段；尚未确认失败前不重复改写。</p>}
+          <button type="submit" className="cp-admin-button cp-admin-primary" disabled={!!submitReason}>{authorizationNeeded ? '重新授权并连接 Wi-Fi' : diagnosis.failed ? '使用修正后的 Wi-Fi 重试' : mode === 'usb' ? '通过 USB 发送给设备' : '加密发送给设备'}</button>{validating && <p role="status">设备正在处理本次设置，请先查看下方阶段；尚未确认失败前不重复改写。</p>}
         </form> : <><button className="cp-admin-button cp-admin-primary" disabled={!!submitReason} onClick={prepareAp}>显示本地配网交接内容</button>{handoff && <Field label="复制到设备本地页面的交接内容" hint={credentialMode === 'saved' ? '仅请求设备使用内部已有凭证；本地页面还会核对节点和能力。' : '包含独立设备凭证；仅粘贴到现场设备页面。'}><textarea readOnly rows={5} value={handoff} autoComplete="off" spellCheck={false} onFocus={e => e.target.select()} /></Field>}<p>本地页面接收后热点会关闭以测试网络。恢复互联网后回到这里查看云端确认；热点消失不代表已联网。</p></>}
         {submitReason && <p role="status">{submitReason}</p>}
       </fieldset>
