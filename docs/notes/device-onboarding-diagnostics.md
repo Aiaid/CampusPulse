@@ -145,6 +145,19 @@ Sanitized, ignored evidence stores only numeric/error/state fields, not raw UART
 SSID, enterprise identity, password, nonce or credential values. Physical repair
 acceptance is tracked separately from these source findings.
 
+With `cp-3ced53455c1e` on that same saved network, a sanitized 90-second
+boot trace showed three successful HTTP 200 contact requests, interleaved with
+two following TLS-stage request deadlines at about 12 seconds. The minimum
+8-bit heap reached 2,636 bytes. This identifies severe memory pressure alongside
+the timeouts; it does not prove an allocator failure or a radio conflict.
+The response adapter now allocates only after positive response data arrives,
+starting at 256 bytes and growing up to the existing 8,193-byte bound. Contact,
+configuration, activation and upload requests therefore no longer reserve an
+8 KB body buffer during TLS setup. Allocation failure preserves the old buffer
+for cleanup and reports `resource_exhausted`; ASan/UBSan tests inject every growth
+failure and cover size, deadline and cancellation bounds. Device acceptance of
+this memory change is still pending.
+
 ### Network authentication modes
 
 The administrator wizard and device-hosted setup page explicitly select WPA2

@@ -287,8 +287,7 @@ static bool contact(void)
         s_pending_contact=candidate; ++s_contact_seq;
     }
     if (!s_pending_contact) return false;
-    response_t r={.body=calloc(1,CP_NETWORK_BODY_MAX+1)};
-    if (!r.body) { allocation_failed(NET_PHASE_CONTACT_RESPONSE); return false; }
+    response_t r={0};
     int status=0;
     esp_err_t e=request_locked("/api/v2/device/contact",s_pending_contact,strlen(s_pending_contact),NULL,&r,&status);
     bool ok=e==ESP_OK && status==200 && cp_network_control_ack_matches(r.body,r.used,s_node,s_boot,s_contact_seq,NULL,NULL,NULL);
@@ -304,8 +303,7 @@ static bool contact(void)
 }
 static void fetch_policy(void)
 {
-    response_t r={.body=calloc(1,CP_NETWORK_BODY_MAX+1)};
-    if (!r.body) { allocation_failed(NET_PHASE_POLICY_RESPONSE); return; }
+    response_t r={0};
     const uint64_t sequence=++s_request_seq;
     int status=0;
     uint64_t started=now_ms();
@@ -351,8 +349,7 @@ static void send_activation(void)
         return;
     }
     if (!s_pending_activation) return;
-    response_t r={.body=calloc(1,CP_NETWORK_BODY_MAX+1)};
-    if (!r.body) { allocation_failed(NET_PHASE_ACTIVATION_RESPONSE); return; }
+    response_t r={0};
     int status=0;
     esp_err_t e=request_locked("/api/v2/device/config/ack",s_pending_activation,strlen(s_pending_activation),NULL,&r,&status);
     cJSON *sent=cJSON_Parse(s_pending_activation);
@@ -624,12 +621,7 @@ cp_net_upload_result_t cp_network_upload_frozen(const void *body, size_t length,
         strcmp(expected->node_id,s_node)) return CP_NET_UPLOAD_REJECTED;
     char hash[65];
     if (!cp_network_sha256(body,length,hash) || strcmp(hash,expected->body_sha256)) return CP_NET_UPLOAD_REJECTED;
-    response_t r={.body=calloc(1,CP_NETWORK_BODY_MAX+1)};
-    if (!r.body) {
-        allocation_failed(NET_PHASE_UPLOAD_RESPONSE);
-        lock();++s_snapshot.upload_failures;unlock();
-        return CP_NET_UPLOAD_RETRY;
-    }
+    response_t r={0};
     xSemaphoreTake(s_http,portMAX_DELAY);
     esp_err_t e=request_locked("/api/v2/ingest",body,length,hash,&r,&ack->http_status);
     cp_net_upload_result_t result=CP_NET_UPLOAD_RETRY;

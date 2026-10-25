@@ -1,11 +1,18 @@
 #ifndef CP_HTTP_RESPONSE_H
 #define CP_HTTP_RESPONSE_H
 #include "cp_network.h"
+#include <stdlib.h>
 #include <string.h>
 #include "esp_http_client.h"
+#ifndef CP_HTTP_RESPONSE_REALLOC
+#define CP_HTTP_RESPONSE_REALLOC realloc
+#endif
 typedef struct {
     char *body;
     size_t used;
+    /* Allocated bytes including the terminator. Start body/capacity at zero;
+     * the caller owns body and frees it after transport cleanup. */
+    size_t capacity;
     uint64_t deadline_ms;
     esp_err_t abort_reason;
     bool read_stopped;
@@ -28,7 +35,23 @@ static inline esp_err_t cp_http_response_append(cp_http_response_t *r,const void
         r->abort_reason=ESP_ERR_INVALID_SIZE;
         return r->abort_reason;
     }
-    if (length) memcpy(r->body+r->used,bytes,length);
+    /* Do not reserve body memory during TLS setup or for empty responses. */
+    if (!length) return ESP_OK;
+    const size_t needed=r->used+length+1;
+    if (r->capacity<needed) {
+        const size_t maximum=CP_NETWORK_BODY_MAX+1;
+        size_t capacity=r->capacity<256 ? 256 : r->capacity;
+        if (capacity>maximum) capacity=maximum;
+        while (capacity<needed)
+            capacity=capacity>maximum/2 ? maximum : capacity*2;
+        char *body=CP_HTTP_RESPONSE_REALLOC(r->body,capacity);
+        if (!body) {
+            r->abort_reason=ESP_ERR_NO_MEM;
+            return r->abort_reason;
+        }
+        r->body=body;r->capacity=capacity;
+    }
+    memcpy(r->body+r->used,bytes,length);
     r->used+=length;r->body[r->used]=0;
     return ESP_OK;
 }
