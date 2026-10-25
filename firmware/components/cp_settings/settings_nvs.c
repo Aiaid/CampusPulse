@@ -2,6 +2,13 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include <string.h>
+/* Exact pre-enterprise v1 blob layout. Migration reads only; the old selector
+ * and slot remain untouched until a validated v2 candidate is atomically saved. */
+typedef struct {
+    uint32_t version; char node_id[16],ssid[33],password[65];
+    char device_token[193],api_origin[64];
+} legacy_settings_t;
+_Static_assert(sizeof(legacy_settings_t)==376,"Legacy settings layout changed");
 static const char *slots[2] = {"settings_a", "settings_b"};
 esp_err_t cp_settings_init(void) { return nvs_flash_init(); }
 esp_err_t cp_settings_load(cp_settings_t *out)
@@ -18,7 +25,16 @@ esp_err_t cp_settings_load(cp_settings_t *out)
     size_t size=sizeof(*out);
     if (e==ESP_OK) e=nvs_get_blob(h,slots[slot],out,&size);
     nvs_close(h);
-    if (e==ESP_OK && (size!=sizeof(*out) || !cp_settings_validate(out))) e=ESP_ERR_INVALID_STATE;
+    if (e==ESP_OK && size==sizeof(legacy_settings_t)) {
+        legacy_settings_t legacy; memcpy(&legacy,out,sizeof legacy);
+        memset(out,0,sizeof(*out));out->version=CP_SETTINGS_VERSION;
+        memcpy(out->node_id,legacy.node_id,sizeof legacy.node_id);
+        memcpy(out->ssid,legacy.ssid,sizeof legacy.ssid);memcpy(out->password,legacy.password,sizeof legacy.password);
+        memcpy(out->device_token,legacy.device_token,sizeof legacy.device_token);memcpy(out->api_origin,legacy.api_origin,sizeof legacy.api_origin);
+        out->wifi_security=CP_WIFI_PERSONAL;
+        if(legacy.version!=1 || !cp_settings_validate(out))e=ESP_ERR_INVALID_STATE;
+        volatile unsigned char *v=(volatile unsigned char *)&legacy;for(size_t i=0;i<sizeof legacy;++i)v[i]=0;
+    } else if (e==ESP_OK && (size!=sizeof(*out) || !cp_settings_validate(out))) e=ESP_ERR_INVALID_STATE;
     if (e!=ESP_OK) cp_settings_clear_sensitive(out);
     return e==ESP_ERR_NVS_NOT_FOUND ? ESP_ERR_NOT_FOUND : e;
 }

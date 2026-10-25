@@ -1,5 +1,11 @@
 # Passport provisioning, policy and durable upload chain
 
+> Network revision, 2026-10-25: the newer
+> [onboarding and diagnostics note](device-onboarding-diagnostics.md) supersedes
+> the historical WPA2-only restriction and generic network failure behavior
+> described below. Open Wi-Fi and PEAP/MSCHAPv2 are implemented; real-network
+> acceptance for those modes remains separate from build and simulated tests.
+
 > Hardware update, 2026-10-25: one connected Passport now passes application-only
 > flashing, protected-region verification, a 60-second setup startup test and
 > native USB provisioning exchange. See the final hardware sections below. Earlier

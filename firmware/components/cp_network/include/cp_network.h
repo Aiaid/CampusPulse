@@ -2,6 +2,7 @@
 #define CP_NETWORK_H
 #include "cp_core.h"
 #include "cp_settings.h"
+#include "cp_network_diag.h"
 #include <stddef.h>
 #include <stdint.h>
 #define CP_PROTOCOL "campuspulse/2"
@@ -47,6 +48,7 @@ typedef struct {
     uint32_t connection_failures, upload_failures, ack_failures;
     int last_http_status;
     esp_err_t last_error;
+    cp_network_diagnostic_t diagnostic;
 } cp_network_snapshot_t;
 typedef struct {
     char node_id[16], boot_id[37], batch_id[65], stream[24], body_sha256[65];
@@ -75,6 +77,9 @@ void cp_network_set_capture_state(const char *state);
  * then stops it. Does not save credentials. Missing assignment is success;
  * bad Wi-Fi/TLS/auth leaves the previous NVS record untouched. */
 esp_err_t cp_network_validate_candidate(const cp_settings_t *settings, uint32_t timeout_ms);
+esp_err_t cp_network_validate_candidate_with_progress(const cp_settings_t *settings,
+    uint32_t timeout_ms,cp_network_progress_fn progress,void *context);
+void cp_network_diagnostic_snapshot(cp_network_diagnostic_t *out);
 /* At most one HTTP attempt. Caller retains exact bytes/identity on any result
  * except ACKED; caller schedules bounded retries. No redirects are followed. */
 cp_net_upload_result_t cp_network_upload_frozen(const void *body, size_t length,

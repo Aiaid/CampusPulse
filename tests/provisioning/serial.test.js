@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SerialFrames, serialFrame, SERIAL_PREFIX, openSerialClient, connectSerialProvisioning, selectProvisioningPort, serialSupport } from '../../src/admin/provisioning/serial.js';
+import { SerialFrames, serialFrame, SERIAL_PREFIX, openSerialClient, connectSerialProvisioning, connectSerialDiagnostics, selectProvisioningPort, serialSupport } from '../../src/admin/provisioning/serial.js';
 import { TEST_NODE, TEST_NONCE, TEST_TOKEN } from './device-peer.mjs';
 const encoder = new TextEncoder(), id = '11111111-2222-4333-8444-555555555555', other = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const info = { v: 1, ok: true, node_id: TEST_NODE, board: 'Synthetic headless board', transport: 'usb', security: 'physical-usb', nonce: TEST_NONCE };
@@ -86,6 +86,48 @@ describe('USB browser transport and enrollment boundary', () => {
     await expect(client.request({ op: 'configure', node_id: TEST_NODE, device_token: TEST_TOKEN })).rejects.toThrow('身份');
     expect(port.calls.some(c => c.op === 'configure' || c.device_token)).toBe(false); expect(port.closed).toBe(true);
   });
+  it('probes info after a lost begin ACK and only retries begin for explicit not-ready', async () => {
+    let begins = 0, infos = 0;
+    const port = fakePort(body => {
+      if (body.op === 'begin') return ++begins === 1 ? null : { v: 1, ok: true, state: 'starting' };
+      if (++infos <= 2) return { v: 1, ok: false, reason: 'session_busy' };
+      return begins === 1 ? { v: 1, ok: false, reason: 'setup_not_ready' } : info;
+    });
+    const { client } = await connectSerialProvisioning(port, { timeoutMs: 3, pollMs: 1, readyTimeoutMs: 100 });
+    expect(port.calls.map(c => c.op)).toEqual(['begin', 'info', 'info', 'info', 'begin', 'info']); await client.close();
+  });
+  it('accepts ready info after a lost begin ACK without resetting the session again', async () => {
+    const port = fakePort(body => body.op === 'begin' ? null : info);
+    const { client } = await connectSerialProvisioning(port, { timeoutMs: 3, pollMs: 1, readyTimeoutMs: 100 });
+    expect(port.calls.map(c => c.op)).toEqual(['begin', 'info']); await client.close();
+  });
+  it('bounds lost boot handshakes to three begins and never sends configure', async () => {
+    const port = fakePort(body => body.op === 'begin' ? null : { v: 1, ok: false, reason: 'setup_not_ready' });
+    await expect(connectSerialProvisioning(port, { timeoutMs: 3, pollMs: 1, readyTimeoutMs: 100 })).rejects.toThrow('尚未准备好');
+    expect(port.calls.filter(c => c.op === 'begin')).toHaveLength(3); expect(port.calls.some(c => c.op === 'configure')).toBe(false); expect(port.closed).toBe(true);
+  });
+  it('refuses saved credential reuse if capability disappears at the fresh identity check', async () => {
+    let reads = 0;
+    const port = fakePort(body => body.op === 'begin' ? { v: 1, ok: true, state: 'starting' } : { ...info, has_saved_credential: ++reads === 1 });
+    const { client } = await connectSerialProvisioning(port);
+    await expect(client.request({ op: 'configure', node_id: TEST_NODE, reuse_saved_credential: true })).rejects.toMatchObject({ code: 'saved_credential_unavailable' });
+    expect(port.calls.some(c => c.op === 'configure')).toBe(false); await client.close();
+  });
+  it('waits for one in-flight status poll before fresh info and a single configure', async () => {
+    let finishStatus; const port = fakePort(body => {
+      if (body.op === 'begin') return { v: 1, ok: true, state: 'starting' };
+      if (body.op === 'info') return info;
+      if (body.op === 'status') return new Promise(resolve => { finishStatus = () => resolve({ v: 1, ok: true, state: 'failed' }); });
+      return { v: 1, ok: true, state: 'received', attempt_id: body.attempt_id };
+    });
+    const { client } = await connectSerialProvisioning(port);
+    const poll = client.request({ op: 'status' }); await new Promise(resolve => setTimeout(resolve, 0));
+    await expect(client.request({ op: 'status' })).rejects.toThrow('正在读取');
+    const submit = client.request({ op: 'configure', node_id: TEST_NODE, attempt_id: id, device_token: TEST_TOKEN });
+    expect(port.calls.map(c => c.op)).toEqual(['begin', 'info', 'status']);
+    finishStatus(); await poll; expect((await submit).state).toBe('received');
+    expect(port.calls.map(c => c.op)).toEqual(['begin', 'info', 'status', 'info', 'configure']); await client.close();
+  });
   it('rejects supervisor busy, wrong transport, bad identity and missing nonce; closes the port', async () => {
     for (const ready of [{ ...info, nonce: undefined }, { ...info, node_id: 'browser-opaque-id' }, { ...info, transport: 'ble' }, { ...info, security: 'security2' }]) {
       const port = fakePort(body => body.op === 'begin' ? { v: 1, ok: true, state: 'starting' } : ready);
@@ -114,5 +156,14 @@ describe('USB browser transport and enrollment boundary', () => {
     let disconnected = false; const port = fakePort(() => null); const client = await openSerialClient(port, { onDisconnect: () => { disconnected = true; } });
     const pending = client.request({ op: 'status' }); port.unplug(); await expect(pending).rejects.toThrow('断开'); await client.close(); expect(disconnected).toBe(true);
     const timeoutPort = fakePort(() => null), timeout = await openSerialClient(timeoutPort, { timeoutMs: 5 }); await expect(timeout.request({ op: 'configure' })).rejects.toThrow('超时'); await timeout.close();
+  });
+});
+
+describe('read-only USB diagnosis boot recovery', () => {
+  it('retries only status on the same port after a lost boot request', async () => {
+    let reads = 0; const port = fakePort(() => ++reads === 1 ? null : { v: 1, ok: true, node_id: TEST_NODE, state: 'waiting' });
+    const { client, status } = await connectSerialDiagnostics(port, TEST_NODE, { timeoutMs: 3, pollMs: 1, readyTimeoutMs: 100 });
+    expect(status.state).toBe('waiting'); expect(port.calls.map(c => c.op)).toEqual(['status', 'status']);
+    await expect(client.request({ op: 'begin' })).rejects.toThrow('只能'); await client.close();
   });
 });

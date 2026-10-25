@@ -28,5 +28,32 @@ export async function assignProvisionConfig(api, node, attempt, place, dataset) 
 export function cloudProgress(detail, configId, since) {
   const d = detail?.device; if (!d) return { contact: false, applied: false };
   const fresh = Date.parse(d.latest_control?.received_at || d.last_seen_at || '') >= since;
-  return { contact: fresh, applied: fresh && d.desired_config_id === configId && d.applied_config_id === configId && d.config_state === 'applied', capture: d.latest_control?.capture_state || 'unknown' };
+  const ack = detail.activation?.current;
+  const freshAck = ack?.state === 'applied' && ack.capture_config_id === configId && Date.parse(ack.received_at || '') >= since;
+  const sameBoot = !ack?.boot_id || !d.latest_control?.boot_id || ack.boot_id === d.latest_control.boot_id;
+  return { contact: fresh, applied: fresh && freshAck && sameBoot && !!configId && d.desired_config_id === configId && d.applied_config_id === configId && d.config_state === 'applied', capture: d.latest_control?.capture_state || 'unknown' };
+}
+
+// Only the API's explicit unknown-device response permits first registration.
+// Connectivity/auth/interface failures must never be interpreted as a new node.
+export async function inspectEnrollment(api, node) {
+  if (!NODE_PATTERN.test(node)) throw new Error('请先确认有效的工厂节点 ID。');
+  try {
+    const detail = await api(`/devices/${node}`);
+    if (detail?.device?.id !== node) throw new Error('云端返回了不同的设备身份，请停止操作并刷新。');
+    return { kind: 'existing', detail };
+  } catch (error) {
+    if (error.status === 404 && error.code === 'device_not_found') return { kind: 'new', detail: null };
+    throw error;
+  }
+}
+export function currentProvisionConfig(detail, now = Date.now()) {
+  const id = detail?.device?.desired_config_id;
+  const published = detail?.configs?.find(c => c.id === id);
+  if (!id || !published) return null;
+  const c = published.config;
+  const placement = detail.placements?.find(p => p.id === c?.placement_id);
+  if (c?.protocol !== 'campuspulse/2' || c.node_id !== detail.device.id || Date.parse(c.accept_until) <= now || !Number.isFinite(Date.parse(c.accept_until))) return null;
+  if (!placement || placement.valid_from_ms > now || (placement.effective_valid_until_ms ?? placement.valid_until_ms ?? Infinity) <= now) return null;
+  return { id, published, placement, dataset: c.dataset };
 }

@@ -27,6 +27,11 @@ static QueueHandle_t s_commands;
 static TaskHandle_t s_task;
 static bool s_prepared, s_enrolled, s_testing;
 static bool s_candidate_pending;
+static portMUX_TYPE s_settings_lock=portMUX_INITIALIZER_UNLOCKED;
+static uint32_t s_saved_generation;
+static cp_network_attempt_t s_previous_attempt;
+static bool s_have_previous_attempt;
+static esp_err_t s_history_error;
 static uint64_t s_policy_response_seen;
 static uint64_t s_policy_attempted_sequence;
 static char s_reason[80];
@@ -44,6 +49,20 @@ static void boot_uuid(void) {
              b[15]);
 }
 static void reason(const char *text) { snprintf(s_reason, sizeof s_reason, "%s", text); }
+static bool resolve_saved_credential(const char *node,char *out,size_t capacity,uint32_t *generation,void *context) {
+    (void)context;
+    if(!node || strcmp(node,s_node) || (out&&capacity<CP_SETTINGS_TOKEN_SIZE))return false;
+    portENTER_CRITICAL(&s_settings_lock);
+    bool available=s_enrolled&&s_saved_generation>0;
+    if(available){if(out)memcpy(out,s_settings.device_token,CP_SETTINGS_TOKEN_SIZE);if(generation)*generation=s_saved_generation;}
+    portEXIT_CRITICAL(&s_settings_lock);return available;
+}
+static void save_attempt_record(const char *attempt,cp_attempt_state_t state,const cp_network_diagnostic_t *diagnostic) {
+    cp_network_attempt_t record={.version=1,.state=state,.diagnostic=*diagnostic};
+    memcpy(record.attempt_id,attempt,37);memcpy(record.boot_id,s_boot,37);
+    s_history_error=cp_network_attempt_save(&record);
+    cp_provision_set_previous_attempt(s_have_previous_attempt?&s_previous_attempt:NULL,s_history_error);
+}
 static esp_err_t submit(const cp_settings_t *candidate, const char *attempt, void *context) {
     (void)context;
     if (!candidate || !attempt || strlen(attempt) >= 37 || strcmp(candidate->node_id, s_node) ||
@@ -93,45 +112,54 @@ static void enter_setup(cp_provision_mode_t mode) {
     cp_network_set_capture_state("paused");
     publish();
 }
+static void candidate_progress(const cp_network_diagnostic_t *diagnostic,void *context) {
+    const command_t *cmd=context;
+    cp_provision_set_diagnostic(diagnostic,cmd->attempt);
+    reason(cp_network_diag_code_name(diagnostic->code));publish();
+}
 static void test_candidate(command_t *cmd) {
-    cp_provision_snapshot_t previous;
-    cp_provision_snapshot(&previous);
-    s_testing = true;
-    reason("testing_wifi_and_cloud");
-    publish();
-    cp_provision_set_status("testing", "wifi_and_cloud");
-    /* The GATT/HTTP task must have time to finish its received response. It did
-     * not promise persistence. Subsequent confirmation is cloud/device status. */
+    cp_provision_snapshot_t previous;cp_provision_snapshot(&previous);
+    cp_network_diagnostic_t diagnostic={0};
+    cp_network_diag_update(&diagnostic,CP_DIAG_HANDOFF,CP_DIAG_QUEUED,ESP_OK,0,true,false);
+    s_testing=true;reason("queued");cp_provision_set_status("testing","queued");
+    cp_provision_set_diagnostic(&diagnostic,cmd->attempt);publish();
+    cp_network_diagnostic_t interrupted=diagnostic;
+    cp_network_diag_update(&interrupted,CP_DIAG_HANDOFF,CP_DIAG_VALIDATION_INTERRUPTED,ESP_ERR_INVALID_STATE,0,true,true);
+    save_attempt_record(cmd->attempt,CP_ATTEMPT_INTERRUPTED,&interrupted);
+    /* Let the local transport finish its received ACK; it promised no save. */
     vTaskDelay(pdMS_TO_TICKS(1200));
-    esp_err_t err = cp_provision_stop();
-    if (err == ESP_OK)
-        err = cp_network_validate_candidate(&cmd->candidate, 45000);
-    if (err == ESP_OK)
-        err = cp_settings_save(&cmd->candidate);
-    if (err == ESP_OK) {
-        s_settings = cmd->candidate;
-        s_enrolled = true;
-        s_testing = false;
-        reason("stored_restarting");
-        cp_provision_set_status("saved", "stored_restarting");
-        publish();
-        cp_settings_clear_sensitive(&cmd->candidate);
-        vTaskDelay(pdMS_TO_TICKS(1500));
-        esp_restart();
+    esp_err_t err=cp_provision_stop();
+    if(err==ESP_OK) {
+        err=cp_network_validate_candidate_with_progress(&cmd->candidate,CP_NETWORK_VALIDATE_TIMEOUT_MS,candidate_progress,cmd);
+        cp_network_diagnostic_snapshot(&diagnostic);
+    } else cp_network_diag_update(&diagnostic,CP_DIAG_HANDOFF,CP_DIAG_HANDOFF_FAILED,err,1200,true,true);
+    if(err==ESP_OK) {
+        cp_network_diag_update(&diagnostic,CP_DIAG_SAVE,CP_DIAG_SAVING,ESP_OK,diagnostic.elapsed_ms,true,false);
+        cp_provision_set_status("saving","saving");candidate_progress(&diagnostic,cmd);
+        err=cp_settings_save(&cmd->candidate);
+        if(err!=ESP_OK)cp_network_diag_update(&diagnostic,CP_DIAG_SAVE,CP_DIAG_SAVE_FAILED,err,diagnostic.elapsed_ms,true,true);
+    }
+    if(err==ESP_OK) {
+        portENTER_CRITICAL(&s_settings_lock);s_settings=cmd->candidate;s_enrolled=true;++s_saved_generation;portEXIT_CRITICAL(&s_settings_lock);
+        s_testing=false;reason("stored_restarting");
+        cp_network_diag_update(&diagnostic,CP_DIAG_READY,CP_DIAG_SAVED,ESP_OK,diagnostic.elapsed_ms,false,true);
+        cp_provision_set_diagnostic(&diagnostic,cmd->attempt);cp_provision_set_status("saved","stored_restarting");
+        save_attempt_record(cmd->attempt,CP_ATTEMPT_SAVED,&diagnostic);publish();
+        cp_settings_clear_sensitive(&cmd->candidate);vTaskDelay(pdMS_TO_TICKS(1500));esp_restart();
     } else {
-        cp_settings_clear_sensitive(&cmd->candidate);
-        s_testing = false;
-        reason("candidate_failed_previous_preserved");
-        /* Retained previous enrollment stays intact; reopening setup is explicit
-         * and carries a visible failed status rather than fake success. */
+        if(!diagnostic.terminal)cp_network_diag_update(&diagnostic,diagnostic.stage,
+            cp_network_diag_timeout_code(&diagnostic),err,diagnostic.elapsed_ms,true,true);
+        cp_settings_clear_sensitive(&cmd->candidate);s_testing=false;
+        save_attempt_record(cmd->attempt,CP_ATTEMPT_FAILED,&diagnostic);
         enter_setup(previous.mode);
-        cp_provision_set_status("failed", "network_or_auth_failed");
-        publish();
+        const char *code=cp_network_diag_code_name(diagnostic.code);reason(code);
+        cp_provision_set_diagnostic(&diagnostic,cmd->attempt);cp_provision_set_status("failed",code);publish();
     }
 }
 static void apply_control(void) {
     cp_network_snapshot_t net;
     cp_network_snapshot(&net);
+    cp_provision_set_diagnostic(&net.diagnostic,NULL);
     cp_core_set_network(&s_core, net.network);
     cp_core_set_auth(&s_core, net.auth);
     cp_core_set_clock_trusted(&s_core, net.clock_trusted);
@@ -264,6 +292,13 @@ esp_err_t cp_runtime_prepare(const char *node, const cp_board_profile_t *profile
         reason("settings_recovery_failed");
         return err;
     }
+    s_saved_generation=s_enrolled?1:0;
+    err=cp_provision_bind_context(s_node,s_boot,(uint32_t)esp_reset_reason(),resolve_saved_credential,NULL);
+    if(err!=ESP_OK)return err;
+    s_history_error=cp_network_attempt_load(&s_previous_attempt);
+    s_have_previous_attempt=s_history_error==ESP_OK;
+    if(s_history_error==ESP_ERR_NOT_FOUND)s_history_error=ESP_OK;
+    cp_provision_set_previous_attempt(s_have_previous_attempt?&s_previous_attempt:NULL,s_history_error);
     err = cp_network_init(s_node, s_boot);
     if (err != ESP_OK)
         return err;

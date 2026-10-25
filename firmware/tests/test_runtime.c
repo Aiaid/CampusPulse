@@ -22,6 +22,11 @@ static esp_err_t network_stop_error=ESP_OK,pipeline_stop_error=ESP_OK,provision_
 static bool network_started,entropy_enabled,apply_actually_starts=true;
 static char capture_state[20],last_report_id[65];static bool last_report_applied;
 static cp_provision_submit_fn submit_callback;static void *submit_context;
+static cp_provision_credential_resolver_fn credential_callback;static void *credential_context;
+static cp_network_diagnostic_t validation_diagnostic,provision_diagnostic;
+static cp_network_attempt_t history_records[2],loaded_history,shown_history;
+static unsigned history_save_count,progress_count;static bool shown_previous;
+static esp_err_t history_load_error=ESP_ERR_NOT_FOUND,history_save_error=ESP_OK,shown_history_error;
 static uint64_t clock_ms=10000,last_lease_deadline;
 static unsigned lease_renewals;
 static void (*entry)(void *);static void *entry_arg;
@@ -77,6 +82,7 @@ int xTaskCreate(void(*fn)(void*),const char*name,unsigned stack,void*arg,unsigne
 {assert(!strcmp(name,"cp_control")&&stack>=8192&&priority);entry=fn;entry_arg=arg;*out=&entry;return pdPASS;}
 void vTaskDelay(TickType_t ticks){clock_ms+=ticks;}
 void esp_restart(void){assert(!strcmp(provision.state,"saved")&&!strcmp(provision.reason,"stored_restarting"));record(RESTART);++restart_count;longjmp(yield,2);}
+int esp_reset_reason(void){return 7;}
 esp_err_t cp_settings_init(void){assert(!network_started&&!provision.active);return ESP_OK;}
 esp_err_t cp_settings_load(cp_settings_t*out){if(load_error==ESP_OK)*out=persisted;else memset(out,0,sizeof*out);return load_error;}
 esp_err_t cp_settings_save(const cp_settings_t*s)
@@ -94,6 +100,21 @@ void cp_network_set_capture_state(const char*state){assert(strlen(state)<sizeof 
 esp_err_t cp_network_validate_candidate(const cp_settings_t*s,uint32_t timeout)
 {assert(!provision.active&&!pipe_state.collecting&&!network_started&&timeout>=1000);
  assert(!strcmp(provision.state,"testing"));assert(!cp_runtime_request_setup(CP_PROVISION_USB));assert(!cp_runtime_request_resume());record(VALIDATE);++validate_count;validated=*s;return validation_error;}
+esp_err_t cp_network_validate_candidate_with_progress(const cp_settings_t*s,uint32_t timeout,cp_network_progress_fn progress,void *context)
+{
+    assert(timeout==CP_NETWORK_VALIDATE_TIMEOUT_MS&&progress&&context);
+    esp_err_t err=cp_network_validate_candidate(s,timeout);
+    cp_network_diag_update(&validation_diagnostic,CP_DIAG_WIFI_CONNECT,CP_DIAG_WIFI_CONNECTING,ESP_OK,100,true,false);
+    progress(&validation_diagnostic,context);++progress_count;
+    cp_network_diag_update(&validation_diagnostic,err==ESP_OK?CP_DIAG_CLOUD_AUTH:CP_DIAG_DHCP,
+        err==ESP_OK?CP_DIAG_NETWORK_VALIDATED:CP_DIAG_DHCP_TIMEOUT,err,900,err!=ESP_OK,err!=ESP_OK);
+    progress(&validation_diagnostic,context);++progress_count;return err;
+}
+void cp_network_diagnostic_snapshot(cp_network_diagnostic_t *out){*out=validation_diagnostic;}
+esp_err_t cp_network_attempt_load(cp_network_attempt_t *out)
+{if(history_load_error==ESP_OK)*out=loaded_history;else memset(out,0,sizeof *out);return history_load_error;}
+esp_err_t cp_network_attempt_save(const cp_network_attempt_t *attempt)
+{assert(cp_network_attempt_valid(attempt)&&history_save_count<2);history_records[history_save_count++]=*attempt;return history_save_error;}
 esp_err_t cp_pipeline_init(const char*node,const char*boot){assert(node&&boot);return ESP_OK;}
 esp_err_t cp_pipeline_stop(void){record(PIPE_STOP);if(pipeline_stop_error==ESP_OK)pipe_state.collecting=false;return pipeline_stop_error;}
 esp_err_t cp_pipeline_apply(const cp_network_policy_t*p)
@@ -107,6 +128,12 @@ esp_err_t cp_provision_stop(void){record(PROVISION_STOP);if(provision_stop_error
 void cp_provision_snapshot(cp_provision_snapshot_t*out){*out=provision;}
 void cp_provision_set_status(const char*state,const char*why)
 {snprintf(provision.state,sizeof provision.state,"%s",state);snprintf(provision.reason,sizeof provision.reason,"%s",why);}
+esp_err_t cp_provision_bind_context(const char *node,const char *boot,uint32_t reset,cp_provision_credential_resolver_fn resolver,void *context)
+{assert(!strcmp(node,"cp_aabbccddeeff")&&strlen(boot)==36&&reset==7&&resolver);credential_callback=resolver;credential_context=context;return ESP_OK;}
+void cp_provision_set_diagnostic(const cp_network_diagnostic_t *diagnostic,const char *attempt)
+{assert(cp_network_diag_valid(diagnostic));if(attempt)assert(strlen(attempt)==36);provision_diagnostic=*diagnostic;}
+void cp_provision_set_previous_attempt(const cp_network_attempt_t *attempt,esp_err_t error)
+{shown_previous=attempt!=NULL;if(attempt){assert(cp_network_attempt_valid(attempt));shown_history=*attempt;}shown_history_error=error;}
 static int run(unsigned ticks,void(*hook)(unsigned))
 {
     iteration=0;iteration_limit=ticks;on_tick=hook;
@@ -133,6 +160,7 @@ static void issue_candidate(void)
     assert(!save_count&&!validate_count); /* Transport callback only queues. */
 }
 static void candidate_success_tick(unsigned n){if(n==1){marker=event_count;issue_candidate();}}
+static void candidate_handoff_tick(unsigned n){if(n==1){provision_stop_error=ESP_FAIL;issue_candidate();}}
 static void candidate_ap_tick(unsigned n)
 {
     if(n==1)assert(cp_runtime_request_setup(CP_PROVISION_SOFTAP));
@@ -164,6 +192,19 @@ static void resume_tick(unsigned n)
 static void assert_candidate_order(void)
 {const event_t expected[]={PROVISION_STOP,VALIDATE,SAVE,RESTART};assert(event_count-marker==4);
  for(unsigned i=0;i<4;++i)assert(events[marker+i]==expected[i]);}
+static void assert_saved_credential(bool available)
+{
+    char token[CP_SETTINGS_TOKEN_SIZE];memset(token,0x5a,sizeof token);uint32_t generation=99;
+    assert(credential_callback&&credential_callback(s_node,NULL,0,NULL,credential_context)==available);
+    assert(credential_callback(s_node,token,sizeof token,&generation,credential_context)==available);
+    if(available){assert(!strcmp(token,persisted.device_token)&&generation==s_saved_generation&&generation>0);}
+    else {assert(token[0]==0x5a&&generation==99);}
+    memset(token,0x5a,sizeof token);generation=99;
+    assert(!credential_callback("cp_000000000000",token,sizeof token,&generation,credential_context));
+    assert(!credential_callback(s_node,token,sizeof token-1,&generation,credential_context));
+    assert(!credential_callback(NULL,token,sizeof token,&generation,credential_context));
+    assert(token[0]==0x5a&&generation==99);
+}
 static void scenario(const char*name)
 {
     if(!strcmp(name,"enrolled_boot")){prepare(true);assert(run(1,NULL)==1);assert(net_start_count==1&&!provision_start_count&&!save_count);assert(!strcmp(last_network_settings.ssid,"previous-network"));}
@@ -186,9 +227,17 @@ static void scenario(const char*name)
     else if(!strcmp(name,"transient_lease_expiry")){prepare(true);publish_policy(1,10000,2000);assert(run(2,transient_tick)==1);assert(s_core.latest_request_sequence==1&&report_count==1&&apply_count==1&&!s_core.lease_valid&&!pipe_state.collecting);assert(!strcmp(capture_state,"expired"));}
     else if(!strcmp(name,"actual_capture_contact")){prepare(true);publish_policy(1,9000,120000);assert(run(2,no_actual_scan_tick)==1);assert(!pipe_state.collecting&&strcmp(capture_state,"running")!=0);}
     else if(!strcmp(name,"resume_previous")){prepare(true);assert(run(3,resume_tick)==1);assert(net_start_count==2&&!provision.active&&network_started&&!strcmp(last_network_settings.ssid,"previous-network"));}
+    else if(!strcmp(name,"saved_credential_context")){prepare(true);assert_saved_credential(true);assert(!shown_previous&&shown_history_error==ESP_OK);assert(run(3,candidate_usb_tick)==2);assert_saved_credential(true);assert(s_saved_generation==2);}
+    else if(!strcmp(name,"foreign_saved_credential")){persisted=settings("foreign-network");strcpy(persisted.node_id,"cp_000000000000");assert(cp_runtime_prepare("cp_aabbccddeeff",&board)==ESP_OK);assert(!s_enrolled);assert_saved_credential(false);assert(run(1,NULL)==1);assert(!net_start_count);}
+    else if(!strcmp(name,"previous_attempt")){history_load_error=ESP_OK;loaded_history=(cp_network_attempt_t){.version=1,.state=CP_ATTEMPT_INTERRUPTED};strcpy(loaded_history.attempt_id,"12345678-1234-4234-8234-123456789abc");strcpy(loaded_history.boot_id,"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");cp_network_diag_update(&loaded_history.diagnostic,CP_DIAG_HANDOFF,CP_DIAG_VALIDATION_INTERRUPTED,ESP_ERR_INVALID_STATE,0,true,true);prepare(true);assert(shown_previous&&!memcmp(&shown_history,&loaded_history,sizeof loaded_history));assert(run(3,candidate_usb_tick)==2);assert(shown_previous&&!memcmp(&shown_history,&loaded_history,sizeof loaded_history));}
+    else if(!strcmp(name,"history_read_failure")){history_load_error=ESP_FAIL;prepare(true);assert(!shown_previous&&shown_history_error==ESP_FAIL);assert_saved_credential(true);assert(run(1,NULL)==1);assert(net_start_count==1);}
+    else if(!strcmp(name,"history_write_failure")){history_save_error=ESP_FAIL;prepare(false);assert_saved_credential(false);assert(run(2,candidate_success_tick)==2);assert(shown_history_error==ESP_FAIL&&save_count==1&&restart_count==1);}
+    else if(!strcmp(name,"candidate_handoff_failure")){prepare(false);assert(run(2,candidate_handoff_tick)==1);assert(!validate_count&&!save_count&&!restart_count&&provision.active);assert(history_save_count==2&&history_records[1].state==CP_ATTEMPT_FAILED&&history_records[1].diagnostic.code==CP_DIAG_HANDOFF_FAILED);}
     else {fprintf(stderr,"Unknown scenario: %s\n",name);exit(2);}
 }
 int main(int argc,char**argv)
 {
-    assert(argc==2);scenario(argv[1]);printf("actual runtime: %s passed\n",argv[1]);return 0;
+    assert(argc==2);scenario(argv[1]);
+    if(validate_count){assert(progress_count==2&&history_save_count==2);assert(history_records[0].state==CP_ATTEMPT_INTERRUPTED&&history_records[0].diagnostic.code==CP_DIAG_VALIDATION_INTERRUPTED);assert(history_records[1].state==(restart_count?CP_ATTEMPT_SAVED:CP_ATTEMPT_FAILED));assert(history_records[1].diagnostic.terminal);assert(history_records[1].diagnostic.code==(restart_count?CP_DIAG_SAVED:save_error!=ESP_OK?CP_DIAG_SAVE_FAILED:CP_DIAG_DHCP_TIMEOUT));assert(!memcmp(&provision_diagnostic,&history_records[1].diagnostic,sizeof provision_diagnostic));}
+    printf("actual runtime: %s passed\n",argv[1]);return 0;
 }

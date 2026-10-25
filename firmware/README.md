@@ -50,7 +50,12 @@ at `0x360000` is not evidence that an attached board's region is empty. Unknown
 journal bytes are quarantined, never automatically formatted. Never erase the
 whole chip or flash a padded merged image across protected data.
 
-Only WPA2 personal target networks are supported by this provisioning slice.
+Target networks support explicit WPA2 personal, open Wi-Fi and WPA2 Enterprise
+PEAP/MSCHAPv2 with optional outer identity. Enterprise server certificate checks
+are disabled at the user's request; upload HTTPS retains CA/hostname/date checks.
+Captive portal login is not automated. Legacy personal-network settings load
+without an NVS rewrite. See [network diagnostics](../docs/notes/device-onboarding-diagnostics.md)
+for the settings migration, failure history and verification boundaries.
 Runtime secrets remain outside tracked files; application NVS is not encrypted
 storage at rest. Physical revision, TLS/network behavior, Flash power-loss
 recovery, radio losses, memory margins and sustained upload remain hardware gates.

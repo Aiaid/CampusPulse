@@ -15,6 +15,16 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
+- [ ] Diagnose the reported Passport connection failure without clearing saved
+      state. Add observable Wi-Fi/IP/time/TLS/cloud/save stages and retained safe
+      failure diagnostics; distinguish first registration from existing-device
+      Wi-Fi reconfiguration, reuse saved credentials only on the same node, and
+      support direct versioned placement/capture edits with explicit desired vs
+      applied state. Support explicit open Wi-Fi and PEAP/MSCHAPv2 enterprise
+      credentials without RADIUS server certificate checks, preserving strict
+      upload HTTPS validation and legacy settings. Verify failure correction
+      and the real-device network path for each available authentication mode.
+
 - [ ] Verify administrator Passkey registration, login and reauthentication in
       the production Safari/Touch ID workflow after the optional-extension fix;
       controlled local browser acceptance is archived below.

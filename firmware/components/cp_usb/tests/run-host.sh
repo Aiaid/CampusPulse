@@ -15,7 +15,7 @@ clang -std=c11 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined \
 "$CP_TEST/test-usb"
 clang -std=c11 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined \
     -I"$CP_DIR/tests/host" -I"$CP_DIR/include" -I"$CP_COMPONENTS/cp_settings/tests/host" \
-    -I"$CP_COMPONENTS/cp_settings/include" -I"$CP_COMPONENTS/cp_provision/include" -I"$CP_JSON" \
+    -I"$CP_COMPONENTS/cp_settings/include" -I"$CP_COMPONENTS/cp_provision/include" -I"$CP_COMPONENTS/cp_network/include" -I"$CP_JSON" \
     "$CP_DIR/framing.c" "$CP_DIR/controller.c" "$CP_DIR/tests/test_console.c" "$CP_TEST/cJSON.o" \
     -o "$CP_TEST/test-console"
 "$CP_TEST/test-console"

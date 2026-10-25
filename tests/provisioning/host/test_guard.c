@@ -3,7 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 static void fill(cp_settings_t *s) {
-    s->version = 1;
+    s->version = CP_SETTINGS_VERSION; s->wifi_security=CP_WIFI_PERSONAL;
+    memset(s->eap_username,0,sizeof s->eap_username);memset(s->eap_identity,0,sizeof s->eap_identity);memset(s->eap_password,0,sizeof s->eap_password);
     strcpy(s->node_id, "cp_001122aabbcc"); strcpy(s->ssid, "test-network");
     strcpy(s->password, "test-password"); strcpy(s->device_token, "cpd_test-fixture-only");
     strcpy(s->api_origin, "https://pulse.anend.net");
@@ -34,13 +35,18 @@ int main(void) {
     cp_settings_t first, second; memset(&first, 0xa5, sizeof(first)); memset(&second, 0x5a, sizeof(second)); fill(&first); fill(&second);
     uint8_t a[32], b[32]; assert(cp_provision_settings_digest(&first, a)); assert(cp_provision_settings_digest(&second, b)); assert(cp_provision_digest_equal(a,b));
     /* Every persisted candidate field participates; struct padding does not. */
-    for (unsigned i = 0; i < 6; i++) {
+    for (unsigned i = 0; i < 10; i++) {
         fill(&second);
-        switch(i) { case 0: second.version++; break; case 1: second.node_id[3]='f'; break; case 2: second.ssid[0]='x'; break; case 3: second.password[0]='x'; break; case 4: second.device_token[4]='x'; break; case 5: second.api_origin[8]='x'; break; }
+        switch(i) { case 0: second.version++; break; case 1: second.node_id[3]='f'; break; case 2: second.ssid[0]='x'; break; case 3: second.password[0]='x'; break; case 4: second.device_token[4]='x'; break; case 5: second.api_origin[8]='x'; break; case 6: second.wifi_security=CP_WIFI_OPEN; break; case 7: strcpy(second.eap_username,"synthetic-user"); break; case 8: strcpy(second.eap_identity,"synthetic-identity"); break; case 9: strcpy(second.eap_password,"synthetic-password"); break; }
         assert(cp_provision_settings_digest(&second,b)); assert(!cp_provision_digest_equal(a,b));
     }
     fill(&first); fill(&second); strcpy(first.ssid,"ab"); strcpy(first.password,"c"); strcpy(second.ssid,"a"); strcpy(second.password,"bc");
     assert(cp_provision_settings_digest(&first,a)); assert(cp_provision_settings_digest(&second,b)); assert(!cp_provision_digest_equal(a,b));
     memset(second.password,'x',sizeof(second.password)); assert(!cp_provision_settings_digest(&second,b));
-    puts("Provision guard: UUIDv4 rejection, HMAC domains/context/key, immutable candidate digest and length framing passed."); return 0;
+    /* Identical resolved settings still bind mode and RAM credential generation. */
+    fill(&first);assert(cp_provision_candidate_digest(&first,false,1,a));
+    assert(cp_provision_candidate_digest(&first,true,1,b));assert(!cp_provision_digest_equal(a,b));
+    assert(cp_provision_candidate_digest(&first,true,1,a));assert(cp_provision_candidate_digest(&first,true,2,b));assert(!cp_provision_digest_equal(a,b));
+    memset(b,0xa5,sizeof b);assert(!cp_provision_candidate_digest(&first,true,0,b));for(unsigned i=0;i<sizeof b;++i)assert(b[i]==0);
+    puts("Provision guard: UUIDv4 rejection, HMAC domains/context/key, Wi-Fi/EAP field digest, credential mode/generation and length framing passed."); return 0;
 }
