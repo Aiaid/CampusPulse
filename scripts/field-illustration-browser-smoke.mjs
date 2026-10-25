@@ -36,10 +36,14 @@ try {
     if (url.pathname === '/api/v1/places') return route.fulfill({ json: { places: [place] } });
     if (scenario === 'failed') return route.fulfill({ status: 503, json: { error: 'synthetic' } });
     if (url.pathname.endsWith('/summary')) {
-      const expired = scenario === 'stale', empty = scenario === 'missing', zero = scenario === 'zero';
-      const manualParking = empty ? null : { ...parking, ...(expired ? { valid_until: iso(-1) } : {}), ...(zero ? { parking_min: 0, parking_max: 0 } : {}) };
+      const reported = scenario.startsWith('reported'), expired = scenario === 'stale', empty = scenario === 'missing' || reported, zero = scenario === 'zero';
+      const manualParking = scenario === 'reported-manual-zero' ? { ...parking, parking_min: 0, parking_max: 0 }
+        : empty ? null : { ...parking, ...(expired ? { valid_until: iso(-1) } : {}), ...(zero ? { parking_min: 0, parking_max: 0 } : {}) };
       const manualElevator = empty ? null : { ...elevator, ...(expired || scenario === 'baseline' ? { valid_until: iso(-1) } : {}), ...(zero ? { wait_seconds: 0 } : {}) };
       return route.fulfill({ json: { place, as_of: iso(0), sensor: empty ? null : { ...sensor, ...(expired ? { valid_until: iso(-1) } : {}), ...(scenario === 'capped' ? { visible_identifiers: 16, unique_table_overflow: true } : {}), ...(zero ? { visible_identifiers: 0 } : {}) }, latest_observation: manualElevator,
+        ...(reported ? { last_reported_sensor: { ...sensor, placement_id: 'synthetic-placement', capture_config_id: 'synthetic-config',
+          received_at: iso(-1000), observed_at: null, valid_until: null, uncertainty_ms: null, time_status: 'unknown', freshness: 'unverified',
+          ...(scenario === 'reported-zero' ? { visible_identifiers: 0 } : {}) } } : {}),
         latest_observations: { parking: manualParking, elevator: manualElevator },
         automatic_observations: empty ? { vehicles: { ...automatic.vehicles, status: 'unavailable', candidate_count: null, car_related_count: null, ecosystem_count: null, sample_count: 0, reason: 'vehicle_features_not_reported', evidence_kind: 'none' }, elevator: { ...automatic.elevator, status: 'unavailable', wait_seconds: null, range_seconds: null, sample_count: 0, day_count: 0, observed_at: null, valid_until: null, reason: 'no_manual_samples' } }
           : { vehicles: { ...automatic.vehicles, ...(expired ? { valid_until: iso(-1) } : {}), ...(zero ? { candidate_count: 0, car_related_count: 0 } : {}) }, elevator: { ...automatic.elevator, ...(expired ? { valid_until: iso(-1) } : {}) } } } });
@@ -54,6 +58,11 @@ try {
   const overview = page.locator('.overview-map .field-illustration'), detail = page.locator('.detail-scene .field-illustration');
   await expect(overview).toHaveAttribute('data-figure-count', '9');
   await expect(detail).toHaveAttribute('data-figure-count', '9');
+  const sceneActors = page.locator('.detail-scene .cp-field-actors');
+  await expect(sceneActors).toHaveAttribute('data-person-count', '10');
+  await expect(sceneActors).toHaveAttribute('data-vehicle-count', '8');
+  await expect.poll(() => sceneActors.getAttribute('data-visible-count')).not.toBe('0');
+  await expect.poll(() => sceneActors.evaluate(canvas => { const pixels = canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data; return pixels.some((value,index) => index % 4 === 3 && value > 0); })).toBe(true);
   await expect(detail).not.toContainText('广播活动量级');
   await expect(detail.locator('[data-kind="people"]')).toHaveAttribute('data-figure-count', '5');
   await expect(detail.locator('[data-kind="people"] .field-illustration-quantity')).toHaveText('72 个 BLE 标识');
@@ -148,8 +157,34 @@ try {
   await expect(detail.locator('.field-illustration-glyphs svg')).toHaveCount(0);
   scenario = 'fresh'; await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();
   await expect(detail).toHaveAttribute('data-figure-count', '9');
+  // Reload clears prior canonical snapshots: receipt-only data starts its own session.
+  scenario = 'reported'; await page.reload();
+  await expect(detail).toHaveAttribute('data-figure-count', '7');
+  await expect(overview).toHaveAttribute('data-figure-count', '7');
+  await expect(detail.locator('[data-kind="people"] .field-illustration-quantity')).toHaveText('72 个 BLE 标识');
+  await expect(detail.locator('[data-kind="people"]')).toContainText('时间未知 · 上传');
+  await expect(detail.locator('[data-kind="people"]')).not.toContainText('最后观测');
+  await expect(detail.locator('[data-kind="bikes"]')).toHaveAttribute('data-source', 'illustrative');
+  await expect(detail.locator('[data-kind="bikes"] .field-illustration-quantity')).toHaveText('车辆示意');
+  await expect(detail.locator('[data-kind="bikes"]')).toContainText('推测');
+  await expect(page.locator('[data-source="last-reported-sensor"]')).toContainText('72 个 BLE 可见标识');
+  await expect(page.locator('[data-source="last-reported-sensor"]')).not.toContainText('有效观察');
+  scenario = 'failed'; await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();
+  await expect(detail).toHaveAttribute('data-update-failed', 'true');
+  await expect(detail).toContainText('时间未知 · 上传');
+  scenario = 'reported-manual-zero'; await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();
+  await expect(detail.locator('[data-kind="bikes"]')).toHaveAttribute('data-source', 'manual');
+  await expect(detail.locator('[data-kind="bikes"]')).toHaveAttribute('data-figure-count', '0');
+  await expect(detail).not.toContainText('推测');
+  scenario = 'reported-zero'; await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();
+  await expect(detail).toHaveAttribute('data-figure-count', '0');
+  await expect(detail.locator('[data-kind="bikes"]')).toHaveCount(0);
+  await expect(detail.locator('[data-kind="people"] .field-illustration-quantity')).toHaveText('0 个 BLE 标识');
+  const reportedAxis = page.getByRole('slider', { name: '现场数据时间轴', exact: true });
+  await reportedAxis.fill(String(now - 120000));
+  await expect(detail.locator('.field-illustration-group')).toHaveCount(0);
   await page.getByRole('button', { name: '模拟演示', exact: true }).click();
   await expect(page.locator('.field-illustration')).toHaveCount(0);
   assert.ok(requests.every(method => method === 'GET')); assert.deepEqual(errors, []);
-  console.log('Field illustration UI acceptance passed: bounded diagrams, capped BLE identifiers/unknown people, source freshness, visible observation times, retained expired/unavailable/error data, valid zero replacement, layers/toggle, bounded scrolling at390px, replay/gaps and demo isolation. Synthetic fixtures; no physical-count or device validation.');
+  console.log('Field illustration UI acceptance passed: bounded diagrams, BLE quantities, receipt-only unknown times, labelled illustrative vehicles, real-zero suppression, source freshness, retained failed reads, layers/toggle, 390px scrolling and replay/demo isolation. Synthetic fixtures; no physical-count or device validation.');
 } finally { await browser?.close(); await mf.dispose(); }

@@ -15,6 +15,15 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
+- [ ] Restore bounded trustworthy timestamps and sustained collection/upload
+      across the four field sites. Preserve authenticated same-boot time anchors
+      across SNTP updates, investigate radio/HTTP recovery starvation, correct
+      explicit physical placement assignments and verify real config ACK plus
+      repeated fresh windows. Retain original queued data and distinguish local
+      firmware fixes from actual field rollout.
+      Firmware work was deferred by the user; provisional local firmware edits
+      are not part of the existing-data display release below.
+
 - [ ] Validate the live/replay/simulation delivery on the deployed build and the
       actual afternoon field session. Confirm radio/upload, source timestamps,
       per-source expiry, retained-history availability and phone operation using
@@ -151,6 +160,14 @@ collection and durable upload. Final local software verification passed on
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] Show retained field aggregates with unknown/unreliable timestamps as a
+      separate receipt-labelled last-report display, without promoting receipt
+      time to observation time, freshness, inference or replay. Retain original
+      placement scope and privacy. Show quantity-driven people glyphs and the
+      user-authorized, explicitly labelled illustrative vehicle fallback when
+      actual vehicle evidence is unavailable; honor real zero values. Verify
+      focused backend/frontend suites and desktop/390px browser behavior.
 
 - [x] Retain the last observed live map/card values when updates stop, with
       concise measured quantity/unit badges, original timestamps, dimmed expiry

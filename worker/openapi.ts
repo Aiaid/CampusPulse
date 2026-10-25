@@ -120,7 +120,7 @@ export function createOpenApiDocument(): Record<string, unknown> {
       '/api/v1/places/{id}/summary': {
         get: {
           operationId: 'getPlaceSummary', tags: ['Public reads'], summary: 'Get latest manual and field sensor summaries',
-          description: 'Sensor is the latest retained field window from the past 24 hours with known UTC and uncertainty <=30 seconds. The entire interval [window start minus uncertainty, window end plus uncertainty] must fit the immutable placement. Only an empty flag list or the documented non-clock quality allowlist is public; unknown flags are withheld. Its valid_until is window UTC minus uncertainty plus 90 seconds. Top-level freshness is fresh when that sensor window or any latest active manual purpose result is fresh, stale when at least one exists but none is fresh, and no_data otherwise. Each manual purpose retains its own expiry. No sensor means null, never zero people.',
+          description: 'Sensor is the latest retained field window from the past 24 hours with known UTC and uncertainty <=30 seconds. The entire interval [window start minus uncertainty, window end plus uncertainty] must fit the immutable placement. Only an empty flag list or the documented non-clock quality allowlist is public; unknown flags are withheld. Its valid_until is window UTC minus uncertainty plus 90 seconds. When sensor is null, optional last_reported_sensor separately exposes a retained aggregate with unknown or unreliable clock, ordered by exact server receipt. The exact receipt must fall inside its original immutable placement interval (start inclusive, closure exclusive), and its registered capture config must match that placement. Original closed placements remain eligible; records received at or after closure are withheld and never move to a successor placement. Receipt time is never substituted for observation time. This fallback has unverified freshness and no validity deadline; it never enters history, replay or inference, or affects top-level freshness. Top-level freshness is fresh when the canonical sensor window or any latest active manual purpose result is fresh, stale when at least one exists but none is fresh, and no_data otherwise. Each manual purpose retains its own expiry. No sensor means null, never zero people.',
           parameters: [placeIdParameter],
           responses: {
             '200': response('Latest manual and field sensor summaries, including explicit missing-data state.', ref('PlaceSummary')),
@@ -313,6 +313,7 @@ export function createOpenApiDocument(): Record<string, unknown> {
           type: 'object', additionalProperties: false, required: ['place', 'sensor', 'latest_observation', 'latest_observations', 'freshness', 'as_of'],
           properties: {
             place: ref('Place'), sensor: { oneOf: [ref('PublicSensorWindow'), { type: 'null' }] },
+            last_reported_sensor: { oneOf: [ref('LastReportedSensorWindow'), { type: 'null' }] },
             latest_observation: { oneOf: [ref('Observation'), { type: 'null' }] },
             latest_observations: { type: 'object', additionalProperties: false, required: ['parking', 'elevator'], properties: {
               parking: { oneOf: [ref('Observation'), { type: 'null' }] }, elevator: { oneOf: [ref('Observation'), { type: 'null' }] },
@@ -357,6 +358,23 @@ export function createOpenApiDocument(): Record<string, unknown> {
             sensor_windows: { type: 'array', maxItems: 200, items: ref('PublicSensorWindow') },
             from: timestamp, to: timestamp, truncated: { type: 'boolean' }, sensor_truncated: { type: 'boolean' },
           },
+        },
+        LastReportedSensorWindow: {
+          type: 'object', additionalProperties: false,
+          required: ['node_id','boot_id','placement_id','capture_config_id','source','dataset','seq','received_at','observed_at','valid_until','uncertainty_ms','time_status','duration_ms','scan_enabled_ms','reports_aggregated','visible_identifiers','unique_table_overflow','aggregation_drops','quality_flags','freshness'],
+          properties: {
+            node_id: ref('PlaceId'), boot_id: uuid, placement_id: ref('PlaceId'), capture_config_id: ref('PlaceId'),
+            source: { type: 'string', const: 'sensor' }, dataset: { type: 'string', const: 'field' }, seq,
+            received_at: { ...timestamp, description: 'Exact original server receipt, never the measurement time.' },
+            observed_at: { oneOf: [timestamp, { type: 'null' }] }, valid_until: { type: 'null' }, uncertainty_ms: nullableCount,
+            time_status: { type: 'string', enum: ['unknown','uncertain'] },
+            duration_ms: { type: 'integer', minimum: 1000, maximum: 300000 },
+            scan_enabled_ms: count, reports_aggregated: count, visible_identifiers: count,
+            unique_table_overflow: { type: 'boolean' }, aggregation_drops: count,
+            quality_flags: { type: 'array', maxItems: 32, items: label },
+            freshness: { type: 'string', const: 'unverified' },
+          },
+          description: 'Optional summary-only fallback when canonical sensor is null. Retained field aggregate with exact registered placement/config; the exact original receipt must be inside its placement interval, including a previously closed placement (start inclusive, closure exclusive). Queued records received after closure are withheld; the original place is never replaced by the current binding. Unknown UTC stays null; unreliable original UTC is preserved with uncertain status. Allows the canonical non-clock quality flags plus utc_jump; other unknown flags remain withheld. This does not prove the measurement interval, current activity, people, vehicles, or wait time. No raw identities or feature masks are exposed.',
         },
         PublicSensorWindow: {
           type: 'object', additionalProperties: false,

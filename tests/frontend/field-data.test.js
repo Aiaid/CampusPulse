@@ -17,9 +17,35 @@ const summary = overrides => ({ place: { id: 'parking' }, as_of: iso(0), freshne
 const history = overrides => ({ place_id: 'parking', from: iso(-86_400_000), to: iso(0), observations: [manual()], sensor_windows: [sensor()], truncated: false, sensor_truncated: false, ...overrides });
 const options = { placeId: 'parking', mode: 'live' };
 const reply = body => ({ ok: true, json: async () => body });
+const reported = overrides => sensor({ observed_at: null, valid_until: null, uncertainty_ms: null,
+  received_at: iso(-1000), time_status: 'unknown', freshness: 'unverified', ...overrides });
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
 
 describe('public field response semantics', () => {
+  test('accepts optional receipt evidence without assigning observation time or fresh validity', () => {
+    const data = normalizeFieldResponse(summary({ sensor: null, last_reported_sensor: reported() }), options);
+    expect(data.last_reported_sensor).toEqual(reported());
+    expect(data.last_reported_sensor.observed_at).toBeNull();
+    expect(recordFreshness(data.last_reported_sensor, now)).toBe('unverified');
+    expect(normalizeFieldResponse(summary({ last_reported_sensor: null }), options).last_reported_sensor).toBeNull();
+    expect(normalizeFieldResponse(summary(), options)).not.toHaveProperty('last_reported_sensor');
+    expect(normalizeFieldResponse(summary({ sensor: null, last_reported_sensor: reported({ observed_at: iso(-3000), time_status: 'uncertain', uncertainty_ms: 90000 }) }), options).last_reported_sensor.observed_at).toBe(iso(-3000));
+  });
+
+  test.each([
+    { dataset: 'demo' }, { source: 'illustrative' }, { freshness: 'fresh' }, { time_status: 'certain' },
+    { received_at: 'invalid' }, { received_at: '2026-10-25' }, { valid_until: iso(90000) },
+    { observed_at: iso(-1000) }, { uncertainty_ms: -1 }, { duration_ms: 0 }, { scan_enabled_ms: 31000 },
+    { visible_identifiers: -1 }, { visible_identifiers: 1.5 }, { node_id: '' }, { boot_id: null },
+    { capture_config_id: undefined }, { placement_id: '' }, { quality_flags: [3] }, { unique_table_overflow: 'true' },
+  ])('rejects malformed receipt fallback %#', overrides => {
+    expect(() => normalizeFieldResponse(summary({ sensor: null, last_reported_sensor: reported(overrides) }), options)).toThrow('无效记录');
+  });
+
+  test('never accepts receipt evidence as a canonical sensor or replay record', () => {
+    expect(() => normalizeFieldResponse(summary({ sensor: reported() }), options)).toThrow();
+    expect(() => normalizeFieldResponse(history({ sensor_windows: [reported()] }), { ...options, mode: 'replay' })).toThrow();
+  });
   test('reads the public summary/history contracts without any scene fallback', () => {
     expect(fieldReadPath('parking', 'live')).toBe('/api/v1/places/parking/summary');
     expect(fieldReadPath('parking', 'replay')).toBe('/api/v1/places/parking/history?minutes=1440');

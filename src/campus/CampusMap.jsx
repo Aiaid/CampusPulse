@@ -4,6 +4,7 @@ import { getMetrics, MAP_HEIGHT, MAP_WIDTH, places, sceneAttribution } from './s
 import { buildings, pointInPolygon } from './spatial-scene';
 import ActivityLayer from './ActivityLayer';
 import FieldIllustration from './FieldIllustration.jsx';
+import FieldActorLayer from './FieldActorLayer.jsx';
 import NightLighting from './NightLighting';
 import MapRegions, { useBuildingMask } from './MapRegions';
 import { gisTileAvailability, selectTileLevel, visibleGisTiles } from './gis-tiles';
@@ -247,6 +248,7 @@ export const CampusMap = forwardRef(function CampusMap({
       </div>
       <div className="cp-map__atmosphere" aria-hidden="true" />
       {renderScene && <><ActivityLayer project={project} scale={scale} translateX={translateX} translateY={translateY} viewWidth={size.width} viewHeight={size.height} layers={layers} minute={minute} scenarioId={scenarioId} isDark={isDark} xray={xray} moving={moving} selectedId={selectedId} demo={demo} lighting={lighting} detailView={compactSelected} />
+      {!demo && fieldIllustration && (() => { const place = mapPlaces.find(item => item.id === selectedId); return place ? <FieldActorLayer illustration={fieldIllustration} point={project(place.x, place.y)} width={size.width} height={size.height} /> : null; })()}
       <NightLighting project={project} scale={scale} viewWidth={size.width} viewHeight={size.height} isDark={isDark} xray={xray} selectedId={selectedId} lighting={lighting} />
       {demo && <MapRegions project={project} viewWidth={size.width} viewHeight={size.height} selectedId={selectedId} xray={xray} />}</>}
       <div className="cp-map__landmarks">

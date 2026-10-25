@@ -17,6 +17,23 @@ const history = observations => normalizeFieldResponse({ place_id: place.id, fro
 const renderPanel = (session, props = {}) => renderToStaticMarkup(createElement(FieldDataPanel, { place, session, ...props }));
 
 describe('independent public observation cards', () => {
+  test('shows last uploaded quantity and receipt time while leaving unknown observation time unknown', () => {
+    const last_reported_sensor = { ...sensor, placement_id: 'placement', capture_config_id: 'config', observed_at: null,
+      valid_until: null, received_at: iso(-1000), uncertainty_ms: null, time_status: 'unknown', freshness: 'unverified' };
+    const data = { ...summary(), sensor: null, last_reported_sensor, latest_observation: null, latest_observations: { parking: null, elevator: null } };
+    const html = renderPanel({ now, live: state(data), history: state(null), refresh() {} });
+    expect(html).toContain('2 个 BLE 可见标识');
+    expect(html).toContain('时间未知 · 上传');
+    expect(html).toContain('17:59:59');
+    expect(html).toContain(`dateTime="${iso(-1000)}"`);
+    expect(html).toContain('接收时间');
+    expect(html).not.toContain('观测时间');
+    expect(html).not.toContain('有效至');
+    expect(html).not.toContain('有效观察');
+    const canonical = renderPanel({ now, live: state({ ...data, sensor: { ...sensor, visible_identifiers: 9 } }), history: state(null), refresh() {} });
+    expect(canonical).toContain('9 个 BLE 可见标识');
+    expect(canonical).not.toContain('最近上传');
+  });
   test('renders all three purposes with independent expiry at the same place', () => {
     const session = { now, live: state(summary()), history: state(null), refresh() {} };
     const html = renderPanel(session);

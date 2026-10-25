@@ -8,6 +8,21 @@ const object = value => value && typeof value === 'object' && !Array.isArray(val
 const strings = value => Array.isArray(value) && value.every(item => typeof item === 'string');
 const waitSeconds = value => Number.isFinite(value) && value >= 0 && value <= 7200;
 
+/** Receipt evidence has no trustworthy validity interval. Keep it out of history. */
+export function isLastReportedSensor(record) {
+  return object(record) && record.source === 'sensor' && record.dataset === 'field'
+    && ['node_id', 'boot_id', 'placement_id', 'capture_config_id'].every(key => typeof record[key] === 'string' && record[key].trim())
+    && ['seq', 'visible_identifiers', 'reports_aggregated', 'duration_ms', 'scan_enabled_ms', 'aggregation_drops'].every(key => Number.isSafeInteger(record[key]) && record[key] >= 0)
+    && record.duration_ms > 0 && record.scan_enabled_ms <= record.duration_ms
+    && timestamp(record.received_at) && new Date(record.received_at).toISOString() === record.received_at
+    && (record.observed_at === null || timestamp(record.observed_at)) && record.valid_until === null
+    && (record.uncertainty_ms === null || (Number.isSafeInteger(record.uncertainty_ms) && record.uncertainty_ms >= 0))
+    && record.time_status === (record.observed_at === null ? 'unknown' : 'uncertain')
+    && record.freshness === 'unverified' && typeof record.unique_table_overflow === 'boolean' && strings(record.quality_flags);
+}
+
+export const displayFieldSensor = summary => summary?.sensor || summary?.last_reported_sensor || null;
+
 /** Optional inference stays separate from sensor and manual observations. */
 export function normalizeAutomaticObservations(value) {
   if (value === undefined) return undefined; // Older API deployments remain readable.
@@ -60,6 +75,7 @@ function validateRecord(record, source, placeId) {
 
 export function recordFreshness(record, now = Date.now()) {
   if (!record) return 'no_data';
+  if (isLastReportedSensor(record)) return 'unverified';
   // Expiry belongs to each source: the summary's combined freshness can be
   // fresh because of a different source. Never trust it for an individual card.
   return timestamp(record.valid_until) && timestamp(record.observed_at)
@@ -88,6 +104,7 @@ export function normalizeFieldResponse(body, { placeId, mode }) {
   }
   if (body.place?.id !== placeId || !timestamp(body.as_of) || !('sensor' in body) || !('latest_observation' in body)) invalid();
   if (body.sensor !== null) validateRecord(body.sensor, 'sensor', placeId);
+  if ('last_reported_sensor' in body && body.last_reported_sensor !== null && !isLastReportedSensor(body.last_reported_sensor)) invalid();
   if (body.latest_observation !== null) validateRecord(body.latest_observation, 'manual', placeId);
   if ('latest_observations' in body) {
     const latest = body.latest_observations;

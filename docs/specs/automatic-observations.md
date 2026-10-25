@@ -75,6 +75,29 @@ prediction still requires separately labeled field sessions and calibration.
 
 ## Public response and UI
 
+The summary additionally exposes optional `last_reported_sensor` when no timed
+public sensor window exists. It contains retained, field-only aggregate counts,
+their exact upload receipt time and the device's original nullable time. An
+unknown/unreliable clock is labelled separately (`freshness: unverified`, no
+valid-until); receipt time is never substituted for observation time. Receipt
+scope must fall inside the exact original registered placement, including a
+placement that has since closed. Late queued receipts outside that interval,
+unlocated/test data and private addresses remain excluded. These records support
+last-information display only, not timed replay or automatic inference.
+
+At the user's request, a parking-purpose place with positive activity but no
+available manual or classified vehicle result can draw a fixed illustrative pair
+of vehicles, labelled `推测`. This is a UI illustration rather than a vehicle
+count, API result or history record. Actual manual/candidate evidence takes
+precedence, and actual zero results suppress this visual fallback.
+
+Observed place diagrams also drive a separate canvas sprite layer attached to
+the selected map anchor. It reuses the existing person and parked-vehicle sheets
+for bounded static schematic positions, with the user-requested display quantity
+multiplier of two. It never changes underlying identifier/candidate quantities,
+creates tracked individuals, or uses demo route metrics. Browser acceptance
+checks nontransparent canvas pixels and doubled person/vehicle drawing budgets.
+
 `GET /api/v1/places/:id/summary` adds the optional `automatic_observations` object
 documented in `/openapi.json`: independent `vehicles` and `elevator` references
 with method version, evidence timestamp, expiry, samples and unavailable reason.

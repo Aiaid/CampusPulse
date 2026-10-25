@@ -1,4 +1,4 @@
-import { latestManualObservations } from './field-data.js';
+import { isLastReportedSensor, latestManualObservations } from './field-data.js';
 import { observationKinds } from '../shared/observation-kinds.js';
 
 const observed = (record, now) => record && Number.isFinite(Date.parse(record.observed_at))
@@ -30,6 +30,14 @@ export function retainLastFieldSummary(next, previous, now = Date.now()) {
   const candidateSensor = choose(next.sensor, prior?.sensor, 'sensor');
   const sensor = observed(candidateSensor, now) ? candidateSensor : null;
   const result = { ...next, sensor, latest_observations: latestManualObservations(next), last_known };
+  const reported = next.last_reported_sensor, oldReported = prior?.last_reported_sensor;
+  const eligibleReport = record => isLastReportedSensor(record) && Date.parse(record.received_at) <= now;
+  if (eligibleReport(reported) && (!eligibleReport(oldReported)
+    || Date.parse(reported.received_at) >= Date.parse(oldReported.received_at))) result.last_reported_sensor = reported;
+  else if (!next.sensor && eligibleReport(oldReported)) {
+    result.last_reported_sensor = oldReported;
+    last_known.last_reported_sensor = eligibleReport(reported) ? 'older_response' : 'source_unavailable';
+  } else if ('last_reported_sensor' in next) result.last_reported_sensor = null;
   if (next.automatic_observations) {
     const kinds = observationKinds(next.place);
     const automatic = { ...next.automatic_observations };
@@ -53,6 +61,7 @@ export function markLastFieldReadFailed(data) {
   if (!data) return null;
   const last_known = { ...data.last_known };
   if (data.sensor) last_known.sensor = 'read_failed';
+  if (data.last_reported_sensor) last_known.last_reported_sensor = 'read_failed';
   for (const [kind, record] of Object.entries(latestManualObservations(data))) if (record) last_known[kind] = 'read_failed';
   for (const [kind, key] of [['vehicles', 'vehicles'], ['elevator', 'elevator_reference']]) {
     if (data.automatic_observations?.[kind]?.status !== 'unavailable'

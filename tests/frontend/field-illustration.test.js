@@ -14,8 +14,44 @@ const baseline = (extra = {}) => ({ status: 'historical_estimate', source: 'manu
 const state = data => ({ data, error: '', loading: false });
 const read = (data, extra = {}) => fieldIllustration({ now, mode: 'field', live: state(data), ...extra });
 const render = illustration => renderToStaticMarkup(createElement(FieldIllustration, { illustration, point: { left: 150, top: 50 }, width: 300, height: 210, compact: true, placeName: '图书馆' }));
+const reported = extra => sensor({ node_id: 'node', boot_id: 'boot', placement_id: 'placement', capture_config_id: 'config',
+  seq: 1, observed_at: null, valid_until: null, uncertainty_ms: null, received_at: iso(-1000), time_status: 'unknown', freshness: 'unverified',
+  reports_aggregated: 30, aggregation_drops: 0, quality_flags: [], unique_table_overflow: false, ...extra });
 
 describe('observation-driven place diagrams', () => {
+  test('shows people from reported identifiers and explicitly illustrative vehicles without claiming a measured car count', () => {
+    const result = read({ place, sensor: null, last_reported_sensor: reported() });
+    expect(result.groups).toMatchObject([
+      { kind: 'people', source: 'sensor', quantity: '12 个 BLE 标识', figure_count: 3, unverified: true, observed_at: null, valid_until: null },
+      { kind: 'bikes', source: 'illustrative', quantity: '车辆示意', figure_count: 2, unverified: true },
+    ]);
+    const html = render(result);
+    expect(html).toContain('推测');
+    expect(html).toContain('时间未知 · 上传');
+    expect(html).toContain('17:59:59');
+    expect(html).not.toContain('最后观测');
+    expect(html).not.toContain('有效观察');
+    expect(result.groups[1]).not.toHaveProperty('candidate_count');
+    expect(result.groups[1].label).not.toMatch(/\d+ 辆/);
+    expect(read({ place, sensor: sensor({ visible_identifiers: 4 }), last_reported_sensor: reported({ visible_identifiers: 99 }) }).groups[0].quantity).toBe('4 个 BLE 标识');
+  });
+
+  test('vehicle illustrations require positive usable activity and parking purpose, and never displace real vehicle evidence or a valid zero', () => {
+    const data = { place, sensor: null, last_reported_sensor: reported() };
+    for (const extra of [{ latest_observation: parking() }, { latest_observation: parking({ parking_min: 0, parking_max: 0 }) },
+      { automatic_observations: { vehicles: vehicles() } }, { automatic_observations: { vehicles: vehicles({ candidate_count: 0, car_related_count: 0 }) } }]) {
+      expect(read({ ...data, ...extra }).groups.some(group => group.source === 'illustrative')).toBe(false);
+    }
+    for (const patch of [{ visible_identifiers: 0 }, { scan_enabled_ms: 0 }, { received_at: iso(1) }, { dataset: 'demo' }]) {
+      expect(read({ ...data, last_reported_sensor: reported(patch) }).groups.some(group => group.source === 'illustrative')).toBe(false);
+    }
+    expect(read({ ...data, last_reported_sensor: null }).groups).toEqual([]);
+    expect(read({ ...data, place: { ...place, observation_kinds: ['activity'] } }).groups.map(group => group.kind)).toEqual(['people']);
+    expect(read(data, { layers: { people: false } }).groups[0].source).toBe('illustrative');
+    expect(read(data, { layers: { bikes: false } }).groups.map(group => group.kind)).toEqual(['people']);
+    const replay = read(data, { mode: 'replay', cursor: now - 1000, history: state({ records: [] }) });
+    expect(replay).toBeNull();
+  });
   test('uses bounded schematic budgets, explicitly keeps physical people unknown, and never bands a saturated table', () => {
     const bands = [1, 12, 19, 20, 64, 99, 100, 10000].map(visible_identifiers => read({ sensor: sensor({ visible_identifiers }) }));
     expect(bands.map(result => result.figure_count)).toEqual([3, 3, 3, 5, 5, 5, 7, 7]);

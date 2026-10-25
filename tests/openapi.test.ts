@@ -243,6 +243,16 @@ describe('OpenAPI contract and existing authorization', () => {
     checkSchema(root, root.components.schemas.PublicSensorWindow, sensor);
     expect(() => checkSchema(root, root.components.schemas.PublicSensorWindow, { ...sensor, uncertainty_ms: null })).toThrow();
     expect(() => checkSchema(root, root.components.schemas.PublicSensorWindow, { ...sensor, uncertainty_ms: 30001 })).toThrow();
+    const reported = { ...sensor, received_at: '2026-10-23T00:05:00.000Z', observed_at: null,
+      valid_until: null, uncertainty_ms: null, time_status: 'unknown', freshness: 'unverified' };
+    checkSchema(root, root.components.schemas.LastReportedSensorWindow, reported);
+    checkSchema(root, root.components.schemas.LastReportedSensorWindow, { ...reported,
+      observed_at: sensor.observed_at, uncertainty_ms: 30001, time_status: 'uncertain' });
+    expect(root.components.schemas.PlaceSummary.properties.last_reported_sensor).toBeDefined();
+    expect(root.components.schemas.PlaceSummary.required).not.toContain('last_reported_sensor');
+    expect(() => checkSchema(root, root.components.schemas.LastReportedSensorWindow, { ...reported, freshness: 'fresh' })).toThrow();
+    expect(() => checkSchema(root, root.components.schemas.LastReportedSensorWindow, { ...reported, valid_until: sensor.valid_until })).toThrow();
+    expect(() => checkSchema(root, root.components.schemas.LastReportedSensorWindow, { ...reported, address: '02:00:00:00:00:01' })).toThrow();
   });
 
   it('documents concurrent place purposes, independent summaries and versioned placement scope', () => {

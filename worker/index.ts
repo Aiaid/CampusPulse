@@ -2,7 +2,7 @@ import type { CreateObservation, Env, Observation, Place, PlaceSummary } from '.
 import { handleDocs } from './docs';
 import { handleIngestion } from './ingest';
 import { handleDeviceV2 } from './device-v2';
-import { readPublicWindows } from './sensors';
+import { readLastReportedSensor, readPublicWindows } from './sensors';
 import { expireIngestion } from './retention';
 import { handleAdmin, readPublicSettings, readRuntimeSettings } from './admin';
 import { readAutomaticObservations } from './place-inference';
@@ -138,8 +138,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
         const windows = await readPublicWindows(env, place.id, now - 86_400_000, now);
         const summary = summarize(place, latest, now, latestByKind);
         const sensor = windows[0] ?? null;
+        const last_reported_sensor = sensor ? null : await readLastReportedSensor(env, place.id, now);
         const automatic_observations = await readAutomaticObservations(env, place, windows, now);
-        return json({ ...summary, sensor, automatic_observations, freshness: sensor?.freshness === 'fresh' || summary.freshness === 'fresh' ? 'fresh' : sensor || latest ? 'stale' : 'no_data' });
+        return json({ ...summary, sensor, last_reported_sensor, automatic_observations, freshness: sensor?.freshness === 'fresh' || summary.freshness === 'fresh' ? 'fresh' : sensor || latest ? 'stale' : 'no_data' });
       }
       const minutesText = url.searchParams.get('minutes') ?? '15';
       if (!['1', '5', '15', '60', '1440'].includes(minutesText)) throw new ApiError(422, 'invalid_range', 'minutes must be 1, 5, 15, 60, or 1440.');

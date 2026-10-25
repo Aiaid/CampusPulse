@@ -21,6 +21,52 @@ export interface PublicSensorWindow {
   quality_flags: string[];
   freshness: 'fresh' | 'stale';
 }
+
+export interface LastReportedSensorWindow extends Omit<PublicSensorWindow, 'observed_at' | 'valid_until' | 'uncertainty_ms' | 'freshness'> {
+  received_at: string;
+  observed_at: string | null;
+  valid_until: null;
+  uncertainty_ms: number | null;
+  time_status: 'unknown' | 'uncertain';
+  freshness: 'unverified';
+}
+
+/** Receipt-ordered fallback, never a timed observation or an inference input. */
+export async function readLastReportedSensor(env: Env, place: string, now = Date.now()): Promise<LastReportedSensorWindow | null> {
+  const row = await env.DB.prepare(`SELECT w.node_id,w.boot_id,w.placement_id,w.capture_config_id,w.item_json,w.utc_ms,w.received_at
+    FROM all_sensor_windows w
+    JOIN placements p ON p.id = w.placement_id AND p.node_id = w.node_id
+    JOIN capture_configs config ON config.id = w.capture_config_id AND config.node_id = w.node_id
+      AND config.placement_id = w.placement_id AND config.dataset = w.dataset
+    LEFT JOIN placement_closures c ON c.placement_id = p.id AND c.node_id = p.node_id
+    WHERE p.place_id = ? AND w.dataset = 'field' AND w.expires_at_ms > ?
+    AND p.valid_from_ms <= ?
+    AND w.received_at >= strftime('%Y-%m-%dT%H:%M:%fZ',p.valid_from_ms / 1000.0,'unixepoch')
+    AND (COALESCE(c.valid_until_ms,p.valid_until_ms) IS NULL
+      OR w.received_at < strftime('%Y-%m-%dT%H:%M:%fZ',COALESCE(c.valid_until_ms,p.valid_until_ms) / 1000.0,'unixepoch'))
+    AND w.received_at <= ?
+    AND (w.utc_ms IS NULL OR json_extract(w.item_json,'$.time.uncertainty_ms') IS NULL
+      OR json_extract(w.item_json,'$.time.uncertainty_ms') > 30000
+      OR EXISTS (SELECT 1 FROM json_each(w.item_json,'$.quality_flags') flag WHERE flag.value = 'utc_jump'))
+    AND (w.utc_ms IS NULL OR w.utc_ms <= 8640000000000000)
+    AND NOT EXISTS (SELECT 1 FROM json_each(w.item_json,'$.quality_flags') flag
+      WHERE flag.value NOT IN ('partial_window','unique_table_overflow','aggregation_drops','raw_drops','raw_pressure_pause','utc_jump'))
+    ORDER BY w.received_at DESC,w.seq DESC,w.node_id,w.boot_id,w.capture_config_id LIMIT 1`)
+    .bind(place, now, now, new Date(now).toISOString())
+    .first<{ node_id: string; boot_id: string; placement_id: string; capture_config_id: string; item_json: string; utc_ms: number | null; received_at: string }>();
+  if (!row) return null;
+  const item = JSON.parse(row.item_json) as BleWindow;
+  return {
+    node_id: row.node_id, boot_id: row.boot_id, placement_id: row.placement_id, capture_config_id: row.capture_config_id,
+    source: 'sensor', dataset: 'field', seq: item.seq, received_at: row.received_at,
+    observed_at: row.utc_ms === null ? null : new Date(row.utc_ms).toISOString(), valid_until: null,
+    uncertainty_ms: item.time.uncertainty_ms, time_status: row.utc_ms === null ? 'unknown' : 'uncertain', freshness: 'unverified',
+    duration_ms: item.duration_ms, scan_enabled_ms: item.scan_enabled_ms,
+    reports_aggregated: item.reports_aggregated, visible_identifiers: item.visible_identifiers,
+    unique_table_overflow: item.unique_table_overflow, aggregation_drops: item.aggregation_drops,
+    quality_flags: item.quality_flags,
+  };
+}
 export async function readPublicWindows(env: Env, place: string, from: number, now = Date.now()): Promise<PublicSensorWindow[]> {
   const rows = await env.DB.prepare(`SELECT w.node_id,w.boot_id,w.placement_id,w.capture_config_id,w.item_json,w.utc_ms
     FROM all_sensor_windows w JOIN placements p ON p.id = w.placement_id AND p.node_id = w.node_id

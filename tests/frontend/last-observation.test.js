@@ -19,6 +19,21 @@ const unavailable = (record, reason = 'summaries_pending') => ({ ...record, stat
   observed_at: null, valid_until: null, candidate_count: null, wait_seconds: null });
 
 describe('last observation presentation cache', () => {
+  test('retains reported windows only within a place and preserves upload/time uncertainty through failures', () => {
+    const report = { ...sensor(), node_id: 'node', boot_id: 'boot', placement_id: 'placement', capture_config_id: 'config',
+      duration_ms: 30000, scan_enabled_ms: 30000, reports_aggregated: 70, aggregation_drops: 0, quality_flags: [], unique_table_overflow: false,
+      observed_at: null, valid_until: null, received_at: iso(-1000), uncertainty_ms: null, time_status: 'unknown', freshness: 'unverified' };
+    const previous = summary({ sensor: null, last_reported_sensor: report });
+    const result = retainLastFieldSummary(summary({ sensor: null, last_reported_sensor: null }), previous, now);
+    expect(result.last_reported_sensor).toBe(report);
+    expect(result.last_known.last_reported_sensor).toBe('source_unavailable');
+    expect(markLastFieldReadFailed(result).last_known.last_reported_sensor).toBe('read_failed');
+    expect(result.last_reported_sensor).toMatchObject({ observed_at: null, valid_until: null, freshness: 'unverified', received_at: iso(-1000) });
+    expect(retainLastFieldSummary(summary({ place: { ...place, id: 'other' }, sensor: null, last_reported_sensor: null }), previous, now).last_reported_sensor).toBeNull();
+    const zero = { ...report, seq: 2, received_at: iso(0), visible_identifiers: 0 };
+    expect(retainLastFieldSummary(summary({ sensor: null, last_reported_sensor: zero }), previous, now).last_reported_sensor).toBe(zero);
+    expect(retainLastFieldSummary(summary({ sensor: null, last_reported_sensor: { ...report, received_at: iso(1) } }), null, now).last_reported_sensor).toBeNull();
+  });
   test('retains the original sensor timestamps when a successful read has no newer window', () => {
     const previous = summary(), next = summary({ as_of: iso(0), sensor: null });
     const result = retainLastFieldSummary(next, previous, now);
