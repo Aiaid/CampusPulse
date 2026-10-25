@@ -41,3 +41,10 @@ sdkconfig.old
 
 # Firmware local credentials (ESP-IDF projects under firmware/)
 term_cred_local.h
+wifi_cred_local.h
+device_cred_local.h
+
+# Local Python tool cache
+.uv-cache/
+.uv-tools/
+.uv-bin/

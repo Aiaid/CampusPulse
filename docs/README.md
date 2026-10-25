@@ -29,6 +29,7 @@ validation records are not evidence for this implementation.
 | [Upload protocol v1 / 上传协议](specs/ingest-v1.md) | Window/raw/status streams, MAC and AD payload, private R2, durable ACK | Server deployed and demo-verified; physical-node onboarding and firmware pending |
 | [Roadmap](design/ROADMAP.md) | Priorities, planned milestones, completed work | Current |
 | [Reuse record](notes/reuse.md) | Prior-work boundary and code attribution | Current |
+| [AI Passport migration and COM5 test](notes/ai-passport-migration-test-2026-10-24.md) | Unchanged firmware migration, safe app-only flash, build/host checks and 300-second device evidence | Migration/build/device stability verified; upstream static failures and broader acceptance remain |
 | [T-Energy-S3 enclosure research](research/t-energy-s3-enclosure.md) | Author-published enclosure links and official mechanical drawing | Sources checked; fit/print unverified |
 | [Pre-hackathon observations](upstream/pre-hackathon/observations.md) | Prior BLE/storage/network/GIS observations with source fingerprints | Historical reference; not rerun |
 | [Pre-hackathon vehicle rules](upstream/pre-hackathon/vehicle-rules.md) | Earlier candidate logic and its evidence boundaries | Historical; not implemented in this repository |

@@ -43,6 +43,28 @@ Before committing reused code, add an entry with:
 Reused board drivers must retain their upstream copyright and license. Record
 any permitted reuse transparently; do not relabel prior code as newly written.
 
+## 2026-10-24 — Complete AI Passport application migration
+
+- Source: the user's read-only `D:\esp\aiprogram\ai-passport` workspace at Git
+  revision `de8e322611ffb52eb24692edf7a59e6b16655799` (FoloToy AI Passport,
+  MIT License, Copyright (c) 2026 FoloToy). The user explicitly authorized an
+  unchanged migration for CampusPulse AI Passport development.
+- Destination: `firmware/ai-passport/`. All 400 source, documentation, asset,
+  tool, test and local runtime-configuration files outside `.git/`, `build/`,
+  `managed_components/`, `.vscode/` and `.agents/` were copied byte-for-byte;
+  SHA-256 comparison found zero mismatches. Generated build/dependency state
+  and nested Git metadata were intentionally not migrated. Local Wi-Fi/device
+  configuration remains ignored and is not described or published.
+- No source file was modified during migration. The existing trimmed
+  `firmware/passport-terminal/` remains a separate application. The upstream
+  `cardid` protection, board pin mappings, copyright and license are retained.
+- Deployment boundary: the source `partitions.csv` has a 0x3f0000 factory app
+  and a raw BLE partition, unlike CampusPulse's protected 3 MB app/`cardid`
+  contract. This difference must be resolved with explicit layout evidence;
+  merged-image flashing and whole-chip erase are not permitted by this entry.
+- Validation and five-minute device-test results are recorded separately in
+  `docs/notes/ai-passport-migration-test-2026-10-24.md`.
+
 ## 2026-10-23 — AI Passport field terminal firmware
 
 - Source: the user's local pre-hackathon `ai-passport` firmware workspace

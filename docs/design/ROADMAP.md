@@ -114,6 +114,18 @@ assignments; firmware and device acceptance remain pending.
 
 ## Completed archive
 
+- [x] Migrate the user-authorized AI Passport application unchanged into
+      `firmware/ai-passport/`: all 397 versioned source files match the reference;
+      ESP-IDF 5.5.3 build/image/archive verification passed. On 2026-10-24,
+      flash only the verified app to COM5 and complete a 300-second serial test:
+      no unexpected reset/panic/watchdog, zero sampled queue/storage loss, and
+      retry recovery after four transient POST failures. Preserve the existing
+      partition table and protected regions; do not flash the merged image.
+      Twelve host C test executables passed; upstream repository/static checks
+      still have documented pre-existing/platform failures. Full peripheral,
+      long-run, multi-device and cloud-database acceptance remain pending.
+      See [the migration/test report](../notes/ai-passport-migration-test-2026-10-24.md).
+
 - [x] Deploy the ingestion server on Cloudflare from backend-only commit
       `6f7775a`; apply additive D1 migration, bind private APAC-hint R2, set an
       independent research secret and verify three real cloud demo streams, exact
