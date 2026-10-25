@@ -215,6 +215,18 @@ whether the saved records support a useful replay. Preparation is in the
 [field checklist](docs/notes/hackathon-delivery.md); further work is in the
 [roadmap](docs/design/ROADMAP.md).
 
+## Hackathon demonstration
+
+The hardware is still unstable, and sustained collection and upload remain
+under active debugging. Outdoor devices left unattended are also at risk of
+theft, so the prototype is demonstrated through temporary, attended setups.
+For the hackathon submission, an on-site demonstration with the devices can be
+arranged on request to show collection, campus Wi-Fi upload and the web interface.
+
+> **Actual operation screenshots — to be added.**
+> Space reserved for photos/screenshots of the physical setup and its uploaded
+> observations. The sample interface images above remain labelled as samples.
+
 ## Run locally
 
 Use **Node.js 24**. From the repository directory:
