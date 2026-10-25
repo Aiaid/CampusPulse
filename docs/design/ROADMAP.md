@@ -1,17 +1,37 @@
 # CampusPulse roadmap
 
 Current planning baseline: [Hackathon plan](hackathon-plan.md), 2026-10-23.
-The user selected all-Cloudflare hosting. All unchecked items are plans, not
-implemented capabilities or measured results. The competition deadline and
-mandatory track requirements remain unknown.
+The user selected all-Cloudflare hosting. Unchecked items mark remaining work
+or acceptance; any partial local implementation is identified explicitly below.
+The competition deadline and mandatory track requirements remain unknown.
 
 Hardware decision (2026-10-23): all five devices first implement BLE collection,
 bounded durable buffering and direct HTTPS upload with one shared core and
 board-specific adapters. AI Passport interaction and ePaper display follow that
 baseline. This supersedes dedicated manual-only, beacon-only and display-only
-assignments; firmware and device acceptance remain pending.
+assignments; the Passport local software chain now connects setup, policy,
+collection and durable upload. Final local software verification passed on
+2026-10-25; physical-device acceptance remains separate in [firmware chain](../notes/firmware-chain.md).
 
 ## P0 — Deliver the core MVP
+
+- [ ] Verify administrator Passkey registration, login and reauthentication in
+      the production Safari/Touch ID workflow after the optional-extension fix;
+      controlled local browser acceptance is archived below.
+
+- [ ] Physically validate the implemented Passport ownership and provisioning
+      design: real-browser BLE, iPhone device-hosted SoftAP, wrong proof, interrupted
+      candidate validation/save, and failed transport teardown. Verify the board
+      profile and keep registration, network contact and applied config distinct.
+      Native USB exchange is verified on one Passport; other-board drivers remain planned.
+
+- [ ] Validate implemented factory identity and v2 policy/activation on hardware:
+      same-boot leases, auth rejection, stale retries, reboot reapplication,
+      assignment removal and placement/config window boundaries.
+- [ ] Validate implemented canonical MAC/address-type summaries, overall
+      windows/health, bounded sampled raw and frozen journals under actual radio
+      loss, reset, storage exhaustion and uncertain/duplicate ACKs. Measure
+      capacity/retention rather than infer them from compiled limits.
 
 - [ ] Register individually verified physical nodes, capture policies and fixed
       placements in production, then validate firmware ACK/reclamation and actual
@@ -79,9 +99,12 @@ assignments; firmware and device acceptance remain pending.
 
 ## P2 — Refine the product and presentation
 
-- [ ] Complete explicitly approved browser submission/cancellation acceptance for
-      the migrated field-record flow; the current local mutation check was blocked
-      by automatic approval review.
+- [ ] Further calibrate night materials and unmodeled facades toward the concept;
+      the full-campus chart is an approximate fixed-view 2.5D illustration,
+      without surveyed depth or physical photometric calibration.
+
+- [ ] Field-record browser write regression is deferred at the user's request
+      (2026-10-23); resume only when that verification is requested.
 - [ ] Evaluate registered depth/light masks or licensed baked night assets for
       greater fidelity beyond the fixed-raster warm-light treatment.
 - [ ] Confirm map-asset display/redistribution rights before reusing the old GIS
@@ -114,6 +137,215 @@ assignments; firmware and device acceptance remain pending.
 
 ## Completed archive
 
+- [x] Publish the selected firmware integration with redistributable OFL fonts,
+      inspect/back up the original 8 MiB Passport and preserve its protected
+      layout while updating only the app. The original legacy queue reset was
+      separately authorized; the short-PIN update erased no queue/settings data.
+      Record the real supervisor fix, startup and private backup boundaries in
+      [firmware acceptance](../notes/firmware-chain.md).
+
+- [x] Implement expiring eight-digit PIN / Security 2 and physical USB setup for
+      headless profiles. Verify native/SDK/browser software, four C3 builds and
+      one Passport's actual USB begin/identity/status/framing recovery plus
+      60-second startup. Publish code `3fc2ec9`; real BLE/phone/Wi-Fi/cloud
+      enrollment and sustained collection remain the separate gates above.
+
+- [x] Apply the selected app icon to the administrator login, initialization
+      and workspace sidebar. Local mocked-session browser checks passed at
+      desktop/mobile sizes for all three screens, along with the production build.
+
+- [x] Correct GIS navigation to load actual official tiles across the complete
+      image grid with all four levels, preserving authored overlays and accepting
+      place coordinates beyond the old crop. Permit only the official image
+      origin in admin CSP. Build, 476 local tests, actual-HTTP-CSP browser checks,
+      desktop/390px flow and native Safari real-tile Nanhu editor/link checks
+      passed. The October 24 crop-only boundary/dev-server acceptance was
+      insufficient and is superseded by [this correction](../notes/gis-location-settings.md).
+      Production records and physical placement verification remain separate.
+
+- [x] Generate an original abstract campus-route C app icon and integrate the
+      homepage brand, browser favicon, Apple touch icon and manifest variants.
+      Final assets were metadata-stripped/rechecked; local build and desktop/
+      mobile browser icon loading passed (2026-10-25). Deployment remains separate.
+      Prompt and provenance are recorded in [reuse notes](../notes/reuse.md).
+
+- [x] Default to lower-resolution lighting with a shared, locally remembered
+      轻量/精细 control. Preserve official source sampling, text/actor DPR and
+      full-resolution native canopy occlusion; lower only material/light color
+      resolution. Matched visible Chromium improved full/efficient readiness
+      6.9→4.1s and DOM canvas capacity157.2→86.1MiB, with265 frontend tests and
+      production build passing. See [measurements and tradeoffs](../notes/lighting-performance.md).
+      Local implementation; production deployment/Safari acceptance separate.
+
+- [x] Complete the Passport local software chain and frozen-source acceptance
+      (2026-10-24–25): protected browser BLE / device-hosted SoftAP provisioning,
+      durable validated enrollment, strict TLS, boot-bound v2 control/leases,
+      canonical MAC/type summaries, bounded raw evidence, frozen Flash batches
+      and exact ACK reclamation. Native/sanitizer/fault tests, literal C-codec
+      bytes against real isolated workerd/D1/R2, Chromium/WebKit fixture flows,
+      444 repository tests / 43 files, Vite and four fresh ESP-IDF 5.5.3 C3 builds
+      with protected separate-image checks pass. All 158 non-Markdown firmware
+      source hashes remained unchanged across final builds. Local ignored image
+      artifacts and full boundaries are in [chain evidence](../notes/firmware-chain.md).
+      No flash, physical radio/phone/Flash acceptance, v2 deployment or private-source
+      publication is included; hardware, S3 and manual/USB work remains open above.
+
+- [x] Reduce lighting startup work with a bounded two-Worker compiler, scoped
+      lamp/actor caches and cropped high-DPI library canvases. Matched warmed-tile
+      visible Chromium at1920×1080/DPR2 improved readiness19.9→6.7s, longest
+      main-thread task2126→139ms and DOM canvas capacity374.8→157.2MiB. Build,
+      256 frontend tests and mobile/day/night/xray/field/no-Worker regression pass.
+      Preserve lighting equations, source assets and frame-rate target. See
+      [performance notes](../notes/lighting-performance.md); deployment and live
+      Safari acceptance remain separate.
+
+- [x] Connect administrator location editing to the shared official GIS picker,
+      public field maps/search/details and record place IDs. Preserve full-image
+      coordinate registration and separate demo places; allow all map corners
+      to reach the viewport center. Build, 226 frontend tests and fixture-based
+      desktop/390px browser regression passed, including refresh, service failure
+      and phone edits/removal. See [scope and limits](../notes/gis-location-settings.md).
+      No production registry writes, deployment or physical-location acceptance.
+
+- [x] Accept omitted optional Passkey credential-property reports while rejecting
+      negative/malformed reports and retaining all core WebAuthn/session guards.
+      The exact release snapshot passes350 tests/34 suites (61 real-crypto
+      Passkey cases), build, fresh local migrations and real Worker/browser
+      registration with omitted extensions, signed login/reauth and management
+      regressions. Physical Safari acceptance remains a separate step. See
+      [browser compatibility](../notes/admin-browser-compatibility.md).
+
+- [x] Implement firmware runtime stage A after baseline commit `82549b0`:
+      factory-MAC node identity, portable lifecycle/policy decisions, Passport
+      board boundary, optional peripherals, single-owner UI/input timestamps,
+      and independent diagnostic maintenance/read-only snapshots. Default boot
+      waits for setup/config rather than starting field scanning. C3 normal,
+      diagnostic and headless builds, sanitizer suites and image guards pass;
+      no hardware test, push or cloud integration. See
+      [historical runtime notes](../notes/firmware-runtime.md). Provisioning,
+      transport and durable collection were pending at that snapshot and now
+      have local software implementations; S3/manual/hardware acceptance remains open.
+
+- [x] Fix Safari administrator-page cosmetic-filter collisions by replacing
+      generic `ad-` classes, custom properties and animations with `cp-admin-`.
+      Preserve account/API behavior and browser protections. The release snapshot
+      passes 324 tests across 34 suites, build, and real local Worker authentication/CTAP2
+      and management browser regressions under controlled cosmetic filters,
+      including desktop and 390px overview/account geometry. See
+      [browser compatibility](../notes/admin-browser-compatibility.md).
+      Controlled Chromium acceptance is separate from live Safari verification.
+
+- [x] Review the imported firmware and record the shared-core/ESP/board/UI
+      boundaries, administrator Web Bluetooth onboarding, policy application
+      recovery and durable local-marker semantics in
+      [firmware platform](firmware-platform.md). Browser/pinned IDF support and
+      source behavior checked; independent read-only reviews and document-link
+      checks passed. Runtime, API and hardware changes remain the P0/P1 work above.
+
+- [x] Import the user-selected AI Passport Radar runtime/BSP from verified
+      upstream `5fb8ab5` on `codex/passport-firmware`. Preserve 3 MiB app/cardid
+      layout, omit credentials/observations, gate calibration exports, correct
+      Appearance endianness and record file fingerprints. C sanitizer checks,
+      nine image guard tests and ESP-IDF 5.5.3/C3 build pass (583,680-byte app).
+      No hardware test or push; local baseline commit authorized before refactoring.
+      Resolve inherited raster-font rights
+      before publication. See [firmware baseline](../notes/firmware-baseline.md).
+
+- [x] Enrich frontend-only simulation with teaching-day, weekend and rainy-day
+      profiles for all eight places, independent parking intensity and full-day
+      variation. Share scene/time selection across maps, details and nine history
+      rows. Build, 198 frontend tests and real Chromium desktop/390px checks
+      passed with zero API writes/page errors; field mode clears synthetic
+      indicators and pauses replay. See [simulation notes](../notes/simulation.md).
+      Local implementation only; no deployment or device validation.
+
+- [x] Upgrade `/admin` authentication to restricted first-use bootstrap, a managed
+      account/password and up to20 WebAuthn Passkeys. Add native salted scrypt,
+      fresh password/Passkey reauthentication, profile/key management, password
+      change session/challenge revocation, explicit production RP trust, browser-
+      bound one-use challenges, bounded rate admission and transactional guards.
+      Local acceptance:326 tests/34 files (60 account/Passkey/management cases
+      plus9 deploy-origin checks), build, four-migration local workerd ingestion,
+      real Chromium CTAP2 registration/login/reauth/key/account changes and the
+      original management browser regression passed;45-operation Swagger and
+      desktop/390px security-page checks passed. No authentication commit/deploy,
+      physical biometric/key/sync or production CPU/domain acceptance is implied.
+
+- [x] Implement `/admin` with independent revocable administrator sessions,
+      device registration/metadata/rotation/enable state and health, places and
+      deployment history, editable capture drafts, validated version publication,
+      desired/reported/applied state, runtime settings and atomic redacted audit.
+      Preserve historical upload/configuration identity and reject inactive or
+      concurrently closed placements at publication. Local additive migrations,
+      261 tests/29 suites (including 14 admin integration/security tests), build,
+      real workerd ingestion regression and real Chromium management workflows
+      passed. Browser checks cover rejected/corrected login, rotation, disable/
+      enable, draft edit/clone/publish with original-policy preservation, synthetic
+      ACK UI, persistence, logout, readable phone tables and bounded scrolling.
+      No production deploy or firmware/physical activation acceptance is implied.
+
+- [x] Generalize the accepted library lighting to the full visible campus and
+      all eight places:103 roofs/29 walls/44 grounds,309 foliage proxies,94
+      point sources and77 pane-derived area emitters; share indexed light,
+      visibility, bounded ground/window bounce and actor reception. Add shared
+      viewport chunks with bounded64-entry caches and cooperative compilation,
+      runtime-only official CORS source material, all-place frames and ten
+      synthetic routes. Correct native GIS crown occlusion, remove duplicate broad
+      warm glow, and keep crown tops above path lights with strict incidence.
+      Preserve library calibration, fixed parking, comparison
+      modes and zero synthetic actors in field mode. Build and190 frontend
+      tests passed; desktop/390px and all-place runtime checks recorded in
+      [campus lighting](campus-lighting.md) and root visual QA. No deployment,
+      commit or database writes performed by this lighting task.
+
+- [x] Bring the bounded library-entry trial closer to the selected night concept:
+      unified building/ground/tree/actor lighting, textured foliage, crisp tiles,
+      source-preserving surfaces, focused warm entry and readable16/13px detail
+      figures. Retain actual GIS geometry, routes/counts/anchors, fixed parking,
+      independent layers and field isolation. Paired pass16 and representative
+      motion/phone/xray views independently accepted;86.328s/2084 advancing
+      frames preserve56 actors and four parking anchors. Final post-guard build
+      and148 frontend tests passed; current in-app mode/search/zoom checks passed.
+      This completes the requested local trial; full-campus extension remains
+      separate above. No deployment or DB/hardware acceptance is implied.
+
+- [x] Replace remaining library roof/canopy/door washes with runtime-only
+      CORS-permitted official source textures, bounded approximate linear
+      reflectance and shared normals/light/tone mapping. Preserve source seams,
+      ordinary map loading and tested network/CORS fallback; bundle no raster.
+      Add three discrete canopy downlights with shared downward cones and
+      select common sky strength.65 via matched A/B without changing lamp/room
+      power. Pass15 build and139 frontend tests passed; desktop/390x844 and source
+      failure/recovery checked. Night cohesion improved; actor readability keeps
+      the concept-fidelity goal open.
+
+- [x] Fit the library roof/facade/entry responsively, recover campus background
+      detail and declutter local labels; add bounded common dielectric reflection
+      and ground-only contact AO. Refine base contrast and existing canopy lamp;
+      denser synthetic pedestrians retain all existing paths/poses/parking.
+      Build and123 frontend tests passed; pass11 desktop/phone reviewed without
+      new static-frame regression. The broader night-fidelity goal remains open.
+
+- [x] Share linear wall/paving/foliage/actor shading, normalized additive room
+      emission and19 facade-area patches; add authored paving with planting-bed
+      exclusions and preserve actual door details under shared-energy reflection.
+      Build and107 frontend tests passed; pass7 desktop/390x844 inspected.
+      This completes the material foundation, not the open concept-fidelity goal.
+
+- [x] Add textured foliage/fixture assets with metadata/provenance records,
+      shared single-bounce/leaf reception, clustered room exposure,13 wider
+      campus paving masks/57 lights,32 facade planes/14 groups and adaptive
+      official tile LOD. Build and75 frontend tests passed; current desktop and
+      390x844 captures inspected. Concept-fidelity acceptance remains open.
+
+- [x] Prototype unified library-entry lighting with 8 surface receivers,
+      8 tree volumes and 8 shared illustrative fixtures; add normal/height/ray
+      response, actor capsule shading, tree clipping and ground shadows. Keep
+      entrance/enhanced/original comparison. Build, 48 frontend tests and
+      desktop/390x844 browser checks passed; no database tests or writes.
+      See [experiment and limits](library-entry-lighting.md). This is partial
+      fixed-view relighting, not full-campus 3D or concept-image parity.
+
 - [x] Deploy the ingestion server on Cloudflare from backend-only commit
       `6f7775a`; apply additive D1 migration, bind private APAC-hint R2, set an
       independent research secret and verify three real cloud demo streams, exact
@@ -121,6 +353,23 @@ assignments; firmware and device acceptance remain pending.
       `39921619389` passed; 9 extra permission-boundary checks passed. Disable the
       synthetic upload node after acceptance. This does not validate firmware,
       field coverage, long-run retention execution or mainland availability.
+
+- [x] Replace detached facade dots with14 reviewed wall planes and polygonal
+      panes, stable room variation, continuous reception and selective night
+      grading. Fix asynchronous camera invalidation ownership and raster-only
+      transform interpolation. Build,28 frontend tests and current desktop/phone
+      browser checks passed; GIS/actors/interactions retained, no DB writes.
+
+- [x] Share registered local illumination between ground and people/vehicle
+      materials; add reviewed forecourt/entry spill and soft facade response.
+      Preserve geometry, actor scale, paths and controls. Build,23 frontend tests
+      and desktop/phone checks passed; fidelity remains partial, no DB writes.
+
+- [x] Correct oversized/stretched actor sprites using per-direction alpha bounds,
+      preserved aspect ratio, registered world sizes and foot/tyre anchoring.
+      Overview/local zoom and phone checks passed; routes/counts stayed intact.
+      Build and 17 frontend-only tests passed, without database tests or writes.
+
 
 - [x] Implement ingestion v1 server: scoped per-node credentials, immutable
       placement/config with append-only closures, strict three-stream validation,
@@ -137,6 +386,12 @@ assignments; firmware and device acceptance remain pending.
       read-only API. Reachability improved substantially, but download anomalies
       and actual demo-network/device acceptance remain open. See
       [connectivity evidence](../notes/mainland-connectivity-2026-10-23.md).
+
+- [x] Add PixiJS 8.22 / pixi-filters 6.1 lighting-only overlay, real bloom/blur,
+      original/Canvas fallback, registered paving/facade masks and on-demand
+      rendering. Build, 13 frontend tests and desktop/phone light-layer checks
+      passed locally; no database tests or writes were performed for this pass.
+
 
 - [x] Publish same-origin `/docs` and `/openapi.json` for the six implemented
       operations with self-hosted Swagger UI, explicit shared-operator auth and

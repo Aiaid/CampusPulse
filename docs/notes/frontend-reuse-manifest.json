@@ -7,25 +7,25 @@
       "source": "local-reference/pre-hackathon/gis-prototype/src/App.jsx",
       "destination": "src/campus/App.jsx",
       "source_sha256": "556ae726df80c65771012cee4f22871da5cd7ede20689c0b4557f483b9f5559e",
-      "destination_sha256": "494d3becf3d576df37354f6dffd9720b5eb8ef9893d830295ca2d4f914e8206b"
+      "destination_sha256": "4b6262cebf2498865b332587187908b71a2544fbbd07a7af226cd0d35bc1b763"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/src/CampusMap.jsx",
       "destination": "src/campus/CampusMap.jsx",
       "source_sha256": "2c89e6d692e0ac0e55d4367b123764d04200ce2a4a76311c505da9a29a9e1a5c",
-      "destination_sha256": "c1baf3cb3f3451beb7501ca3cb1adb37e7c283c5025f6cabeec51f87c335e56d"
+      "destination_sha256": "058d1b06fb0f0754a581a28076b105544e1c8b1332ccfa7d605b6ecbbe25b5f4"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/src/ActivityLayer.jsx",
       "destination": "src/campus/ActivityLayer.jsx",
       "source_sha256": "b158c98d07c65455bf1162c4bbe496f9ff94084718de31c6757679be24df13ae",
-      "destination_sha256": "0aa6f2b82e4fbecebffb2b40dec9f7df6331d20c3d54caa2c97d3c134d908dcd"
+      "destination_sha256": "e3ed977b8a53b6544c4c4df7e1895de30229822639e71e7ec656e7a79d3609d6"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/src/NightLighting.jsx",
-      "destination": "src/campus/NightLighting.jsx",
+      "destination": "src/campus/CanvasNightLighting.jsx",
       "source_sha256": "210bfcd5da078d969ac66e5c5b419f8567e89e5c5aa1789147c36679138632d1",
-      "destination_sha256": "50b09cc8e9f0f9d2f911d4581b2539d03dc74241b27c6402f6aa806faa419875"
+      "destination_sha256": "85153af450e964a01d18d4ec706dc9c228493eca0f31ef4d64ca1dfdbae10227"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/src/MapRegions.jsx",
@@ -37,7 +37,7 @@
       "source": "local-reference/pre-hackathon/gis-prototype/src/scene-data.js",
       "destination": "src/campus/scene-data.js",
       "source_sha256": "77e9b09e0f0e4b8e81bbb889a481da2c69b664c8517b39ebefe5949adc3c5b52",
-      "destination_sha256": "77e9b09e0f0e4b8e81bbb889a481da2c69b664c8517b39ebefe5949adc3c5b52"
+      "destination_sha256": "668a77eecb8486fa4cb60809161750a31df458c743a3d02aa4383f07e937e50e"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/src/spatial-scene.js",
@@ -67,13 +67,13 @@
       "source": "local-reference/pre-hackathon/gis-prototype/src/styles.css",
       "destination": "src/campus/styles.css",
       "source_sha256": "1879bbc9a919378d7c1798e9a1aa6f516f2107ed802b2bbf7569978f851342ca",
-      "destination_sha256": "c10355839e943ce4f690f50d387672f7fb7d4c7869a306de36a3f19f4109240a"
+      "destination_sha256": "24b9a49b6dfb53709332be97cedbab8168fb744a7bed5755fb2372138a6792d9"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/src/campus-map.css",
       "destination": "src/campus/campus-map.css",
       "source_sha256": "52bcdd7b705b4541c60c65c3297dc8051f87261e56763d6be0fe189145395ce4",
-      "destination_sha256": "8f2f6ea9e422e2ffa5c4ad25203586a6c4eeb2d248634a983055510410d0a2d4"
+      "destination_sha256": "69eb138e14c2f2666e138bba37730a79ce5e46c83fa88c051083466bf637f7ff"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/src/activity-layer.css",
@@ -85,13 +85,13 @@
       "source": "local-reference/pre-hackathon/gis-prototype/src/night-lighting.css",
       "destination": "src/campus/night-lighting.css",
       "source_sha256": "41e0d725206a4bcd2c38590adf99372f0cc39d96eae5bb1980492fac88c24d74",
-      "destination_sha256": "41e0d725206a4bcd2c38590adf99372f0cc39d96eae5bb1980492fac88c24d74"
+      "destination_sha256": "fc75421a4bc5d2d48b0a7fd95349fc5f8eeb7ecc2571b01e17708bb85abba90a"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/src/scene-controls.css",
       "destination": "src/campus/scene-controls.css",
       "source_sha256": "0a9f007d61c4778beca8d431c7d18390ca82f57c99d376dc14bab4b4c99638ec",
-      "destination_sha256": "73a4a28efb0b04c6cc36f827450904b9b1a83ddce204ac223f10b9b6aab702e0"
+      "destination_sha256": "89e98bee120e9b4ddc31799ab14616276108a2979995f6de7cdaafe23a568bc3"
     },
     {
       "source": "local-reference/pre-hackathon/gis-prototype/public/assets/person-directions.png",

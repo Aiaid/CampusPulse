@@ -103,6 +103,19 @@ instructions take precedence.
 - User-requested historical Markdown has selected copies/summaries under
   `docs/upstream/pre-hackathon/`, with hashes and explicit historical status.
   This does not authorize publishing raw captures or invited private repositories.
+- On 2026-10-24 the user authorized importing the selected AI Passport Radar
+  runtime and BSP from `xiaoYan-bit/ai-passport-radar` into an independent
+  `firmware/ai-passport-radar/` baseline on a CampusPulse firmware branch.
+  Preserve source provenance and notices; exclude credentials, captures, personal
+  observations, upstream repository metadata and unrelated applications. This
+  local source import does not authorize publishing the private repository or
+  flashing hardware. Resolve the inherited raster-font licensing before release.
+- On 2026-10-25 the user explicitly authorized committing and pushing the
+  selected CampusPulse firmware integration, then flashing the connected target.
+  This supersedes the earlier local-only publication/flash authorization limit
+  for this selected integration, not unrelated private source or observations.
+  Replace the inherited fonts with redistributable assets before pushing, verify
+  the actual board/Flash layout, and preserve protected device data when flashing.
 - Read `docs/design/ROADMAP.md` before implementation; record new directions there
   and archive completed work. Record any actual code reuse and its license in
   `docs/notes/reuse.md` before committing it.

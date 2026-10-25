@@ -11,6 +11,11 @@
 [车辆广播规则](../upstream/pre-hackathon/vehicle-rules.md)，不兼容旧 80 字节格式。
 示例全部为合成数据；示例 MAC、名称、计数不来自现场捕获。
 
+2026-10-24 增补：[Admin v1](admin-v1.md)加入独立管理会话、可编辑配置草稿、
+版本发布、期望配置选择和 `POST /api/v1/device/config/ack` 应用报告。
+该增补的本地验收与部署状态单独记录；旧的线上验收不覆盖新接口，固件实际
+拉取、切换窗口和应用配置仍需逐台验证。历史积压批次继续引用原配置。
+
 ## 1. 决策：指标与证据并行
 
 **设备可以上传指标，也可以上传 MAC 和蓝牙广播包。主接口从第一版就区分这两条
@@ -110,7 +115,7 @@ hash 是**实际 UTF-8 请求体字节**的 SHA-256，不含 HTTP headers；它�
 | --- | --- |
 | `protocol` | 固定字符串 `campuspulse/1` |
 | `batch_id` | 设备生成 UUIDv4，批次落盘时固定；重试保持不变 |
-| `node_id` | 预配置非 MAC 的逻辑 ID，1–64 个 `[a-z0-9_-]`；绑定凭据 |
+| `node_id` | 服务端登记的固定节点 ID，1–64 个 `[a-z0-9_-]`；当前 Passport 固件由本机出厂基础 MAC 规范化派生，绑定独立凭据，不使用被扫描目标或本机临时广播地址 |
 | `boot_id` | 每次启动产生的新 UUIDv4，恢复队列保留旧 boot；不能复用旧启动 ID |
 | `placement_id` / `capture_config_id` | 服务端登记的不可变 ID，字符集同 node_id |
 | `dataset` | `field/controlled_test/demo`，与配置一致 |

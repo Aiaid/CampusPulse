@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { handleApi, summarize, validateObservation } from '../worker/index';
@@ -36,8 +36,9 @@ const post = (value: unknown, authorization = 'Bearer test-operator') => api('/a
 
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
-  db.exec(readFileSync(new URL('../migrations/0001_initial.sql', import.meta.url), 'utf8'));
-  db.exec(readFileSync(new URL('../migrations/0002_ingestion.sql', import.meta.url), 'utf8'));
+  for (const migration of readdirSync(new URL('../migrations/', import.meta.url)).filter(name => /^\d+.*\.sql$/.test(name)).sort()) {
+    db.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
+  }
   env = { DB: sqliteD1(db), OPERATOR_TOKEN: 'test-operator' };
 });
 afterEach(() => db.close());

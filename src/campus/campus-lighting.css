@@ -1,0 +1,13 @@
+.cp-campus-light-host,
+.cp-campus-light {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+}
+.cp-campus-light { mix-blend-mode: normal; }
+.cp-campus-light[hidden] { display: none; }
+.cp-campus-light[data-campus-channel="ground"],
+.cp-campus-light[data-campus-channel="tree"] { z-index: 0; }
+.cp-campus-light[data-campus-channel="building"],
+.cp-campus-light[data-campus-channel="normals"] { z-index: 2; }

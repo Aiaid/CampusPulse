@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { commitBatch, findReceipt, IngestStoreError } from '../worker/ingest-store';
@@ -48,8 +48,9 @@ let d1: D1Database;
 
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
-  db.exec(readFileSync(new URL('../migrations/0001_initial.sql', import.meta.url), 'utf8'));
-  db.exec(readFileSync(new URL('../migrations/0002_ingestion.sql', import.meta.url), 'utf8'));
+  for (const migration of readdirSync(new URL('../migrations/', import.meta.url)).filter(name => /^\d+.*\.sql$/.test(name)).sort()) {
+    db.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
+  }
   db.prepare('INSERT INTO device_nodes (id,credential_sha256) VALUES (?,?)').run('cp-demo-01', 'c'.repeat(64));
   db.prepare('INSERT INTO placements (id,node_id,place_id,valid_from_ms) VALUES (?,?,?,?)')
     .run('demo-placement-01', 'cp-demo-01', 'library', NOW - 1000);

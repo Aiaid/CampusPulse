@@ -47,4 +47,9 @@ export interface Env extends Pick<WorkerBindings, 'DB'> {
   OPERATOR_TOKEN?: string;
   RAW_BUCKET?: WorkerBindings['RAW_BUCKET'];
   RESEARCH_TOKEN?: string;
+  /** Bootstrap/cookie-signing secret; token login is disabled after account setup. */
+  ADMIN_TOKEN?: string;
+  /** Exact trusted HTTPS origin and hostname RP ID; localhost is development-only. */
+  ADMIN_WEBAUTHN_ORIGIN?: string;
+  ADMIN_WEBAUTHN_RP_ID?: string;
 }

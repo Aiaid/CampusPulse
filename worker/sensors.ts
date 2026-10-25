@@ -23,7 +23,7 @@ export interface PublicSensorWindow {
 }
 export async function readPublicWindows(env: Env, place: string, from: number, now = Date.now()): Promise<PublicSensorWindow[]> {
   const rows = await env.DB.prepare(`SELECT w.node_id,w.boot_id,w.placement_id,w.capture_config_id,w.item_json,w.utc_ms
-    FROM sensor_windows w JOIN placements p ON p.id = w.placement_id AND p.node_id = w.node_id
+    FROM all_sensor_windows w JOIN placements p ON p.id = w.placement_id AND p.node_id = w.node_id
     LEFT JOIN placement_closures c ON c.placement_id = p.id AND c.node_id = p.node_id
     WHERE p.place_id = ? AND w.dataset = 'field' AND w.utc_ms >= ? AND w.utc_ms <= ? AND w.expires_at_ms > ?
     AND json_extract(w.item_json, '$.time.uncertainty_ms') BETWEEN 0 AND 30000

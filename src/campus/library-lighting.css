@@ -1,0 +1,31 @@
+.cp-library-light-host {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+}
+.cp-library-light {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  user-select: none;
+}
+.cp-library-light[hidden] { display: none; }
+.cp-library-light--shade { z-index: 0; mix-blend-mode: multiply; }
+.cp-library-light--diffuse,
+.cp-library-light--emission { z-index: 2; mix-blend-mode: screen; }
+/* Ground/foliage reception belongs under upright sprite materials. Canopy
+   depth is handled by per-actor masks, rather than washing light over figures. */
+.cp-library-light[data-library-channel="groundDiffuse"] { z-index: 0; }
+.cp-library-light--normals { z-index: 2; mix-blend-mode: normal; }
+.cp-library-light--tint { z-index: 2; mix-blend-mode: multiply; }
+.cp-library-light--material { z-index: 2; mix-blend-mode: normal; }
+/* Authored facade albedo replaces only the reviewed window band. It stays
+   opaque and receives world light in linear RGB before this normal composite. */
+.cp-library-light[data-library-channel="buildingMaterial"] { z-index: 2; mix-blend-mode: normal; }
+.cp-library-light[data-library-channel="groundTint"] { z-index: 0; }
+.cp-library-light[data-library-channel="groundMaterial"] { z-index: 0; mix-blend-mode: normal; }
+/* Actors are clipped against the same crown alpha only when behind its base.
+   Keep foliage under the actor canvas so foreground figures remain in front. */
+.cp-library-light[data-library-channel="treeMaterial"] { z-index: 0; }

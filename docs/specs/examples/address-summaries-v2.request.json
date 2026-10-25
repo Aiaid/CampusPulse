@@ -1,0 +1,46 @@
+{
+  "protocol": "campuspulse/2",
+  "node_id": "cp-demo-01",
+  "boot_id": "11111111-1111-4111-8111-111111111111",
+  "placement_id": "demo-placement-01",
+  "capture_config_id": "demo-capture-address-v2",
+  "dataset": "demo",
+  "firmware_version": "campuspulse-passport-v2",
+  "batch_id": "25000000-0000-4000-8000-000000000001",
+  "stream": "address_summaries",
+  "items": [
+    {
+      "seq": 1,
+      "time": {
+        "mono_ms": 30000,
+        "utc_ms": null,
+        "clock_epoch": 0,
+        "uncertainty_ms": null
+      },
+      "window_seq": 1,
+      "duration_ms": 30000,
+      "bin_ms": 5000,
+      "address": "02:00:00:00:00:01",
+      "address_type": "random",
+      "reports": 6,
+      "adv_reports": 6,
+      "scan_response_reports": 0,
+      "first_offset_ms": 1000,
+      "last_offset_ms": 29000,
+      "rssi": {
+        "samples": 6,
+        "min_dbm": -80,
+        "max_dbm": -60,
+        "mean_dbm": -70
+      },
+      "bins": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  ]
+}

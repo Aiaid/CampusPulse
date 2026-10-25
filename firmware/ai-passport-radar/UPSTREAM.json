@@ -1,0 +1,393 @@
+{
+  "schema": "campuspulse-firmware-import/1",
+  "fingerprint_scope": "source and destination hashes describe the imported snapshot, not later refactors",
+  "baseline_commit": "82549b0",
+  "source_repository": "xiaoYan-bit/ai-passport-radar",
+  "source_visibility": "private",
+  "source_revision": "5fb8ab532414eb0029fc5ea131a03cb0993db180",
+  "upstream_head_verified_on": "2026-10-24",
+  "import_authorized_on": "2026-10-24",
+  "declared_source_license": "MIT",
+  "preserved_notice": "Copyright (c) 2026 FoloToy",
+  "publication_status": "User explicitly authorized publication of the selected current CampusPulse firmware on 2026-10-25; current glyph arrays replaced with OFL fonts. Original private repository history/captures/credentials are excluded.",
+  "font_provenance": {
+    "files": [
+      "main/font_zh.c",
+      "main/font_digit.c"
+    ],
+    "upstream_generator_fonts": [
+      "Microsoft YaHei",
+      "Bahnschrift"
+    ],
+    "independent_redistribution_rights": "unverified; replace or regenerate before publication/release",
+    "scope": "Historical imported snapshot only; these proprietary-derived glyph arrays are absent from the current working tree."
+  },
+  "adaptations": [
+    "Preserve 3 MiB factory app and protected cardid NVS partition; do not create merged image",
+    "Optional ignored Wi-Fi credential header; no task when unconfigured; omit identifying network diagnostics",
+    "Default-off calibration raw exports and historical observation NVS access",
+    "Remove observed identifiers and session details from source comments",
+    "Correct BLE Appearance little-endian decoding",
+    "Expose BLE mutex-contention drops and input-queue loss warnings",
+    "Disable unused NimBLE security and update project identity",
+    "Correct inherited Wi-Fi interval documentation; normalize source BOMs"
+  ],
+  "files": [
+    {
+      "path": ".gitignore",
+      "source_sha256": "98867f02b38c2166563466df3b15ce174971909e96cc4f2e283e4315b9bc2e93",
+      "destination_sha256": "cc75d6ffb7484b8cf63380da96993440fa5c042257e6f560fc479c1c73b1ba20",
+      "status": "adapted"
+    },
+    {
+      "path": "CMakeLists.txt",
+      "source_sha256": "9f497490cbf9b547162698e2730cbed7f863d0cd97b1c2f3fe88994e644c4b22",
+      "destination_sha256": "18dce03690e7c005292f76ad17e946ca7da0db1771855ef86c9521322bd45e23",
+      "status": "adapted"
+    },
+    {
+      "path": "components/bsp/CMakeLists.txt",
+      "source_sha256": "511917f4eb941ff8e5552bab921ffc65c322b090fcf39c052bf2a272267496d9",
+      "destination_sha256": "511917f4eb941ff8e5552bab921ffc65c322b090fcf39c052bf2a272267496d9",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/idf_component.yml",
+      "source_sha256": "a23abb8bf5fe1f86199eb29af4b90b8ed4fc0b8ca5c9aed86a2eca2157f00043",
+      "destination_sha256": "a23abb8bf5fe1f86199eb29af4b90b8ed4fc0b8ca5c9aed86a2eca2157f00043",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/include/bsp_audio.h",
+      "source_sha256": "5c6107d123b93a79938d043b4a79f22baa347fb6a85f49333f0001138f3bc34d",
+      "destination_sha256": "5c6107d123b93a79938d043b4a79f22baa347fb6a85f49333f0001138f3bc34d",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/include/bsp_battery.h",
+      "source_sha256": "27cfce847b9bae784fc089de0f64d60f533e33d96eb5b20e1585ba8b01ca5373",
+      "destination_sha256": "27cfce847b9bae784fc089de0f64d60f533e33d96eb5b20e1585ba8b01ca5373",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/include/bsp_button.h",
+      "source_sha256": "c489a53f03f57c49479aca0f06d529ceea658705953ce6664c19329623831c08",
+      "destination_sha256": "c489a53f03f57c49479aca0f06d529ceea658705953ce6664c19329623831c08",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/include/bsp_display.h",
+      "source_sha256": "fc07ffbeb66ded0ed5a259122aa766d7a8628859d506bad45e86f2548f422d08",
+      "destination_sha256": "fc07ffbeb66ded0ed5a259122aa766d7a8628859d506bad45e86f2548f422d08",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/include/bsp_i2c.h",
+      "source_sha256": "0b2e570ca593c4dde791def476c1ab51fcb1cacb122de90fa5b1ff78bd5cc053",
+      "destination_sha256": "0b2e570ca593c4dde791def476c1ab51fcb1cacb122de90fa5b1ff78bd5cc053",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/include/bsp_pins.h",
+      "source_sha256": "d1dce1ad85e7a4406099f59e6fb23b32392932683e881b703d072936a63ff9f2",
+      "destination_sha256": "d1dce1ad85e7a4406099f59e6fb23b32392932683e881b703d072936a63ff9f2",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/src/bsp_audio.c",
+      "source_sha256": "1cc4977cd9352806c8cf95ec0348220737645fd5d2cf42195a2564aa5d3090c3",
+      "destination_sha256": "1cc4977cd9352806c8cf95ec0348220737645fd5d2cf42195a2564aa5d3090c3",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/src/bsp_battery.c",
+      "source_sha256": "54d8cf15e538d447e4750a2415911e9006742d299ac5d47b062957ae9ea1b7d6",
+      "destination_sha256": "54d8cf15e538d447e4750a2415911e9006742d299ac5d47b062957ae9ea1b7d6",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/src/bsp_button.c",
+      "source_sha256": "dc6fc3b12e57f85e0726101db878b1085a929a2fdb34ad0f68f8d5c9583399e1",
+      "destination_sha256": "dc6fc3b12e57f85e0726101db878b1085a929a2fdb34ad0f68f8d5c9583399e1",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/src/bsp_display_lvgl.c",
+      "source_sha256": "3d7b991004d2cbb8b1799e9f44bc74f20fcd4637928b912edbc2072479664fd6",
+      "destination_sha256": "3d7b991004d2cbb8b1799e9f44bc74f20fcd4637928b912edbc2072479664fd6",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/src/bsp_display_rounding.c",
+      "source_sha256": "06bf1cae13412ba72e976ec6f93dc0891ddd9e676174798fd6bf3ae81f07de90",
+      "destination_sha256": "06bf1cae13412ba72e976ec6f93dc0891ddd9e676174798fd6bf3ae81f07de90",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/src/bsp_display_rounding.h",
+      "source_sha256": "4f9debc91f6a6b03f7f963ff0727f0bc1eaeb4023f1d9ea276e24da561e90549",
+      "destination_sha256": "4f9debc91f6a6b03f7f963ff0727f0bc1eaeb4023f1d9ea276e24da561e90549",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/src/bsp_display.c",
+      "source_sha256": "3fe74309d2297bd5e321228eb45b2f7c4392d28d5b7110e9241ba179ba69d868",
+      "destination_sha256": "3fe74309d2297bd5e321228eb45b2f7c4392d28d5b7110e9241ba179ba69d868",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/src/bsp_es8311_sleep_check.c",
+      "source_sha256": "ef95e26fab05072d4cc93890b39719de5347084d5da601ef7ce2615fa975f502",
+      "destination_sha256": "ef95e26fab05072d4cc93890b39719de5347084d5da601ef7ce2615fa975f502",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/src/bsp_es8311_sleep_check.h",
+      "source_sha256": "b2f9c52e17bff40e9c23c9ace051ae47aeb2fca3498400a9982cd18242a2e896",
+      "destination_sha256": "b2f9c52e17bff40e9c23c9ace051ae47aeb2fca3498400a9982cd18242a2e896",
+      "status": "unchanged"
+    },
+    {
+      "path": "components/bsp/src/bsp_i2c.c",
+      "source_sha256": "53e6d1dcda8715ef2dfd57134019dadd10aeb5095e24cdac6bec16c2f0c64fbe",
+      "destination_sha256": "53e6d1dcda8715ef2dfd57134019dadd10aeb5095e24cdac6bec16c2f0c64fbe",
+      "status": "unchanged"
+    },
+    {
+      "path": "dependencies.lock",
+      "source_sha256": "593fa5027afa40e795c4020e894b7da3603651187f215d4e705524db151362fd",
+      "destination_sha256": "593fa5027afa40e795c4020e894b7da3603651187f215d4e705524db151362fd",
+      "status": "unchanged"
+    },
+    {
+      "path": "LICENSE",
+      "source_sha256": "0ca7f3a382d5d681ced06d6008081c1d51b05a2547c94c3350058efbe7ddb5ee",
+      "destination_sha256": "0ca7f3a382d5d681ced06d6008081c1d51b05a2547c94c3350058efbe7ddb5ee",
+      "status": "unchanged"
+    },
+    {
+      "path": "main/ad_parse.c",
+      "source_sha256": "73fa3478e3cfb92f89aff28e43ca25209c69d60edbc732f5a8544a2178a1c444",
+      "destination_sha256": "6dc875887edbc14751bebe1e9f1dd5593663d11eddb13d589a236365ac9518dd",
+      "status": "adapted"
+    },
+    {
+      "path": "main/ad_parse.h",
+      "source_sha256": "b3b84e8a26b972ccd1ed20ee7beff338596e30c98b0c0fe7e7fb1987081f39e9",
+      "destination_sha256": "f5f64e134c28dc1f25036fa2183a14f9a961b0352cce6cd52972f8c630642eb7",
+      "status": "adapted"
+    },
+    {
+      "path": "main/ble_radar.c",
+      "source_sha256": "3334db4a3f6d52060bd61973a26b0d44c45698ff40f4824f9795d6a25124956f",
+      "destination_sha256": "3334db4a3f6d52060bd61973a26b0d44c45698ff40f4824f9795d6a25124956f",
+      "status": "unchanged"
+    },
+    {
+      "path": "main/ble_radar.h",
+      "source_sha256": "a6400b1bcba614d436f83f968790870e51f96062f34fb6594ea8d8064aa99df2",
+      "destination_sha256": "a6400b1bcba614d436f83f968790870e51f96062f34fb6594ea8d8064aa99df2",
+      "status": "unchanged"
+    },
+    {
+      "path": "main/CMakeLists.txt",
+      "source_sha256": "6826bf1d927787a6bf6c1c50de327f85aab4df5c2b249c8b1ae44f61f31f554e",
+      "destination_sha256": "6826bf1d927787a6bf6c1c50de327f85aab4df5c2b249c8b1ae44f61f31f554e",
+      "status": "unchanged"
+    },
+    {
+      "path": "main/demo_radio.c",
+      "source_sha256": "a45fdfc1b71f64ea01603766e6d6375047356bf00fe97b2557b6b3d018128f97",
+      "destination_sha256": "a45fdfc1b71f64ea01603766e6d6375047356bf00fe97b2557b6b3d018128f97",
+      "status": "unchanged"
+    },
+    {
+      "path": "main/demo_radio.h",
+      "source_sha256": "924a7c49ddc6075785b62bd574c89658d0d65b5c9a17186a98fe66e0e98b42ba",
+      "destination_sha256": "924a7c49ddc6075785b62bd574c89658d0d65b5c9a17186a98fe66e0e98b42ba",
+      "status": "unchanged"
+    },
+    {
+      "path": "main/dev_class.h",
+      "source_sha256": "408ea9a10116c49571fa16250bd7305af9a8ed68cdcdaa0278c4860d9763174a",
+      "destination_sha256": "408ea9a10116c49571fa16250bd7305af9a8ed68cdcdaa0278c4860d9763174a",
+      "status": "unchanged"
+    },
+    {
+      "path": "main/dev_diag.c",
+      "source_sha256": "158eead9a183febb06e527d32354e9d9c3dc76d7e649ce19ca784d045e8d1434",
+      "destination_sha256": "158eead9a183febb06e527d32354e9d9c3dc76d7e649ce19ca784d045e8d1434",
+      "status": "unchanged"
+    },
+    {
+      "path": "main/dev_diag.h",
+      "source_sha256": "119c77e41829d1753e9010af956018f9f22e0126fb8f9af5d0bf9dde4dadcc24",
+      "destination_sha256": "119c77e41829d1753e9010af956018f9f22e0126fb8f9af5d0bf9dde4dadcc24",
+      "status": "unchanged"
+    },
+    {
+      "path": "main/dev_phone.c",
+      "source_sha256": "323fd2bb31252b4518000df9f564d4ec44df3f8dde55befb71e53a6fa5244ddf",
+      "destination_sha256": "f4c14d88480fd21b1200702bfa7f2cf1f60833ad56c3760e34f5b033972aadf3",
+      "status": "adapted"
+    },
+    {
+      "path": "main/dev_phone.h",
+      "source_sha256": "d37e26f2b2376e89c5cfdff9037ddec5c473c99b2ff7f2e7e28ce40ff9b546f6",
+      "destination_sha256": "73153a94bbd72aa2170f8dd1ae83d9e36f08f40fac768a06acd0ad6dfe6cc8ae",
+      "status": "adapted"
+    },
+    {
+      "path": "main/font_digit.c",
+      "source_sha256": "9b8db3e78b8231765450720b120c87ae42940adc9b73dc95624c9322b8e3becb",
+      "destination_sha256": "a3a7243fedd01e0651245f5421a260ac0c6f1b811044dc997cf7b9a8782e4a5f",
+      "status": "adapted"
+    },
+    {
+      "path": "main/font_digit.h",
+      "source_sha256": "e47fc560fd01737c741f79468ce8d1756f30b068df70ffd244108a55761319c2",
+      "destination_sha256": "c20c0ee42caeb7cfb0d929bf3f1e49b21469c71f0ef707cce9809ec6edb3d8ad",
+      "status": "adapted"
+    },
+    {
+      "path": "main/font_zh.c",
+      "source_sha256": "a9ec45a397921390d167251177e82d27e837984f4924c773f7ea71fa1ef4cfa0",
+      "destination_sha256": "105a786cf172e6f5e6cdfba95aef2c8085fd40365e4dad938057808118a7376e",
+      "status": "adapted"
+    },
+    {
+      "path": "main/font_zh.h",
+      "source_sha256": "3b82c219fe003f3ee9e4b470e757688276f6e208483c193bc1cca300a9e6933a",
+      "destination_sha256": "5033ce34d7ba80f94c125d31aec728af67c1448b9dfa3d602b0a25c2848f7353",
+      "status": "adapted"
+    },
+    {
+      "path": "main/key_guard.h",
+      "source_sha256": "cc4c2c14d50fe5b8d1aa3ac55f148fddeea9f1f69a7ca51c3f666497182377de",
+      "destination_sha256": "cc4c2c14d50fe5b8d1aa3ac55f148fddeea9f1f69a7ca51c3f666497182377de",
+      "status": "unchanged"
+    },
+    {
+      "path": "main/local_policy.h",
+      "source_sha256": null,
+      "destination_sha256": "2be31e3e7f3b5801c895d655f8595b3a9f7a9c4463aeefee96ecbf28eaabc4ec",
+      "status": "authored"
+    },
+    {
+      "path": "main/main.c",
+      "source_sha256": "fae980e6b2bf3efe54a9fd14bcb2bf968578691ca13275a0a48ce870956d2481",
+      "destination_sha256": "13430ac8c18f2d073d7a4a6c7f292d9c57624128a1231612f47791478e9252f6",
+      "status": "adapted"
+    },
+    {
+      "path": "main/page_radar.c",
+      "source_sha256": "76634b87a1f2ac478c0ca2ccefb20c551c5844de6fead7e6c494210e4af62869",
+      "destination_sha256": "76634b87a1f2ac478c0ca2ccefb20c551c5844de6fead7e6c494210e4af62869",
+      "status": "unchanged"
+    },
+    {
+      "path": "main/page_radar.h",
+      "source_sha256": "bda886600d4002d27382a02ef0e6e09b285880b6a8927cf8685a5a09f7b87100",
+      "destination_sha256": "bda886600d4002d27382a02ef0e6e09b285880b6a8927cf8685a5a09f7b87100",
+      "status": "unchanged"
+    },
+    {
+      "path": "main/scan_ble.c",
+      "source_sha256": "3cab50059a9856504aa2ecd06582cf71dd2d6a4c47de0dc7a0539c3e70951ddc",
+      "destination_sha256": "466f4c3c2d2b4ff440abdfe2055602dc51c46e7e57c9683f173e5975aa204f94",
+      "status": "adapted"
+    },
+    {
+      "path": "main/scan_ble.h",
+      "source_sha256": "8a6f085360764f668515befcfb2219c7571aff159969ad9b4185f6ff765f91c3",
+      "destination_sha256": "01d8b83b27f9b09c5aa9a927ff74a56df4c7130dd72bfc4a72f983bf3d06a19c",
+      "status": "adapted"
+    },
+    {
+      "path": "main/scan_stats.c",
+      "source_sha256": "7e588c2fbbc4af64ca37cf6d7f93ecc42e2699f3a7044fd08a63c4fe4a6b2b9e",
+      "destination_sha256": "d4753e7dbbe9b33eebded3fb53533f42b11c95507fdc1ec2d3d79602abffa902",
+      "status": "adapted"
+    },
+    {
+      "path": "main/scan_stats.h",
+      "source_sha256": "159059a3e27d5cbe7b7dffde862e7a78c0e205c92227bd46e57ae4537a19daf4",
+      "destination_sha256": "11a9b07f7dce5d7e4d5b2f7060a1d87afe8421486e7dcb07f69346218e9cee7d",
+      "status": "adapted"
+    },
+    {
+      "path": "main/scan_table.c",
+      "source_sha256": "10b9f8fbf1c1c7b077632e8d857efb703e7143ac88f6139da54ddaa31efec15e",
+      "destination_sha256": "ce5761d43171ffb33944f56b1c399fe5b6103eb5e48a1aa974e6bdc8c280f2c7",
+      "status": "adapted"
+    },
+    {
+      "path": "main/scan_table.h",
+      "source_sha256": "5988ecd8a9fcf578bbf878c31c549e4d92f46dfa351c5bb1243b02a9b15f2db3",
+      "destination_sha256": "f35819a389f164229c336d1fb3ee71621469fd0db906d2f28a1816e65ce0abf9",
+      "status": "adapted"
+    },
+    {
+      "path": "main/ui_mini.c",
+      "source_sha256": "b9bf354d5a2cea0e4d6a82fa5251126211655cbef1174566af629d035edba318",
+      "destination_sha256": "b9bf354d5a2cea0e4d6a82fa5251126211655cbef1174566af629d035edba318",
+      "status": "unchanged"
+    },
+    {
+      "path": "main/ui_mini.h",
+      "source_sha256": "7e11f51dc7dcfc164578f930d15ac678caa151abf57cd942c9c62f754de750f4",
+      "destination_sha256": "7e11f51dc7dcfc164578f930d15ac678caa151abf57cd942c9c62f754de750f4",
+      "status": "unchanged"
+    },
+    {
+      "path": "main/veh_rules.c",
+      "source_sha256": "8472fd912f7f41211ad83e63cc585c4aac132c867260a7c9bfe10bdf67da4ae4",
+      "destination_sha256": "817c2355f875ac0e457fb4e165fb0b1bbcdd690165b9d208f8550a722c101c90",
+      "status": "adapted"
+    },
+    {
+      "path": "main/veh_rules.h",
+      "source_sha256": "32adc058096daff0466f2ae79697a0ce4488afc48fcd699c955cadfc968d0768",
+      "destination_sha256": "efaea87141f672dfa5ea0f602b5d4b2bac94009eb2bc8145c0585ad984cd5617",
+      "status": "adapted"
+    },
+    {
+      "path": "main/wifi_time.c",
+      "source_sha256": "92053a042a50c00225ce2aa6be2d5470bf345c31c0bce5a57d0d21abc2aa24b4",
+      "destination_sha256": "e1030c48b92644da270c17bcf2028fc02bd6d3bca4acfe9446ea0d6c4df7cdd1",
+      "status": "adapted"
+    },
+    {
+      "path": "main/wifi_time.h",
+      "source_sha256": "953add527a9fe4bf795eb4fba107c8f2b5a75df5ace6f5dcd409da5ce73b8b83",
+      "destination_sha256": "57f3e3581f3c25a223cc8296c2d8d81217672530277d2471cb9f883d899e809f",
+      "status": "adapted"
+    },
+    {
+      "path": "partitions.csv",
+      "source_sha256": "950a9b173c54df7b2263e730c41722ef279155a4b6ccb91a17ea7fbb089af3ac",
+      "destination_sha256": "5a4b4585d6762992d4ff64538033c2b311025dbb9a6b631119f6e25207842321",
+      "status": "adapted"
+    },
+    {
+      "path": "sdkconfig.defaults",
+      "source_sha256": "d53b0052e12ae905c6ec574ff241201ac521d7142e029cc162b72cae43722721",
+      "destination_sha256": "d21544aa3a87f8f787909b27a665ba09723da1af4d7f86b126cfc7e2a4db8cd9",
+      "status": "adapted"
+    }
+  ],
+  "font_replacement": {
+    "date": "2026-10-25",
+    "status": "current generated arrays replaced completely with redistributable OFL-1.1 Noto Sans CJK SC Bold 2.004 derivatives",
+    "manifest": "../fonts/manifest.json",
+    "notices": [
+      "../fonts/OFL.txt",
+      "../fonts/COPYRIGHT.txt"
+    ],
+    "generator": "../tools/generate-fonts.py",
+    "preserved_repertoire": 141,
+    "preserved_digits": "0123456789-",
+    "publication_authorized_on": "2026-10-25",
+    "historical_fingerprints_preserved": true
+  }
+}

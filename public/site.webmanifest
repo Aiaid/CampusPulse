@@ -1,0 +1,21 @@
+{
+  "name": "CampusPulse · 校园脉动",
+  "short_name": "CampusPulse",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07121e",
+  "theme_color": "#07121e",
+  "icons": [
+    {
+      "src": "/icons/campuspulse-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/campuspulse-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

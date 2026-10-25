@@ -35,7 +35,7 @@ function sameOrigin(request: Request) {
   const origin = request.headers.get('Origin');
   if (origin && origin !== new URL(request.url).origin) throw new IngestError(403, 'origin_rejected', 'Cross-origin requests are not accepted.');
 }
-async function device(request: Request, env: Env): Promise<string> {
+export async function device(request: Request, env: Env): Promise<string> {
   sameOrigin(request);
   const authorization = request.headers.get('Authorization') ?? '';
   if (!/^Bearer [!-~]{16,256}$/.test(authorization)) throw new IngestError(401, 'unauthorized', 'Device credential required.');
@@ -46,7 +46,12 @@ async function device(request: Request, env: Env): Promise<string> {
 }
 interface ConfigRow { config_json: string; accept_until_ms: number; placement_id: string; raw_retention_hours: number; aggregate_retention_days: number }
 async function configFor(env: Env, node: string, id?: string): Promise<{ config: CaptureConfig; row: ConfigRow }> {
-  const row = await env.DB.prepare(`SELECT config_json,accept_until_ms,placement_id,raw_retention_hours,aggregate_retention_days FROM capture_configs WHERE node_id = ? ${id ? 'AND id = ?' : ''} ORDER BY accept_until_ms DESC,id DESC LIMIT 1`)
+  // Explicit IDs belong to frozen queued uploads. Only an unqualified fetch
+  // follows the desired pointer; pre-administration nodes keep legacy lookup.
+  const row = await env.DB.prepare(`SELECT c.config_json,c.accept_until_ms,c.placement_id,c.raw_retention_hours,c.aggregate_retention_days
+    FROM capture_configs c LEFT JOIN device_desired_configs d ON d.node_id = c.node_id
+    WHERE c.node_id = ? ${id ? 'AND c.id = ?' : 'AND (d.node_id IS NULL OR c.id = d.capture_config_id)'}
+    ORDER BY c.accept_until_ms DESC,c.id DESC LIMIT 1`)
     .bind(...(id ? [node, id] : [node])).first<ConfigRow>();
   if (!row) throw new IngestError(403, 'capture_config_not_allowed', 'No registered capture policy.');
   // Stored policy is server-owned but still validated, so an invalid registry
@@ -56,7 +61,7 @@ async function configFor(env: Env, node: string, id?: string): Promise<{ config:
   catch { throw new IngestError(503, 'capture_config_invalid', 'Registered capture policy is invalid.'); }
   return { config, row };
 }
-async function archive(env: Env, node: string, batch: string, hash: string, bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+export async function archive(env: Env, node: string, batch: string, hash: string, bytes: Uint8Array<ArrayBuffer>): Promise<string> {
   if (!env.RAW_BUCKET) throw new IngestError(503, 'raw_storage_not_configured', 'Private raw storage is not configured.');
   const key = `ingest/${node}/${batch}/${hash}.json`;
   const object = await env.RAW_BUCKET.put(key, bytes, {
@@ -70,7 +75,7 @@ async function archive(env: Env, node: string, batch: string, hash: string, byte
   }
   return key;
 }
-async function authorizeResearch(request: Request, env: Env) {
+export async function authorizeResearch(request: Request, env: Env) {
   sameOrigin(request);
   if (!env.RESEARCH_TOKEN) throw new IngestError(503, 'research_not_configured', 'Research access is not configured.');
   const [actual, expected] = await Promise.all([
@@ -84,7 +89,7 @@ async function authorizeResearch(request: Request, env: Env) {
 export async function handleIngestion(request: Request, env: Env): Promise<Response | null> {
   const url = new URL(request.url);
   const research = /^\/api\/v1\/research\/batches\/([0-9a-f-]{36})$/i.exec(url.pathname);
-  const recognized = ['/api/v1/ingest', '/api/v1/device/config'].includes(url.pathname) || research;
+  const recognized = ['/api/v1/ingest', '/api/v1/device/config', '/api/v1/device/config/ack'].includes(url.pathname) || research;
   if (!recognized) return null;
   try {
     if (url.pathname === '/api/v1/ingest') {
@@ -121,6 +126,30 @@ export async function handleIngestion(request: Request, env: Env): Promise<Respo
       return json({ protocol: 'campuspulse/1', config, server_limits: { max_items: 128, max_body_bytes: MAX_INGEST_BYTES },
         expired: Date.now() > row.accept_until_ms, server_time: new Date().toISOString(),
         retention: { raw_hours: row.raw_retention_hours, aggregate_days: row.aggregate_retention_days, receipt_min_days_after_accept_until: 7 } });
+    }
+    if (url.pathname === '/api/v1/device/config/ack') {
+      if (request.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST.', retryable: false } }, 405);
+      const node = await device(request, env);
+      const value = parseIngestJson(await readBytes(request, 4096));
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new IngestError(422, 'invalid_config_ack', 'Provide a configuration activation acknowledgement.');
+      const o = value as Record<string, unknown>;
+      if (Object.keys(o).some(key => !['capture_config_id', 'state', 'message'].includes(key)) ||
+          typeof o.capture_config_id !== 'string' || !/^[a-z0-9_-]{1,64}$/.test(o.capture_config_id) ||
+          typeof o.state !== 'string' || !['applied', 'failed'].includes(o.state) ||
+          o.message !== undefined && (typeof o.message !== 'string' || !/^[a-z0-9][a-z0-9_.:-]{0,79}$/.test(o.message)))
+        throw new IngestError(422, 'invalid_config_ack', 'Use a known configuration ID, applied/failed state and an optional bounded machine label.');
+      const assignment = await env.DB.prepare('SELECT assigned_at FROM config_assignments WHERE node_id = ? AND capture_config_id = ?')
+        .bind(node, o.capture_config_id).first();
+      if (!assignment) throw new IngestError(403, 'config_not_assigned', 'Acknowledge only a configuration assigned to this device.');
+      const receivedAt = new Date().toISOString();
+      await env.DB.batch([
+        env.DB.prepare(`INSERT INTO config_activation(node_id,capture_config_id,state,message,received_at) VALUES (?,?,?,?,?)
+          ON CONFLICT(node_id,capture_config_id) DO UPDATE SET state=excluded.state,message=excluded.message,received_at=excluded.received_at
+          WHERE excluded.received_at >= config_activation.received_at`).bind(node, o.capture_config_id, o.state, o.message ?? null, receivedAt),
+        env.DB.prepare('INSERT INTO config_activation_events(node_id,capture_config_id,state,message,received_at) VALUES (?,?,?,?,?)')
+          .bind(node, o.capture_config_id, o.state, o.message ?? null, receivedAt),
+      ]);
+      return json({ node_id: node, capture_config_id: o.capture_config_id, state: o.state, received_at: receivedAt });
     }
     if (research) {
       if (request.method !== 'GET') return json({ error: { code: 'method_not_allowed', message: 'Use GET.', retryable: false } }, 405);

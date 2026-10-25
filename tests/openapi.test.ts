@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import worker from '../worker/index';
@@ -13,6 +13,22 @@ const implemented = [
   'GET /api/v1/places/{id}/summary', 'GET /api/v1/places/{id}/history',
   'POST /api/v1/observations', 'DELETE /api/v1/observations/{id}',
   'POST /api/v1/ingest', 'GET /api/v1/device/config', 'GET /api/v1/research/batches/{id}',
+  'GET /api/v1/settings', 'POST /api/v1/device/config/ack',
+  'GET /api/v2/device/config', 'POST /api/v2/device/contact', 'POST /api/v2/device/config/ack',
+  'POST /api/v2/ingest', 'GET /api/v2/research/batches/{id}',
+  'GET /api/v1/admin/session', 'POST /api/v1/admin/session', 'DELETE /api/v1/admin/session',
+  'GET /api/v1/admin/overview', 'GET /api/v1/admin/devices', 'POST /api/v1/admin/devices',
+  'GET /api/v1/admin/devices/{id}', 'PATCH /api/v1/admin/devices/{id}',
+  'POST /api/v1/admin/devices/{id}/rotate-credential', 'POST /api/v1/admin/devices/{id}/placements',
+  'GET /api/v1/admin/places', 'POST /api/v1/admin/places', 'PATCH /api/v1/admin/places/{id}',
+  'GET /api/v1/admin/configs', 'POST /api/v1/admin/configs', 'PUT /api/v1/admin/configs/{id}',
+  'POST /api/v1/admin/configs/{id}/validate', 'POST /api/v1/admin/configs/{id}/publish',
+  'GET /api/v1/admin/settings', 'PUT /api/v1/admin/settings', 'GET /api/v1/admin/audit',
+  'GET /api/v1/admin/auth/status', 'POST /api/v1/admin/auth/setup', 'POST /api/v1/admin/auth/reauth',
+  'GET /api/v1/admin/account', 'PATCH /api/v1/admin/account', 'PUT /api/v1/admin/account/password',
+  'GET /api/v1/admin/passkeys', 'PATCH /api/v1/admin/passkeys/{id}', 'DELETE /api/v1/admin/passkeys/{id}',
+  'POST /api/v1/admin/passkeys/registration/options', 'POST /api/v1/admin/passkeys/registration/verify',
+  'POST /api/v1/admin/passkeys/authentication/options', 'POST /api/v1/admin/passkeys/authentication/verify',
 ];
 const token = 'test-only-private-operator-token';
 function noStorageEnv(): Env {
@@ -108,6 +124,20 @@ describe('same-origin documentation routes', () => {
     expect(code).not.toContain(token);
   });
 
+  it('allows both implemented API versions while blocking off-origin or unsupported documentation requests', async () => {
+    const code = await (await fetchWorker('/docs/swagger-init.js')).text();
+    const window = { location: { origin: 'https://docs.campuspulse.test' }, ui: undefined as Json | undefined };
+    new Function('window', 'SwaggerUIBundle', code)(window, (options: Json) => options);
+    const intercept = window.ui!.requestInterceptor as (request: { url: string }) => { url: string };
+    for (const path of ['/openapi.json', '/api/v1/health', '/api/v2/device/config', '/api/v2/ingest']) {
+      const request = { url: new URL(path, window.location.origin).href };
+      expect(intercept(request)).toBe(request);
+    }
+    for (const url of ['https://external.invalid/api/v2/ingest', '/api/v3/ingest', '/api/v20/ingest', '/unrelated']) {
+      expect(() => intercept({ url })).toThrow('Documentation requests must stay on this site and its API.');
+    }
+  });
+
   it('handles HEAD, rejects mutation methods, and does not mask unknown docs as the SPA', async () => {
     for (const path of ['/docs', '/docs/', '/openapi.json', '/docs/swagger-init.js']) {
       const get = await fetchWorker(path);
@@ -127,15 +157,17 @@ describe('same-origin documentation routes', () => {
 });
 
 describe('OpenAPI contract and existing authorization', () => {
-  it('documents exactly nine implemented operations with distinct bearer scopes', () => {
+  it('documents the implemented operations with independent session and bearer scopes', () => {
     const root = document();
     expect(root.openapi).toMatch(/^3\.1\./);
     const operations = Object.entries(root.paths).flatMap(([path, item]) => methods.filter(method => (item as Json)[method]).map(method => ({ path, method, operation: (item as Json)[method] })));
     expect(operations.map(({ path, method }) => `${method.toUpperCase()} ${path}`).sort()).toEqual([...implemented].sort());
     for (const { path, method, operation } of operations) {
       const security = operation.security ?? root.security ?? [];
-      const expectedScheme = path === '/api/v1/ingest' || path === '/api/v1/device/config' ? 'DeviceToken'
-        : path === '/api/v1/research/batches/{id}' ? 'ResearchToken'
+      const publicAdmin = path === '/api/v1/admin/auth/status' || path === '/api/v1/admin/session' && method === 'post' || path.startsWith('/api/v1/admin/passkeys/authentication/');
+      const expectedScheme = path.startsWith('/api/v1/admin/') ? publicAdmin ? null : 'AdminSession'
+        : path === '/api/v1/ingest' || path === '/api/v1/device/config' || path === '/api/v1/device/config/ack' || path === '/api/v2/ingest' || path.startsWith('/api/v2/device/') ? 'DeviceToken'
+        : path === '/api/v1/research/batches/{id}' || path === '/api/v2/research/batches/{id}' ? 'ResearchToken'
           : method !== 'get' ? 'OperatorToken' : null;
       if (!expectedScheme) expect(security).toEqual([]);
       else {
@@ -143,7 +175,7 @@ describe('OpenAPI contract and existing authorization', () => {
         for (const alternative of security) {
           expect(Object.keys(alternative)).toHaveLength(1);
           const scheme = root.components.securitySchemes[Object.keys(alternative)[0]];
-          expect(scheme).toMatchObject({ type: 'http', scheme: 'bearer' });
+          expect(scheme).toMatchObject(expectedScheme === 'AdminSession' ? { type: 'apiKey', in: 'cookie' } : { type: 'http', scheme: 'bearer' });
         }
         expect(operation.responses).toHaveProperty('401');
         expect(operation.responses).toHaveProperty('503');
@@ -209,8 +241,9 @@ describe('OpenAPI contract and existing authorization', () => {
 
   it('matches the contract to actual SQLite-backed responses and both request variants', async () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(readFileSync(new URL('../migrations/0001_initial.sql', import.meta.url), 'utf8'));
-    db.exec(readFileSync(new URL('../migrations/0002_ingestion.sql', import.meta.url), 'utf8'));
+    for (const migration of readdirSync(new URL('../migrations/', import.meta.url)).filter(name => /^\d+.*\.sql$/.test(name)).sort()) {
+      db.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
+    }
     const env = noStorageEnv();
     env.DB = { prepare(sql: string) {
       let values: unknown[] = [];

@@ -1,0 +1,19 @@
+.cp-location-map-wrap { min-width: 0; }
+.cp-location-map { position: relative; isolation: isolate; height: 370px; min-width: 0; overflow: hidden; border: 1px solid #cbd9cd; border-radius: 9px; }
+.cp-location-map[data-picker="true"] { height: 330px; margin-bottom: 12px; }
+.cp-location-map-tools { position: absolute; right: 10px; top: 10px; z-index: 10; display: flex; gap: 4px; padding: 4px; border-radius: 7px; background: #fff; box-shadow: 0 2px 10px #183d5930; }
+.cp-location-map-tools button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid #d4dfd6; border-radius: 4px; color: #234d3c; background: #fff; }
+.cp-location-map-tools button:hover { background: #edf3ee; }
+.cp-location-map-help { font-size: 11px; line-height: 1.8; color: #718079; margin: 10px 0 14px !important; }
+.cp-location-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.admin-root .cp-admin-place-list > div > .cp-location-actions { flex: 0 0 auto; justify-content: flex-end; max-width: 105px; }
+.cp-location-actions a { font-size: 11px; color: #22654e; text-decoration: underline; text-underline-offset: 3px; }
+.cp-location-legacy { margin-top: 20px; }
+.cp-location-legacy summary { cursor: pointer; color: #718079; font-size: 12px; margin-bottom: 12px; }
+.cp-location-confirm { margin: 12px 0; }
+@media (max-width: 500px) {
+  .cp-location-map { height: 310px; }
+  .cp-location-map[data-picker="true"] { height: 280px; }
+  .cp-location-map-tools { gap: 2px; right: 6px; top: 6px; }
+  .cp-location-map-tools button { width: 32px; height: 36px; }
+}

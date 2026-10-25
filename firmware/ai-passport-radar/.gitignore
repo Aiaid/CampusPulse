@@ -1,0 +1,8 @@
+/build*/
+/managed_components/
+/sdkconfig
+/sdkconfig.old
+/main/wifi_cred_local.h
+*.bin
+*.elf
+*.map

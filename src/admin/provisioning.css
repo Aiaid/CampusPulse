@@ -1,0 +1,13 @@
+.cp-provision { display: grid; gap: 1rem; }
+.cp-provision p { line-height: 1.6; }
+.cp-provision-modes { display: flex; flex-wrap: wrap; gap: .5rem; }
+.cp-provision section, .cp-provision fieldset { border: 1px solid var(--cp-admin-border, #dbe3e9); border-radius: 12px; padding: 1rem; margin: 0; min-width: 0; }
+.cp-provision legend, .cp-provision h3 { font-size: 1rem; font-weight: 650; }
+.cp-provision h3 { margin-top: 0; }
+.cp-provision .cp-admin-field { margin-bottom: .8rem; }
+.cp-provision fieldset:disabled { opacity: .65; }
+.cp-provision-checks { display: grid; gap: .5rem; padding-left: 1.25rem; overflow-wrap: anywhere; }
+.cp-provision textarea { width: 100%; overflow-wrap: anywhere; font: .85rem ui-monospace, monospace; }
+.cp-provision-status { padding: .8rem; border-left: 3px solid #087f83; background: rgba(8,127,131,.06); }
+.cp-provision details { margin-top: 1rem; }
+.cp-provision .cp-admin-mono { overflow-wrap: anywhere; }
