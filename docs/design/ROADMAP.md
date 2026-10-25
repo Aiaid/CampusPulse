@@ -15,16 +15,6 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
-- [ ] Add automatic RAM-pressure collection protection: suspend optional raw
-      work, pause/release BLE when idle free or contiguous heap is inadequate,
-      resume with hysteresis and cooldown, and report actual pauses without
-      rewriting the desired sampling policy or inventing missing observations.
-
-- [ ] Resolve the physical Passport TLS validation timeout: distinguish TCP/TLS,
-      response parsing and memory pressure using bounded diagnostics, preserve
-      strict HTTPS checks and all stored data, then verify on the user's newly
-      selected Wi-Fi through USB and confirm saved settings and cloud contact.
-
 - [ ] Diagnose the reported Passport connection failure without clearing saved
       state. Add observable Wi-Fi/IP/time/TLS/cloud/save stages and retained safe
       failure diagnostics; distinguish first registration from existing-device
@@ -94,6 +84,11 @@ collection and durable upload. Final local software verification passed on
 
 ## P1 — Add interaction and display after collection/upload acceptance
 
+- [ ] Clarify administrator device diagnostics and uploaded evidence: separate
+      contact/capture/config/upload states, show age and boot context, explain
+      losses and RAM pauses, and inspect bounded authenticated batch/payload
+      records with exact-byte versus normalized-projection provenance.
+
 - [ ] Add ingestion rate limiting, operational alerts, capacity/orphan audits and
       a lease-safe orphan cleanup process; add research roles and versioned
       vehicle classification only after evaluation with independent evidence.
@@ -152,6 +147,23 @@ collection and durable upload. Final local software verification passed on
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] Add automatic RAM-pressure collection protection: suspend optional raw
+      work, pause/release BLE when idle free or contiguous heap is inadequate,
+      resume with hysteresis and cooldown, and report actual pauses without
+      rewriting the desired sampling policy or inventing missing observations.
+
+- [x] Resolve the physical Passport TLS validation timeout: distinguish TCP/TLS,
+      response parsing and memory pressure using bounded diagnostics, preserve
+      strict HTTPS checks and all stored data, then verify on the user's newly
+      selected Wi-Fi through USB and confirm saved settings and cloud contact.
+      Physical check: `cp-0b77ccc58257` on one Passport/current PEAP network,
+      300 seconds in one boot with saved settings, 49 successful HTTP requests,
+      current-boot receipts for 2 windows / 128 address-summary items / 8 status
+      items, two pressure pauses and recovery, 13,856-byte minimum heap. Six
+      local RAM-admission deferrals retained their frozen batches. This is
+      bounded sampling with gaps, not continuous radio-coverage acceptance;
+      physical BLE setup, other boards and long-duration operation remain separate.
 
 - [x] Replace the manual-key roadblock for verified, registered USB/BLE nodes
       with no saved credential: offer one explicit reauthorize-and-connect

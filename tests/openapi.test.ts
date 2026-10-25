@@ -19,6 +19,7 @@ const implemented = [
   'GET /api/v1/admin/session', 'POST /api/v1/admin/session', 'DELETE /api/v1/admin/session',
   'GET /api/v1/admin/overview', 'GET /api/v1/admin/devices', 'POST /api/v1/admin/devices',
   'GET /api/v1/admin/devices/{id}', 'PATCH /api/v1/admin/devices/{id}',
+  'GET /api/v1/admin/devices/{id}/batches', 'GET /api/v1/admin/devices/{id}/batches/{batchId}',
   'POST /api/v1/admin/devices/{id}/rotate-credential', 'POST /api/v1/admin/devices/{id}/placements',
   'GET /api/v1/admin/places', 'POST /api/v1/admin/places', 'PATCH /api/v1/admin/places/{id}',
   'GET /api/v1/admin/configs', 'POST /api/v1/admin/configs', 'PUT /api/v1/admin/configs/{id}',

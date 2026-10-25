@@ -1,5 +1,13 @@
 # Passport provisioning, policy and durable upload chain
 
+> Field update, 2026-10-25: `cp-0b77ccc58257` now has one-board/current-PEAP
+> acceptance for saved-network boot, desired policy, exact current-boot
+> window/address-summary/status receipts and automatic RAM-pressure stop/recovery.
+> The 300-second run kept one boot, preserved protected Flash and observed a
+> 13,856-byte heap minimum. See the [current diagnostics and field evidence](device-onboarding-diagnostics.md).
+> Sampling gaps, earlier network cohorts, over-air provisioning with reduced
+> pools, other boards and longer operation remain separate from this result.
+
 > Network revision, 2026-10-25: the newer
 > [onboarding and diagnostics note](device-onboarding-diagnostics.md) supersedes
 > the historical WPA2-only restriction and generic network failure behavior

@@ -348,3 +348,31 @@ Verified locally on 2026-10-25:
   embedded setup page's open/enterprise branches. Configuration editing passes desktop
   and 390 px Chromium tests using synthetic API fixtures. These tests do not
   establish production authentication or successful physical PEAP association.
+
+### Physical acceptance of the bounded-memory path
+
+`cp-0b77ccc58257` was written only to the app partition, followed by an exact
+whole-Flash comparison proving all non-app data stayed unchanged. A subsequent
+300-second sanitized UART run kept the same boot and saved settings. All 49
+actual HTTP requests returned success. Six separate local RAM-admission
+refusals deferred allocations and left frozen batches retryable; these are not
+failed network exchanges. The actual validated, current-boot receipts committed
+2 window items, 128 address-summary items and 8 status items. Prior-boot backlog
+was tracked separately. Raw capture was configured OFF.
+
+BLE started three times, with two observed pressure stops followed by automatic
+recovery. Minimum free heap was 13,856 bytes, rather than the earlier 16-byte
+encoding/TLS overlap. Measured spare worker stacks stayed about 1.8–3 KB after
+the reductions. A pressure stop can close a real partial window, and recovery
+waits for resources and a fresh grant; this run therefore validates bounded
+collection/upload with explicit gaps, not uninterrupted coverage. The 128
+summary items are records, not a people count. This result applies to one
+Passport on the current PEAP network; earlier WPA2 failure, over-air provisioning
+with reduced pools, other boards and long-duration stability are separate gates.
+
+The ordinary schedule remains continuous configured scanning, 30-second summary
+windows and 5-second bins, with durable uploads as queued work. No fixed
+scan-seconds/upload-seconds rotation was added. In this run pressure ended two
+scan bursts at roughly 30 seconds, and recovery waited roughly 88–92 seconds
+while backlog/control work and healthy-idle requirements completed. These are
+observed timings, not guaranteed configured duty-cycle values.

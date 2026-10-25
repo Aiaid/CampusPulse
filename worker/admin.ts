@@ -4,6 +4,7 @@ import { validateAnyCaptureConfig as validateCaptureConfig, type AnyCaptureConfi
 import { json, readBytes, sha256 } from './ingest';
 import { adminOrigin, adminSecret, requireAdminSession, requireFreshSession, sessionAssertion, AuthRateLimitError } from './admin-auth';
 import { handleAdminIdentity } from './admin-account';
+import { handleAdminDeviceDiagnostics } from './admin-device-diagnostics';
 import { readRuntimeSettings, readSettingsRecord, validateSettings } from './admin-settings';
 export { readRuntimeSettings, readPublicSettings } from './admin-settings';
 
@@ -54,20 +55,22 @@ interface DeviceRow {
   id: string; name: string; board: string; enabled: number;
   last_seen_at: string | null; firmware_version: string | null; reported_config_id: string | null;
   desired_config_id: string | null; activation_state: 'applied' | 'failed' | null;
-  status_json: string | null; status_received_at: string | null; status_boot_id: string | null;
+  status_json: string | null; status_received_at: string | null; status_boot_id: string | null; status_config_id: string | null; status_batch_id: string | null;
+  ingestion_received_at: string | null; ingestion_boot_id: string | null; ingestion_stream: string | null; ingestion_batch_id: string | null;
   applied_config_id: string | null; control_json: string | null; control_received_at: string | null; desired_protocol: string | null;
 }
 const DEVICE_SELECT = `SELECT n.id,n.name,n.board,n.enabled,
   CASE WHEN c.received_at IS NOT NULL AND (b.received_at IS NULL OR c.received_at>b.received_at) THEN c.received_at ELSE b.received_at END AS last_seen_at,
   CASE WHEN c.received_at IS NOT NULL AND (b.received_at IS NULL OR c.received_at>b.received_at) THEN c.firmware_version ELSE b.firmware_version END AS firmware_version,
   b.capture_config_id AS reported_config_id,d.capture_config_id AS desired_config_id,
+  b.received_at AS ingestion_received_at,b.boot_id AS ingestion_boot_id,b.stream AS ingestion_stream,b.batch_id AS ingestion_batch_id,
   CASE WHEN json_extract(p.config_json,'$.protocol')='campuspulse/2' THEN
     CASE WHEN c.activation_config_id=d.capture_config_id THEN c.activation_state ELSE NULL END ELSE a.state END AS activation_state,
   CASE WHEN json_extract(p.config_json,'$.protocol')='campuspulse/2' THEN c.applied_config_id
     WHEN a.state='applied' THEN a.capture_config_id ELSE NULL END AS applied_config_id,
   json_extract(p.config_json,'$.protocol') AS desired_protocol,
   c.contact_json AS control_json,c.received_at AS control_received_at,
-  s.item_json AS status_json,s.received_at AS status_received_at,s.boot_id AS status_boot_id
+  s.item_json AS status_json,s.received_at AS status_received_at,s.boot_id AS status_boot_id,s.capture_config_id AS status_config_id,s.batch_id AS status_batch_id
   FROM device_nodes n
   LEFT JOIN all_ingestion_batches b ON b.node_id=n.id AND b.batch_id=(SELECT x.batch_id FROM all_ingestion_batches x WHERE x.node_id=n.id ORDER BY x.received_at DESC,x.batch_id DESC LIMIT 1)
   LEFT JOIN device_desired_configs d ON d.node_id=n.id
@@ -82,8 +85,10 @@ function deviceFromRow(row: DeviceRow, staleSeconds: number, now: number) {
     last_seen_at: row.last_seen_at,
     contact_state: !Number.isFinite(lastSeen) ? 'unknown' : now - lastSeen <= staleSeconds * 1000 ? 'recent' : 'stale',
     firmware_version: row.firmware_version,
-    latest_status: row.status_json ? { item: JSON.parse(row.status_json), received_at: row.status_received_at, boot_id: row.status_boot_id } : null,
+    latest_status: row.status_json ? { item: JSON.parse(row.status_json), received_at: row.status_received_at, boot_id: row.status_boot_id, capture_config_id: row.status_config_id, batch_id: row.status_batch_id } : null,
     latest_control: row.control_json ? { ...JSON.parse(row.control_json), received_at: row.control_received_at } : null,
+    latest_ingestion: row.ingestion_received_at ? { received_at: row.ingestion_received_at, boot_id: row.ingestion_boot_id, stream: row.ingestion_stream, batch_id: row.ingestion_batch_id, capture_config_id: row.reported_config_id } : null,
+    server_time: new Date(now).toISOString(), stale_after_seconds: staleSeconds,
     applied_config_id: row.applied_config_id,
     desired_config_id: row.desired_config_id, reported_config_id: row.reported_config_id,
     config_state: row.desired_protocol === 'campuspulse/2' ? (row.activation_state ?? 'pending') : !row.desired_config_id ? 'unassigned' : row.activation_state ?? (row.reported_config_id === row.desired_config_id ? 'reported' : 'pending') };
@@ -162,7 +167,7 @@ function checkRevision(row: DraftRow, revision: number) {
   if (row.revision !== revision) conflict();
 }
 
-/** Administrator routes never grant raw-research read access or device auth. */
+/** Admin sessions remain separate from research/device bearer auth. Selected batch diagnostics are explicit private reads. */
 export async function handleAdmin(request: Request, env: Env): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/v1/admin/') && url.pathname !== '/api/v1/admin') return null;
@@ -173,6 +178,8 @@ export async function handleAdmin(request: Request, env: Env): Promise<Response 
     const identity = await handleAdminIdentity(request, env, secret, route);
     if (identity) return identity;
     const session = await requireAdminSession(request, env, secret);
+    const diagnostics = await handleAdminDeviceDiagnostics(request, env, route);
+    if (diagnostics) return diagnostics;
     const transact = (writes: D1PreparedStatement[], action: string, target: string, detail: ObjectValue, assertions: Assertion[] = []) =>
       atomic(env, writes, action, target, detail, [sessionAssertion(session), ...assertions]);
     if (route === '/overview' && request.method === 'GET') {

@@ -60,6 +60,14 @@ export function createAdminOpenApi() {
         get: operation('getAdminDevice', 'Read device details, policy and placement history', 'get'),
         patch: operation('updateAdminDevice', 'Edit device metadata or enable/disable future authentication', 'patch', entity({ name: string, board: string, enabled: { type: 'boolean' } }, [])),
       },
+      '/api/v1/admin/devices/{id}/batches': {
+        parameters: [pathId], get: { ...operation('listAdminDeviceBatches', 'List committed upload receipts for one device', 'get', undefined, 'Authenticated private diagnostics. Lists receipt metadata only; no R2 object reads, raw identifiers or credentials. Keyset pagination is bounded to 50 receipts. Local pending data is not available to this API.'),
+          parameters: [{ name: 'stream', in: 'query', schema: { type: 'string', enum: ['ble_windows','address_summaries','node_status','ble_reports'] } }, { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50, default: 20 } }, { name: 'before', in: 'query', schema: { type: 'string', maxLength: 256 }, description: 'Opaque next_cursor from the preceding page.' }] },
+      },
+      '/api/v1/admin/devices/{id}/batches/{batchId}': {
+        parameters: [pathId, { name: 'batchId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        get: { ...operation('getAdminDeviceBatch', 'Inspect one retained upload payload and its provenance', 'get', undefined, 'Administrator-only private read. May contain BLE identifiers or advertisement bytes. Returns retention-limited normalized D1 projection, separately labeled from one original R2 body. Exact UTF-8 text is returned only after a bounded 65536-byte read and matching receipt SHA-256. Missing, expired, corrupted or credential-bearing archives return explicit unavailability; no reconstructed wire bytes. Never includes network or device credentials.'), responses: { '200': json('Committed receipt with normalized projection and independently verified original body when available.'), ...errors } },
+      },
       '/api/v1/admin/devices/{id}/rotate-credential': {
         parameters: [pathId], post: operation('rotateAdminDeviceCredential', 'Invalidate the old device credential and return a new one once', 'post', entity({})),
       },

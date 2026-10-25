@@ -28,6 +28,7 @@ async function routeCloud(route) {
   else if (path === '/settings') result = { settings: { default_raw_retention_hours: 24, default_aggregate_retention_days: 30 } };
   else if (path === '/places') result = { places: [{ id: 'library', name: 'Synthetic library' }, { id: 'gate', name: 'Synthetic gate' }] };
   else if (path === '/devices') result = { devices: [device()], next_cursor: null };
+  else if (path === `/devices/${node}/batches`) result = { batches: [], next_cursor: null };
   else if (path === `/devices/${node}`) result = { device: device(), placements, configs, activation: { current: null, history: [] } };
   else if (path === `/devices/${node}/placements`) {
     assert.equal(method, 'POST'); assert.ok(!placements.some(p => p.id === body.id));
