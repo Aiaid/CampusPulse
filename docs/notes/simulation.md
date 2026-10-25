@@ -1,7 +1,12 @@
 # Frontend simulation scenarios
 
-Status: implemented and locally verified on 2026-10-24. These are authored
+Status: scenarios implemented and locally verified on 2026-10-24; the verification
+counts below describe that snapshot. Current source selection and unified observation timeline are
+described in the [delivery checklist](hackathon-delivery.md). These are authored
 illustrations; they are not sensor records, weather forecasts or campus schedules.
+The full-day replay below is synthetic. In 现场观察, live and retained historical
+API observations share one time axis; dragging fixes a history cursor and
+返回实时 resumes live summaries. That axis does not animate these curves or actors.
 
 In **模拟演示**, use **模拟场景** above the map to choose:
 
@@ -34,10 +39,12 @@ anchors, sprite artwork and lighting are retained with their existing provenance
 No new assets or third-party implementation code were imported for this change.
 
 Switching to **现场观察** removes the selector, synthetic metrics/parking,
-actors and waits, disables replay, and stops time playback. Returning to
+actors and waits, disables synthetic replay, and stops synthetic time playback. Returning to
 simulation restores the locally selected profile and time. Site settings still
-choose the initial mode; failed settings reads retain the existing field-mode
-fallback. Simulation never seeds or writes D1, R2, device data or public API
+choose the initial mode when there is no explicit `?mode=field|replay|demo` link;
+failed settings reads retain the field-mode fallback. The legacy `mode=replay`
+link opens the observation axis at its newest retained record, without a third
+source button. Simulation never seeds or writes D1, R2, device data or public API
 observations.
 
 Local verification:

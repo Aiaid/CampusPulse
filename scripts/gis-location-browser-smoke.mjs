@@ -44,8 +44,8 @@ try {
       writes.push({ id, input });
       places = places.map(place => place.id === id ? { ...place, ...input } : place);
       body = { place: places.find(place => place.id === id) };
-    } else if (path.endsWith('/summary')) body = { latest_observation: null };
-    else if (path.includes('/history')) body = { observations: [] };
+    } else if (path.endsWith('/summary')) body = { place: places.find(place => place.id === path.split('/')[4]), as_of: new Date().toISOString(), sensor: null, latest_observation: null, freshness: 'no_data' };
+    else if (path.includes('/history')) body = { place_id: path.split('/')[4], observations: [], sensor_windows: [], from: new Date(Date.now() - 3_600_000).toISOString(), to: new Date().toISOString(), truncated: false, sensor_truncated: false };
     else return route.fulfill({ status: 404, json: { error: { code: 'fixture_missing' } } });
     return route.fulfill({ json: body });
   });
@@ -90,7 +90,7 @@ try {
   assert.equal(await page.locator('.overview-map .cp-map__label').count(), 2);
   assert.equal(await page.locator('.cp-map__sprite').count(), 0);
   assert.ok((await page.locator('.cp-map__regions').evaluateAll(elements => elements.map(element => element.dataset.regionCount))).every(count => count === '0'), 'Field IDs do not inherit authored building outlines');
-  await page.getByRole('button', { name: '查看现场记录', exact: true }).click();
+  await page.getByRole('button', { name: '添加现场记录', exact: true }).click();
   await page.getByRole('dialog', { name: '现场观察与记录', exact: true }).waitFor();
   await expect(page.getByLabel('记录地点', { exact: true })).toHaveValue('unlocated');
   await page.getByRole('button', { name: '关闭记录表单', exact: true }).click();
@@ -159,12 +159,15 @@ try {
   // Remove the registered anchor and verify public refresh has no phantom pin.
   places = places.map(place => place.id === 'unlocated' ? { ...place, gis_anchor: undefined } : place);
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await page.getByRole('heading', { name: '图书馆测试点', exact: true }).waitFor();
+  // Losing a GIS anchor removes the pin, while the all-place data selector
+  // retains the chosen place and its observations.
+  await page.getByRole('heading', { name: '重命名测试点', exact: true }).waitFor();
+  await expect(page.getByRole('combobox', { name: '观测地点', exact: true })).toHaveValue('unlocated');
   assert.equal(await page.locator('.overview-map .cp-map__label').count(), 1);
-  assert.ok((await page.locator('.live-mode-summary').innerText()).includes('1'));
+  await expect(page.locator('.field-place-picker')).toContainText('1 个现场地点 · 1 个地点未显示');
   placesUnavailable = true;
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await expect(page.locator('.live-mode-summary')).toContainText('现场地点服务暂不可用');
+  await expect(page.locator('.field-place-picker')).toContainText('现场地点服务暂不可用');
   assert.equal(await page.locator('.overview-map .cp-map__label').count(), 0, 'Failed API does not retain phantom pins');
   placesUnavailable = false;
 

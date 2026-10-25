@@ -1,0 +1,36 @@
+.field-data-view .detail-panel { overflow-y: auto; }
+.field-data-view .field-data-panel { flex: 0 0 auto; }
+.field-data-view .detail-scene { flex: 0 0 145px; }
+.field-data-view .detail-footer { margin-top: auto; }
+.field-data-view .bottom-dock { height: 186px; display: flex; flex-direction: column; }
+.field-data-view .timeline-main { display: block; flex: 1; min-height: 0; height: auto; padding: 8px 0; }
+.field-data-view .dock-bottom { flex-shrink: 0; }
+.field-data-view .detail-panel { bottom: 223px; }
+.field-data-view .map-actions { bottom: 223px; }
+.field-data-view:has(.field-timeline-warning) .bottom-dock { height: 210px; }
+.field-data-view:has(.field-timeline-warning) .detail-panel,
+.field-data-view:has(.field-timeline-warning) .map-actions { bottom: 247px; }
+.field-place-picker { flex-shrink: 0; margin-bottom: 10px; }
+.field-place-picker label { display: flex; align-items: center; gap: 8px; color: var(--soft); font-size: 11px; }
+.field-place-picker select { min-width: 0; flex: 1; min-height: 36px; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; }
+.field-place-picker p { color: var(--soft); font-size: 10px; line-height: 1.6; margin: 6px 0; }
+.field-timeline-note { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; }
+.field-timeline-note > svg { flex-shrink: 0; color: var(--soft); }
+.field-timeline-note strong { display: block; font-size: 13px; }
+.field-timeline-note span { display: block; font-size: 11px; line-height: 1.6; color: var(--soft); margin-top: 5px; }
+.field-timeline-note button { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; padding: 10px; border-radius: 8px; background: var(--hover); color: var(--text); font-size: 12px; }
+@media (max-width: 700px) {
+  .field-data-view .bottom-dock { height: 210px; }
+  .field-data-view .detail-panel { bottom: 232px; }
+  .field-data-view .detail-panel { top: 178px; max-height: none; min-height: 0; }
+  .field-data-view .map-actions { bottom: 232px; }
+  .field-data-view:has(.field-timeline-warning) .bottom-dock { height: 260px; }
+  .field-data-view:has(.field-timeline-warning) .detail-panel,
+  .field-data-view:has(.field-timeline-warning) .map-actions { bottom: 282px; }
+  .data-mode-switch button { min-height: 34px; }
+  .field-data-view .detail-scene { flex-basis: 110px; min-height: 110px; }
+  .field-timeline-note { gap: 6px; }
+  .field-timeline-note span { font-size: 9px; margin-top: 3px; }
+  .field-timeline-note strong { font-size: 11px; }
+  .field-timeline-note button { max-width: 100px; font-size: 10px; padding: 8px; }
+}

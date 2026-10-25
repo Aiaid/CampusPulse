@@ -59,7 +59,8 @@ try {
   await page.getByRole('button',{name:'现场观察',exact:true}).click();
   await page.waitForFunction(() => [...document.querySelectorAll('.cp-activity-layer')].every(c => c.dataset.actorCount === '0'));
   assert.equal(await page.locator('.cp-map__wait').count(), 0, 'No simulated waits in field mode');
-  assert.equal(await page.getByRole('button',{name:'播放时段回放',exact:true}).isDisabled(), true);
+  assert.equal(await page.getByRole('button',{name:'播放时段回放',exact:true}).count(), 0);
+  await page.getByRole('slider',{name:'现场数据时间轴',exact:true}).waitFor();
 
   await page.getByRole('button',{name:'现场记录',exact:true}).click();
   const dialog = page.getByRole('dialog',{name:'现场观察与记录',exact:true});

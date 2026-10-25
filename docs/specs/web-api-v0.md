@@ -4,7 +4,8 @@ Status: implemented first slice; local SQLite, build and browser checks recorded
 in [development notes](../notes/development.md).
 This document retains the original manual API contract. The additive device API
 and sensor projection are described in [ingestion implementation](../notes/backend-ingestion.md)
-and [ingest v1](ingest-v1.md). No firmware is included.
+and [ingest v1](ingest-v1.md). Firmware is outside this document's scope; the
+current Passport implementation is described in [firmware chain](../notes/firmware-chain.md).
 
 ## Interactive documentation
 
@@ -59,6 +60,29 @@ separate acceptance step.
 
 An empty summary means no data, never zero people or zero vehicles. Public fields
 exclude device credentials, BLE identifiers and raw payloads. Responses are not cached.
+
+`sensor` and `latest_observation` are independent sources. Top-level `freshness`
+is fresh if either source is fresh; render a manual record against its own
+`valid_until` and a sensor window against its own freshness, rather than applying
+the combined status to both. Public sensor windows include their node,
+placement/configuration, observation time, validity, scan duration, report count,
+visible-identifier count and quality fields. These are observation metrics, not
+people counts. Place `coverage` remains `unconfigured`; it is not inferred from a
+map anchor or a successful upload.
+
+The frontend's unified observation timeline consumes summary while following
+live time and this history contract when its cursor is pinned. The initial range
+is 60 minutes, with 15/60/1440-minute choices. At a history cursor, sensor windows
+apply within `[observed_at - duration_ms, observed_at]`, with nodes shown
+separately; manual records apply within `observed_at <= cursor < valid_until`.
+Gaps do not inherit adjacent records. Returning to live resumes summary display;
+the shared read session refreshes summary and history together in either state.
+These are client display semantics; the stored timestamps remain unchanged.
+`minutes`
+selects a window relative to request time, with a maximum of 1440 minutes;
+arbitrary start/end dates, paging and file import are not provided. Retention
+and source eligibility can remove windows, and cancelled manual records are
+excluded. Respect both truncation flags instead of implying a complete recording.
 
 ## Operator writes
 

@@ -49,6 +49,8 @@ jobs:
           done
           curl --fail --silent http://127.0.0.1:8787/api/v1/health > /dev/null
           npm run test:browser
+          FIELD_DATA_URL=http://127.0.0.1:8787 node scripts/field-data-browser-smoke.mjs
+          SIMULATION_URL=http://127.0.0.1:8787 node scripts/simulation-browser-smoke.mjs
           node scripts/docs-browser-smoke.mjs
           ADMIN_SMOKE_URL=http://localhost:8787 node scripts/admin-auth-browser-smoke.mjs
           ADMIN_SMOKE_URL=http://localhost:8787 node scripts/admin-browser-smoke.mjs

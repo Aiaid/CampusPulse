@@ -3,6 +3,8 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
 
+expect.configure({ timeout: 15000 });
+
 // Frontend-only acceptance: no Worker/database is required or mutated.
 const baseURL = process.env.SIMULATION_URL || 'http://127.0.0.1:5186';
 assert.ok(['127.0.0.1', 'localhost'].includes(new URL(baseURL).hostname), 'Local target required');
@@ -33,7 +35,7 @@ try {
   await page.goto(baseURL);
   await expect(page.getByRole('button', { name: '现场观察', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(select).toHaveCount(0);
-  await expect.poll(() => maps.evaluateAll(nodes => nodes.map(node => node.dataset.actorCount))).toEqual(['0', '0']);
+  await expect.poll(() => maps.evaluateAll(nodes => nodes.map(node => node.dataset.actorCount))).toEqual(['0']);
   checks.push('field default contains no synthetic activity');
 
   await page.getByRole('button', { name: '模拟演示', exact: true }).click();
@@ -69,9 +71,9 @@ try {
   await expect(select).toHaveCount(0);
   await expect(page.locator('.metric-list')).toHaveCount(0);
   await expect(page.locator('.simulation-parking')).toHaveCount(0);
-  await expect(page.getByRole('slider', { name: '模拟回放时间' })).toBeDisabled();
+  await expect(page.getByRole('slider', { name: '模拟回放时间' })).toHaveCount(0);
   await expect.poll(() => maps.evaluateAll(nodes => nodes.map(node => `${node.dataset.scenario}:${node.dataset.actorCount}:${node.dataset.motion}`)))
-    .toEqual(['field:0:paused', 'field:0:paused']);
+    .toEqual(['field:0:paused']);
   await page.getByRole('button', { name: '模拟演示', exact: true }).click();
   await expect(select).toHaveValue('weekend');
   await expect(page.getByRole('button', { name: '播放时段回放', exact: true })).toBeVisible();
