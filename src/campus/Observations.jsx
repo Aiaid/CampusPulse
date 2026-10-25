@@ -22,6 +22,9 @@ export default function Observations({ open, onClose, initialPlaceId }) {
   const [saving, setSaving] = useState(false), [notice, setNotice] = useState('');
   const pendingWrite = useRef(null), dialog = useRef(null);
   const place = places.find(item => item.id === placeId), latest = summary?.latest_observation;
+  // Summary freshness combines manual and sensor streams; a fresh sensor must
+  // never make an expired manual observation appear current.
+  const manualFresh = latest && Date.parse(latest.valid_until) > Date.now();
   const canRecord = place && place.kind !== 'activity';
 
   useEffect(() => {
@@ -110,7 +113,7 @@ export default function Observations({ open, onClose, initialPlaceId }) {
       <div className="observation-section-heading"><h3>{place?.name || '现场观察'}</h3><button className="observation-refresh" onClick={() => setRevision(value => value + 1)} disabled={loading || saving} aria-label="刷新现场观察"><ArrowClockwise size={14} />刷新</button></div>
       {error && <p className="observation-error" role="status">{error}</p>}
       <div className="observation-summary" aria-live="polite">
-        {loading ? <p>正在读取服务端记录…</p> : latest ? <><div className="observation-value"><strong>{recordText(latest)}</strong><span className={summary.freshness === 'fresh' ? 'record-fresh' : 'record-stale'}>{summary.freshness === 'fresh' ? '有效观察' : '历史观察'}</span></div><p>来源：人工现场记录 · {latest.kind === 'parking' ? '数量范围' : '本次已完成候梯时长，不是当前预测'}</p><p>观测于 {stamp(latest.observed_at)}<br />有效至 {stamp(latest.valid_until)}</p></> : <><strong>{error ? '现场数据不可用' : '暂无现场记录'}</strong><p>未配置传感器覆盖；空白不表示无人或空闲。</p></>}
+        {loading ? <p>正在读取服务端记录…</p> : latest ? <><div className="observation-value"><strong>{recordText(latest)}</strong><span className={manualFresh ? 'record-fresh' : 'record-stale'}>{manualFresh ? '有效观察' : '历史观察'}</span></div><p>来源：人工现场记录 · {latest.kind === 'parking' ? '数量范围' : '本次已完成候梯时长，不是当前预测'}</p><p>观测于 {stamp(latest.observed_at)}<br />有效至 {stamp(latest.valid_until)}</p></> : <><strong>{error ? '现场数据不可用' : '暂无人工现场记录'}</strong><p>设备窗口请在地图地点详情查看；空白不表示无人或空闲。</p></>}
         {summary && <small>服务端状态时间 {stamp(summary.as_of)} · 每 30 秒刷新</small>}
       </div>
       <div className="observation-history-heading"><span><Clock size={13} />最近记录</span><div role="group" aria-label="现场记录时间范围">{[1, 5, 15].map(value => <button key={value} className={minutes === value ? 'active' : ''} aria-pressed={minutes === value} onClick={() => setMinutes(value)}>近 {value} 分钟</button>)}</div></div>

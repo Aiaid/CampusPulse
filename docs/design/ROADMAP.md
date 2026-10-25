@@ -25,6 +25,15 @@ collection and durable upload. Final local software verification passed on
       strict HTTPS checks and all stored data, then verify on the user's newly
       selected Wi-Fi through USB and confirm saved settings and cloud contact.
 
+- [ ] Validate the live/replay/simulation delivery on the deployed build and the
+      actual afternoon field session. Confirm radio/upload, source timestamps,
+      per-source expiry, retained-history availability and phone operation using
+      the [delivery checklist](../notes/hackathon-delivery.md). Local frontend
+      implementation is archived below. Add bounded historical interval queries,
+      pagination or a validated recording archive before promising complete
+      afternoon-to-evening or offline replay; the current API returns only the
+      latest 200 records per stream within at most 24 hours.
+
 - [ ] Diagnose the reported Passport connection failure without clearing saved
       state. Add observable Wi-Fi/IP/time/TLS/cloud/save stages and retained safe
       failure diagnostics; distinguish first registration from existing-device
@@ -152,6 +161,38 @@ collection and durable upload. Final local software verification passed on
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] Rewrite both READMEs for hackathon visitors with product explanation,
+      the unified live/history axis, demo links, local setup and focused docs.
+      Add three actual-browser desktop/mobile screenshots with official GIS
+      attribution and explicit synthetic-fixture captions, plus a reproducible
+      capture script. Final PNG metadata, image readability, read-only capture
+      behavior, Markdown links and whitespace checks pass. These screenshots
+      establish no physical recording or deployment acceptance. See the
+      [screenshot recipe](../notes/readme-screenshots.md).
+
+- [x] Unify live observations and retained replay on one HomeKit-camera-like
+      axis (user direction recorded before implementation, 2026-10-25). Follow
+      the live edge; drag or choose a marker to pin historical time; show actual
+      source intervals, independent manual validity, gaps and truncation; return
+      live in one action. Share reads/cursor between map details and the axis,
+      keep simulation separate and preserve legacy mode links. All 616 tests /
+      54 files, production build and fixture-based desktop/390px Chromium checks
+      pass, including pinned refresh, gaps, range changes, source isolation and
+      mobile warning layout. Existing simulation browser regression also passes.
+      No production or physical recording acceptance is implied; see the
+      [delivery checklist](../notes/hackathon-delivery.md).
+
+- [x] Implement the 2026-10-25 live-data delivery direction recorded in P0
+      before code: public sensor/manual cards with independent expiry and quality,
+      30-second/focus refresh, explicit field/replay/demo links, unlocated-place
+      reads and retained real-record selection isolated from synthetic animation.
+      Update bilingual entry docs, API/architecture notes and afternoon acquisition
+      checklist. All 601 tests / 53 files, production build, fixture-based desktop
+      and 390px Chromium source/error/history checks and the existing simulation
+      browser regression pass. Browser acceptance performs zero API writes and
+      establishes no hardware, afternoon recording or production deployment.
+      See [delivery evidence](../notes/hackathon-delivery.md).
 
 - [x] Replace the manual-key roadblock for verified, registered USB/BLE nodes
       with no saved credential: offer one explicit reauthorize-and-connect

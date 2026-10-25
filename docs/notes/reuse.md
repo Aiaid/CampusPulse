@@ -15,6 +15,26 @@ the actual generated SDK functions with I/O shims under ASan/UBSan, including
 timeouts, WANT_READ, EOF, memory failure, error details and cleanup ownership.
 No network captures, credentials, SDK build products or binaries are published.
 
+## 2026-10-25 — User-requested README screenshots
+
+The user requested a rewritten README with screenshots. The three PNGs under
+`docs/images/` show the actual current local frontend, captured with Playwright;
+they are not imported design mockups or previous-session field captures. The
+simulation view uses built-in synthetic scenes. Live/history UI views use new
+browser-local synthetic fixtures, including a visibly named sample place and
+invented node IDs, with no real observations, raw identities or credentials.
+
+The snapshots include the official GIS as rendered by the application, preserving
+source attribution. This specific screenshot inclusion is separate from the
+earlier no-bundled-map baseline: no raw tiles, full raster, POI dataset or offline
+map are added. Existing GIS artwork rights are not relicensed as application
+code. App asset provenance and notices remain unchanged.
+
+Original screenshots stay outside the repository. Final PNG copies have their
+ancillary metadata removed and are re-inspected and visually checked before use.
+See the [capture recipe](readme-screenshots.md). The script and synthetic fixture
+are new project code and add no runtime dependency or external implementation.
+
 ## 2026-10-25 — Short PIN and USB provisioning
 
 The revised local BLE flow uses the installed Apache-2.0 ESP-IDF 5.5.3

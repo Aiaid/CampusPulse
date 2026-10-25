@@ -18,7 +18,7 @@ runtime settings and audit. Its local acceptance and deployment are separate.
 
 | Layer | Technology | Current scope |
 | --- | --- | --- |
-| Web application | React 19, JavaScript/JSX, CSS, Vite; Phosphor icons | Overview/local maps, search, timeline and independent layers. Manual records use a separate API-backed panel. |
+| Web application | React 19, JavaScript/JSX, CSS, Vite; Phosphor icons | Overview/local maps, search and independent layers; one live/history observation timeline, with synthetic simulation as a separate source. Manual entry uses its own API-backed dialog. |
 | Campus map | External CCNU GIS raster tiles, DOM/CSS positioning | Visible official zoom-1–4 tiles across the full image grid; 1024×640 authored overlay coordinates remain registered. Shared administrator picking and API-backed field places. The raster is not a 3D campus model or evidence of sensor coverage. |
 | Illustrative overlays | Canvas 2D and CSS | Synthetic moving/parked actors, occlusion, optional building transparency and warm night lighting. Three.js is no longer a dependency. |
 | Hosting and API | Cloudflare Workers Static Assets and a TypeScript Worker | Implemented: frontend assets and same-origin `/api/*` routes. GitHub stores source and runs delivery checks. |
@@ -44,7 +44,7 @@ official image grid while retaining that authored overlay registration.
 Field maps/search read verified GIS anchors from the API place registry; administrator GIS
 editing and the separate record panel share those place IDs. Missing or
 invalid positions are reported. See [location settings](gis-location-settings.md).
-Synthetic activity, waits and replay are hidden in field mode, and
+Synthetic activity, waits and synthetic replay are hidden in live/real-history modes, and
 lighting remains a visual effect. Migrated source lives under
 [`src/campus/`](../../src/campus/), generated visuals under [`public/`](../../public/),
 and frontend tests under [`tests/frontend/`](../../tests/frontend/), with
@@ -53,12 +53,33 @@ provenance maintained in the [reuse record](reuse.md).
 ## Current data path
 
 The browser loads the built frontend from Workers Static Assets. Its
-manual-recording interface queries the same Worker's public place, summary and
-history routes. The Worker reads logical places and active manual observations
+observation panel and manual-recording interface query the same Worker's public
+place, summary and history routes. The Worker reads logical places and active manual observations
 from D1. Summaries expose the observation's
 source, observation time, validity deadline and freshness. Sensor windows use a
 separate eligible field-only projection; coverage remains `unconfigured` pending
 physical acceptance. Missing observations mean no data.
+
+The delivery frontend's header chooses observations or synthetic simulation.
+Observations share one horizontal time axis: its live edge follows the present,
+dragging or selecting a record marker fixes an exact historical cursor, and
+“返回实时” resumes current summaries. The initial history range is 60 minutes,
+with 15-minute, one-hour and 24-hour options. `?mode=field` opens live observations,
+`?mode=demo` opens simulation, and the legacy `?mode=replay` opens the observation
+timeline at the newest retained record. Without a link, the administrator's saved
+initial mode is preserved. Both live and history use API places, including unlocated
+places in the data selector; only verified GIS positions appear on maps.
+
+At a historical cursor, sensor windows cover the closed interval
+`[observed_at - duration_ms, observed_at]` and remain separate per node. Manual
+observations apply when `observed_at <= cursor < valid_until`. Gaps stay empty;
+the UI does not extend adjacent windows or rewrite original timestamps.
+There is no real-data autoplay, video, thumbnails or file import. The API queries
+at most the last 24 hours with at most 200 manual records and 200 sensor windows;
+truncation is distinct for each stream. This is not an offline archive or an
+immutable audit view: expiry, retention and manual cancellation affect subsequent
+reads. See the
+[field recording and delivery checklist](hackathon-delivery.md).
 
 An operator submits a parking quantity range or measured elevator wait through
 the browser. The Worker authenticates and validates the request, writes to D1,
