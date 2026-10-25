@@ -15,6 +15,11 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
+- [ ] Physically calibrate the integrated BLE cohort-disappearance rules against
+      elevator boarding and hallway exits. Verify actual fixed placement, address
+      policy, clock/health and end-to-end delay before interpreting candidates as
+      actual elevator service. No model training is required for this slice.
+
 - [ ] Diagnose the reported Passport connection failure without clearing saved
       state. Add observable Wi-Fi/IP/time/TLS/cloud/save stages and retained safe
       failure diagnostics; distinguish first registration from existing-device
@@ -142,6 +147,12 @@ collection and durable upload. Final local software verification passed on
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] Integrate the user-selected cohort-disappearance rules with private D1
+      field evidence, bounded read-only API, OpenAPI and the existing elevator
+      place panel. Native rule/adapter checks (23) and real SQLite/store checks
+      (17) pass locally; full hosted/build/browser and field acceptance remain
+      separate. See [integration boundaries](../notes/elevator-cohort-implementation.md).
 
 - [x] Replace the manual-key roadblock for verified, registered USB/BLE nodes
       with no saved credential: offer one explicit reauthorize-and-connect

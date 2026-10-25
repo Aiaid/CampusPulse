@@ -3,6 +3,7 @@ import { handleDocs } from './docs';
 import { handleIngestion } from './ingest';
 import { handleDeviceV2 } from './device-v2';
 import { readPublicWindows } from './sensors';
+import { readElevatorEvents } from './elevator-cohort-store.js';
 import { expireIngestion } from './retention';
 import { handleAdmin, readPublicSettings, readRuntimeSettings } from './admin';
 
@@ -114,6 +115,12 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
     if (url.pathname === '/api/v1/places' && request.method === 'GET') {
       const result = await env.DB.prepare('SELECT id,name,kind,anchor_x,anchor_y,gis_anchor_x,gis_anchor_y FROM places ORDER BY id').all<PlaceRow>();
       return json({ places: result.results.map(placeFromRow) });
+    }
+    const elevatorRoute = /^\/api\/v1\/places\/([a-z0-9_-]{1,64})\/elevator-events$/.exec(url.pathname);
+    if (elevatorRoute && request.method === 'GET') {
+      const place = await findPlace(env, elevatorRoute[1]);
+      if (place.kind !== 'elevator') throw new ApiError(422, 'place_kind_mismatch', 'Elevator events require an elevator place.');
+      return json(await readElevatorEvents(env.DB, place.id));
     }
     const route = /^\/api\/v1\/places\/([a-z0-9_-]{1,64})\/(summary|history)$/.exec(url.pathname);
     if (route && request.method === 'GET') {

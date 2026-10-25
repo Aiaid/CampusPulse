@@ -11,6 +11,7 @@ const methods = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'tr
 const implemented = [
   'GET /api/v1/health', 'GET /api/v1/places',
   'GET /api/v1/places/{id}/summary', 'GET /api/v1/places/{id}/history',
+  'GET /api/v1/places/{id}/elevator-events',
   'POST /api/v1/observations', 'DELETE /api/v1/observations/{id}',
   'POST /api/v1/ingest', 'GET /api/v1/device/config', 'GET /api/v1/research/batches/{id}',
   'GET /api/v1/settings', 'POST /api/v1/device/config/ack',
@@ -268,6 +269,8 @@ describe('OpenAPI contract and existing authorization', () => {
       await request('/api/v1/places');
       await request('/api/v1/places/library/summary', '/api/v1/places/{id}/summary');
       await request('/api/v1/places/library/history', '/api/v1/places/{id}/history');
+      await request('/api/v1/places/teaching-elevator/elevator-events', '/api/v1/places/{id}/elevator-events');
+      await request('/api/v1/places/library/elevator-events', '/api/v1/places/{id}/elevator-events', undefined, 422);
       await request('/api/v1/places/library/history?minutes=999', '/api/v1/places/{id}/history', undefined, 422);
       await request('/api/v1/places/unknown/summary', '/api/v1/places/{id}/summary', undefined, 404);
       for (const data of [

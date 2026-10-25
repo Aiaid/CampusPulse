@@ -50,6 +50,7 @@ jobs:
           curl --fail --silent http://127.0.0.1:8787/api/v1/health > /dev/null
           npm run test:browser
           node scripts/docs-browser-smoke.mjs
+          node scripts/elevator-events-browser-smoke.mjs
           ADMIN_SMOKE_URL=http://localhost:8787 node scripts/admin-auth-browser-smoke.mjs
           ADMIN_SMOKE_URL=http://localhost:8787 node scripts/admin-browser-smoke.mjs
           GIS_SMOKE_URL=http://127.0.0.1:8787 GIS_SMOKE_TILES=fixture node scripts/gis-location-browser-smoke.mjs
