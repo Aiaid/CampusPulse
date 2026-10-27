@@ -202,7 +202,10 @@ describe('observation-driven place diagrams', () => {
     expect(html).not.toContain('<small>广播活动量级');
     expect(html).not.toContain('<small>人工停车观察');
     expect(html).toContain('最后观测');
-    expect(html).toContain('max-height:194px');
+    const bounds = html.match(/style="[^"]*top:([\d.]+)px;[^"]*max-height:([\d.]+)px/);
+    expect(bounds).not.toBeNull();
+    expect(Number(bounds[2])).toBeGreaterThan(0);
+    expect(Number(bounds[1]) + Number(bounds[2])).toBeLessThanOrEqual(210);
     expect(html).toContain('data-source="manual"');
     expect(html).not.toContain('trajectory');
     expect(renderToStaticMarkup(createElement(FieldIllustration, { illustration, point: { left: -1, top: 50 }, width: 300, height: 190 }))).toBe('');

@@ -103,6 +103,17 @@ collection and durable upload. Final local software verification passed on
 
 ## P1 — Add interaction and display after collection/upload acceptance
 
+- [ ] Freeze elevator experiment inputs with the versioned address-summary
+      contract: retain within-slice timing/RSSI evidence, explicitly scoped
+      cross-window association, scan-gap/loss quality and two-node time alignment.
+      See [backend-first elevator design](elevator-wait-estimation.md); existing
+      v1 `none`/`window_token` and sparse raw sampling do not satisfy this input gate.
+
+- [ ] Define and validate an explicitly versioned partial/compact upload contract
+      using the [field audit](../research/ingestion-field-audit-2026-10-24.md):
+      preserve receipt/provenance invariants, distinguish unknown from empty/zero,
+      retain raw evidence where needed and keep incomplete metrics unpublished.
+
 - [ ] Add ingestion rate limiting, operational alerts, capacity/orphan audits and
       a lease-safe orphan cleanup process; add research roles and versioned
       vehicle classification only after evaluation with independent evidence.
@@ -148,8 +159,23 @@ collection and durable upload. Final local software verification passed on
 
 - [ ] Measure sustained BLE/Wi-Fi coexistence, power draw, and battery life.
 - [ ] Study node-to-node comparability, identifier randomization, and sampling bias.
-- [ ] Explore calibrated vehicle candidates, richer parking observations, and
-      elevator reference models with separately acquired ground truth.
+- [ ] Explore calibrated vehicle candidates and richer parking observations
+      with separately acquired ground truth.
+- [ ] Run the [elevator pilot](elevator-wait-estimation.md) at one floor/group:
+      label pass-through, waiting, boarding, abandonment and full-car misses;
+      compare known beacons and consenting phone cohorts separately.
+- [ ] Implement backend replay and versioned short-track/state/event inference
+      only after the input contract is verified. Preserve ambiguous/censored
+      cases and provenance; do not equate disappearance with boarding.
+- [ ] Compare a time/floor/direction historical-wait baseline with BLE-assisted
+      quantile prediction on held-out sessions/days. Measure event precision/
+      recall, wait error, interval coverage and prediction availability; freeze
+      acceptance thresholds before evaluation and retain the baseline if BLE
+      adds no measured value.
+- [ ] Publish elevator estimates only after field acceptance and a versioned
+      output contract with evidence/time/validity, uncertainty and unavailable
+      states. Keep manual waits, inferred samples and predictions separate;
+      consider edge preprocessing only after replay equivalence is verified.
 - [ ] Evaluate address-window summaries and candidate evidence from raw reports;
       keep association hypotheses separate from physical device identities.
 - [ ] Evaluate map registration and broader coverage; retain unsupported states.
@@ -161,6 +187,19 @@ collection and durable upload. Final local software verification passed on
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] Record the user-selected backend-first elevator-wait design and device
+      input matrix, including current v1 limits, proposed address summaries,
+      scoped association, manual labels, replay and field/prediction gates.
+      Documentation only; no algorithm, wire change, deployment or device
+      validation. See [elevator design](elevator-wait-estimation.md).
+
+- [x] Dump and inspect 149 retained raw batches / 3,566 reports at the
+      2026-10-24 16:57 CST cutoff; separate firmware-declared and fixture cohorts,
+      verify research-response checksums/receipt identity and report one expired
+      raw receipt outside the backup. Add read-only dump/analysis tools and 10
+      passing synthetic analysis/integrity tests. Original frozen upload bytes
+      were not backed up; wire/firmware/API changes remain proposed above.
 
 - [x] Show retained field aggregates with unknown/unreliable timestamps as a
       separate receipt-labelled last-report display, without promoting receipt
