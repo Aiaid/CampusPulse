@@ -70,6 +70,21 @@ try {
   await expect(page.locator('[data-source="last-reported-sensor"]')).not.toContainText('有效观察');
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  // Overflow is clipped before ResizeObserver/React and the next draw update
+  // the canvas. Wait for its actual CSS and backing sizes, not old opaque pixels.
+  await expect.poll(() => detail.evaluate(canvas => {
+    const box = canvas.getBoundingClientRect(), map = canvas.parentElement;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    return {
+      fitsViewport: box.x >= 0 && box.right <= innerWidth + 1,
+      matchesMap: box.width === map.clientWidth && box.height === map.clientHeight,
+      bitmapMatchesMap: canvas.width === Math.max(1, Math.round(map.clientWidth * dpr))
+        && canvas.height === Math.max(1, Math.round(map.clientHeight * dpr)),
+      canvas: { x: box.x, width: box.width, height: box.height, bitmapWidth: canvas.width, bitmapHeight: canvas.height },
+      map: { width: map.clientWidth, height: map.clientHeight },
+    };
+  }), { message: 'Original actor canvas resizes and redraws within the 390px layout' })
+    .toMatchObject({ fitsViewport: true, matchesMap: true, bitmapMatchesMap: true });
   await expect.poll(nontransparent).toBeGreaterThan(0);
   const box = await detail.boundingBox();
   assert.ok(box && box.x >= 0 && box.x + box.width <= 391, 'Original actor canvas fits the 390px layout');
