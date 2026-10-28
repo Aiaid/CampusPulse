@@ -8,7 +8,7 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { chromium } from '@playwright/test';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fixture = name => JSON.parse(readFileSync(`docs/specs/examples/${name}.json`, 'utf8'));
-const source = await build({ entryPoints: ['worker/index.ts'], bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022', external: ['node:*'] });
+const source = await build({ entryPoints: ['worker/index.ts'], bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022', external: ['node:*', 'cloudflare:*'] });
 const bootstrap = 'synthetic-diagnostics-admin-only', deviceToken = 'synthetic-diagnostics-device-only';
 const mf = new Miniflare(convertV4MiniflareOptions({ port: 0, host: '127.0.0.1', workers: [{ name: 'diagnostics-browser', modules: true,
   script: source.outputFiles[0].text, compatibilityDate: '2026-10-23', compatibilityFlags: ['nodejs_compat'], d1Databases: ['DB'], r2Buckets: ['RAW_BUCKET'],
