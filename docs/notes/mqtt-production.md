@@ -65,6 +65,9 @@ The production workflow therefore uses a verified credential pool:
    authentication header is `username,password`; authorization uses
    `username,topic,action,access`, with Cloud action values `pub`/`sub`/`pubsub`.
    Do not use Enterprise-only CSV field names or `publish`/`subscribe` values.
+   Select **用户名**, not the default client-ID view, before opening Import.
+   Username+topic pairs are unique: use one final `#,pubsub,deny` row per user,
+   never two separate pub/sub deny rows for the same `#` topic.
 4. Click **已导入，验证此授权**. The server actually verifies strict broker TLS,
    login, the own reply subscription and allowed request publication, plus denial
    of cross-namespace access, request subscriptions and forged reply publication.
@@ -78,7 +81,9 @@ The production workflow therefore uses a verified credential pool:
    cloud receipts are distinct states in the UI.
 
 The current batch contains16 device identities and a separate server identity
-restricted to reply publication for their namespaces. Importing this batch does
+restricted to publication on `cp/v1/+/+/rep/+/+`, with a final `#` pubsub deny.
+It cannot publish requests or subscribe; the stable reply role supports later
+pool refills without credential/ACL changes to that server identity. Importing this batch does
 not alter existing test accounts or add an All Users rule. The broker's existing
 CNY0 consumption limit is retained; no paid-plan upgrade is requested.
 

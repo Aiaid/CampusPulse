@@ -14,8 +14,11 @@ it('generates independent encrypted identities with one-time Cloud-console mater
  expect(generated.material.authentication_csv).toMatch(/^"username","password"\r\n/);
  expect(generated.material.authorization_csv).toMatch(/^"username","topic","action","access"\r\n/);
  const aclLines=generated.material.authorization_csv.trim().split('\r\n').slice(1);
- expect(aclLines).toHaveLength(8);
- expect(aclLines.every((line:string)=>/^"[a-z0-9_-]+","[^"]+","(?:pub|sub)","(?:allow|deny)"$/.test(line))).toBe(true);
+ expect(aclLines).toHaveLength(6);
+ expect(aclLines.every((line:string)=>/^"[a-z0-9_-]+","[^"]+","(?:pub|sub|pubsub)","(?:allow|deny)"$/.test(line))).toBe(true);
+ const aclRows=aclLines.map((line:string)=>JSON.parse(`[${line}]`) as string[]);
+ expect(new Set(aclRows.map((row:string[])=>`${row[0]}\n${row[1]}`)).size).toBe(aclRows.length);
+ expect(aclRows.filter((row:string[])=>row[1]==='#').every((row:string[])=>row[2]==='pubsub'&&row[3]==='deny')).toBe(true);
  expect(generated.material.authorization_csv).not.toContain('"publish"');
  expect(generated.material.authorization_csv).not.toContain('"subscribe"');
  for(const e of generated.entries){expect(e.username).toMatch(/^[a-z0-9_-]{1,15}$/);expect(e.namespace).toBe(e.username);expect(e.state).toBe('pending_broker');expect(e.password_ciphertext).toBeUndefined();}

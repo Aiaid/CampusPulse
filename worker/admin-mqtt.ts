@@ -67,8 +67,7 @@ export async function handleAdminMqtt(request:Request,env:Env,route:string,sessi
   authorization_csv:csv([['username','topic','action','access'],...inputs.flatMap(input=>[
    [input.username,`cp/v1/${input.namespace}/+/req/+/+`,'pub','allow'],
    [input.username,`cp/v1/${input.namespace}/+/rep/+/+`,'sub','allow'],
-   [input.username,'#','pub','deny'],
-   [input.username,'#','sub','deny'],
+   [input.username,'#','pubsub','deny'],
   ])]),
  },notice:'Private one-time broker import material. Import authentication and ACLs into the fixed production broker, then verify each entry. Generated material alone does not establish broker readiness.'},201);
 }
