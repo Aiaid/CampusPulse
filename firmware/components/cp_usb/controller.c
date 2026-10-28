@@ -14,7 +14,7 @@ static void delete_private(cJSON *o)
     for (cJSON *v=o->child;v;v=v->next) {
         if (v->valuestring) cp_usb_secure_clear(v->valuestring,strlen(v->valuestring));
         if (v->child) {
-            /* Request schema is scalar; this only scrubs rejected bounded input. */
+            /* mqtt has scalar children; also scrub rejected bounded input. */
             for (cJSON *c=v->child;c;c=c->next)
                 if (c->valuestring) cp_usb_secure_clear(c->valuestring,strlen(c->valuestring));
         }
@@ -39,7 +39,15 @@ static cJSON *parse(const uint8_t *bytes,size_t length)
     while (end && end<text+length && (*end==' '||*end=='\t')) ++end;
     bool valid=cJSON_IsObject(o)&&end==text+length;
     for (const cJSON *v=o?o->child:NULL;valid&&v;v=v->next) {
-        if (!v->string || cJSON_IsArray(v)||cJSON_IsObject(v)) {valid=false;break;}
+        if (!v->string || cJSON_IsArray(v) ||
+            (cJSON_IsObject(v) && strcmp(v->string,"mqtt"))) {valid=false;break;}
+        if (cJSON_IsObject(v)) {
+            for (const cJSON *field=v->child;valid&&field;field=field->next) {
+                if (!field->string || !cJSON_IsString(field)) {valid=false;break;}
+                for (const cJSON *next=field->next;next;next=next->next)
+                    if (next->string && !strcmp(field->string,next->string)) {valid=false;break;}
+            }
+        }
         for (const cJSON *next=v->next;next;next=next->next)
             if (next->string && !strcmp(v->string,next->string)) {valid=false;break;}
     }

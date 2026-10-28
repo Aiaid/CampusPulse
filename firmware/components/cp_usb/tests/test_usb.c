@@ -77,6 +77,23 @@ static void controller(void)
     const char *configure="{\"v\":1,\"op\":\"configure\",\"password\":\"synthetic-private-password\",\"device_token\":\"synthetic-private-token\"}";
     exchange_reply="{\"v\":1,\"ok\":true,\"state\":\"received\"}";control(configure,out);
     assert(exchanges==3&&!strcmp((char*)received_json,configure)&&!strstr(out,"private"));
+    const char *nested="{\"v\":1,\"op\":\"configure\",\"mqtt\":{\"uri\":\"mqtts://example.invalid:8883\",\"username\":\"fixture\",\"password\":\"synthetic-private-mqtt\",\"namespace\":\"fixture\"}}";
+    control(nested,out);assert(exchanges==4&&!strcmp((char*)received_json,nested)&&!strstr(out,"private"));
+    const char *bad_nested[]={
+        "{\"v\":1,\"op\":\"configure\",\"other\":{\"password\":\"synthetic-private-mqtt\"}}",
+        "{\"v\":1,\"op\":\"configure\",\"mqtt\":{\"password\":\"synthetic-private-mqtt\",\"password\":\"duplicate\"}}",
+        "{\"v\":1,\"op\":\"configure\",\"mqtt\":{\"password\":\"one\"},\"mqtt\":{\"password\":\"two\"}}",
+        "{\"v\":1,\"op\":\"configure\",\"mqtt\":{\"password\":null}}",
+        "{\"v\":1,\"op\":\"configure\",\"mqtt\":{\"password\":1}}",
+        "{\"v\":1,\"op\":\"configure\",\"mqtt\":{\"password\":true}}",
+        "{\"v\":1,\"op\":\"configure\",\"mqtt\":[]}",
+        "{\"v\":1,\"op\":\"configure\",\"mqtt\":{\"password\":[]}}",
+        "{\"v\":1,\"op\":\"configure\",\"mqtt\":{\"password\":{}}}",
+        "{\"v\":1,\"op\":\"configure\",\"mqtt\":{\"password\":\"synthetic-private-mqtt\\u0000tail\"}}"
+    };
+    for(unsigned i=0;i<sizeof bad_nested/sizeof bad_nested[0];++i){
+        control(bad_nested[i],out);assert(exchanges==4&&strstr(out,"invalid_json")&&!strstr(out,"private"));
+    }
     exchange_error=ESP_ERR_NO_MEM;control("{\"v\":1,\"op\":\"status\"}",out);assert(strstr(out,"service_unavailable"));
 }
 int main(void){split_and_noise();bounds_and_resync();controller();puts("USB framing/controller: split/noise/resync/bounds/UTF8/explicit begin/error and secret isolation passed");}

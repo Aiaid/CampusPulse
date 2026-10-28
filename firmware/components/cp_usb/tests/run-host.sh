@@ -19,3 +19,4 @@ clang -std=c11 -Wall -Wextra -Werror -pedantic -g -fsanitize=address,undefined \
     "$CP_DIR/framing.c" "$CP_DIR/controller.c" "$CP_DIR/tests/test_console.c" "$CP_TEST/cJSON.o" \
     -o "$CP_TEST/test-console"
 "$CP_TEST/test-console"
+bash "$CP_DIR/tests/run-provision-host.sh"
