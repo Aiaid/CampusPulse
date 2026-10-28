@@ -51,7 +51,7 @@ try {
   });
   await page.goto(`${origin}/docs?url=https://example.invalid/forbidden.json`);
   await page.locator('.opblock').nth(8).waitFor();
-  assert.equal(await page.locator('.opblock').count(), 52, 'All implemented public, account/Passkey/admin, operator, v1/v2 device and research operations');
+  assert.equal(await page.locator('.opblock').count(), 56, 'All implemented public, account/Passkey/admin/MQTT, operator, v1/v2 device and research operations');
   assert.ok(!(await page.content()).includes(token), 'Credential absent from initial HTML');
   const op = (method, path) => page.locator(`.opblock-${method}`).filter({ has: page.locator(`.opblock-summary-path[data-path="${path}"]`) });
   for (const [method, path] of [
@@ -60,6 +60,10 @@ try {
     ['post', '/api/v2/device/config/ack'],
     ['post', '/api/v2/ingest'],
     ['get', '/api/v2/research/batches/{id}'],
+    ['get', '/api/v1/admin/mqtt/pool'],
+    ['post', '/api/v1/admin/mqtt/pool'],
+    ['post', '/api/v1/admin/mqtt/pool/{id}/verify'],
+    ['post', '/api/v1/admin/devices/{id}/mqtt'],
   ]) assert.equal(await op(method, path).count(), 1, `Exactly one ${method.toUpperCase()} ${path} operation`);
   const open = async operation => {
     if (!(await operation.locator('.opblock-body').isVisible())) await operation.locator('.opblock-summary-control').click();
