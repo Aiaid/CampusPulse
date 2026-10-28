@@ -34,9 +34,9 @@ jobs:
           node_modules/.bin/tsc -p relay/emqx-cloud/tsconfig.json
       - name: Verify production MQTT settings and firmware ownership on host
         run: |
-          sh firmware/components/cp_settings/tests/run-host.sh
-          sh firmware/components/cp_network/tests/run-host.sh
-          sh firmware/tests/runtime/run-host.sh
+          bash firmware/components/cp_settings/tests/run-host.sh
+          bash firmware/components/cp_network/tests/run-host.sh
+          bash firmware/tests/runtime/run-host.sh
       - name: Install browser
         run: npx playwright install --with-deps chromium webkit
       - name: Verify protected provisioning wizard with synthetic peers
