@@ -119,6 +119,22 @@ static char *build(unsigned kind)
     return kind<2?cp_control_contact_json(boot,1,1000,"paused",kind?"test-policy":NULL):
         cp_control_activation_json(boot,"test-policy",2,kind==2,kind==2?NULL:"allocation_failed");
 }
+static void test_connection_event_evidence(void)
+{
+    int client=1;
+    cp_http_response_t response={.deadline_ms=1000,.connected_seen=true,.connected_ms=5};
+    esp_http_client_event_t event={.client=&client,.user_data=&response,.event_id=HTTP_EVENT_ON_CONNECTED};
+    /* Cached handle state is not a new socket event. An actual reconnect must
+     * replace the presumed old timestamp and remain visible to profiling. */
+    assert(!response.connect_events);
+    assert(cp_http_response_event(&event,20,true)==ESP_OK);
+    assert(response.connect_events==1&&response.connected_ms==20);
+    assert(cp_http_response_event(&event,30,true)==ESP_OK);
+    assert(response.connect_events==2&&response.connected_ms==20);
+    response.connect_events=UINT32_MAX;
+    assert(cp_http_response_event(&event,40,true)==ESP_OK&&response.connect_events==UINT32_MAX);
+}
+
 int main(void)
 {
     cJSON_Hooks hooks={.malloc_fn=fail_alloc,.free_fn=counted_free};cJSON_InitHooks(&hooks);
@@ -172,5 +188,6 @@ int main(void)
     event.event_id=HTTP_EVENT_ON_DATA;event.user_data=&response;
     assert(cp_http_response_event(&event,100,true)==ESP_ERR_TIMEOUT&&method_calls==2&&!response.used);
     test_lazy_response();
+    test_connection_event_evidence();
     printf("control JSON: %u allocator failures leave no partial request; HTTP lazy growth/OOM/size/deadline/cancel bounds passed\n",injected);
 }

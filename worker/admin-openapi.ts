@@ -40,6 +40,7 @@ export function createAdminOpenApi() {
     securitySchemes: { AdminSession: { type: 'apiKey', in: 'cookie', name: 'cp_admin_session', description: 'Signed, expiring, server-revocable HttpOnly SameSite=Strict session obtained through POST /api/v1/admin/session. Secure on HTTPS. Cookies cannot be entered manually in Swagger; use /admin to log in.' } },
     schemas: {
       ...identity.schemas,
+      MqttDeviceCredentials: entity({ uri: { type: 'string', const: 'mqtts://q9a692f8.ala.cn-hangzhou.emqxsl.cn:8883' }, username: { type: 'string', pattern: '^[a-z0-9_-]{1,15}$' }, password: { type: 'string', minLength: 16, maxLength: 96 }, namespace: { type: 'string', pattern: '^[a-z0-9_-]{1,15}$' } }),
       PublicSiteSettings: entity({ site_name: string, default_mode: { type: 'string', enum: ['demo', 'field'] } }),
       AdminRuntimeSettings: entity({
         site_name: { type: 'string', minLength: 1, maxLength: 80 }, default_mode: { type: 'string', enum: ['demo', 'field'] },
@@ -54,7 +55,18 @@ export function createAdminOpenApi() {
       '/api/v1/admin/overview': { get: operation('getAdminOverview', 'Read fleet contact and configuration overview', 'get', undefined, 'Contact freshness uses server receipt time and the configured threshold. Recent contact is not proof of current scan activity or radio completeness.') },
       '/api/v1/admin/devices': {
         get: { ...operation('listAdminDevices', 'List devices, latest health and configuration state', 'get'), parameters: [{ name: 'after', in: 'query', required: false, schema: id, description: 'Use the previous next_cursor; each response contains at most 200 devices.' }] },
-        post: operation('registerAdminDevice', 'Register a device and return its random credential once', 'post', entity({ id, name: string, board: string }), undefined, '201'),
+        post: operation('registerAdminDevice', 'Register a device with a verified independent MQTT identity', 'post', entity({ id, name: string, board: string }), 'Requires fresh verification. Device, independent broker identity and audit commit atomically. Returns device, legacy upload credential and mqtt:{uri,username,password,namespace}. If no broker-verified pool row is ready, mqtt_pool_empty (503) creates no device. Secrets are never present in list or audit responses.', '201'),
+      },
+      '/api/v1/admin/mqtt/pool': {
+        get: operation('listAdminMqttPool', 'List safe MQTT pool metadata and ready count', 'get', undefined, 'No passwords, encrypted credentials, upload tokens or one-time CSV exports are returned. Entries are bounded to 500 and report truncation.'),
+        post: operation('createAdminMqttPool', 'Generate or explicitly import pending broker identities', 'post', { oneOf: [entity({ count: { type: 'integer', minimum: 1, maximum: 32 } }), entity({ entries: { type: 'array', minItems: 1, maxItems: 32, items: entity({ username: { type: 'string', pattern: '^[a-z0-9_-]{1,15}$' }, namespace: { type: 'string', pattern: '^[a-z0-9_-]{1,15}$' }, password: { type: 'string', minLength: 16, maxLength: 96 }, node_id: id }, ['username', 'namespace', 'password']) } })] }, 'Requires fresh verification. AES-GCM encrypted secrets are stored pending_broker. Returns safe entries and material:{authentication_csv,authorization_csv} once for the fixed production broker. CSV creation/import is not broker readiness. Optional imported node_id explicitly adopts an existing identity after a successful real probe; no implicit password rotation.', '201'),
+      },
+      '/api/v1/admin/mqtt/pool/{id}/verify': {
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        post: operation('verifyAdminMqttPoolIdentity', 'Verify production MQTT login and namespace ACLs', 'post', entity({}), 'Requires fresh verification. Real bounded MQTT5/TLS probe checks login, the firmware reply subscription, own request publication and denied cross-namespace/request subscriptions. The publish uses unsupported verify operation and creates no ingestion evidence. Failure revokes readiness; success marks ready or activates an explicit existing-node reservation.'),
+      },
+      '/api/v1/admin/devices/{id}/mqtt': {
+        parameters: [pathId], post: operation('recoverAdminDeviceMqtt', 'Recover the same assigned MQTT credentials or allocate a verified identity', 'post', entity({}), 'Requires fresh verification and an enabled registered node. Returns mqtt:{uri,username,password,namespace}; the recovery audit contains no secrets. Existing assignments are decrypted without password rotation. Unassigned nodes atomically allocate a broker-verified ready row; pending reserved identities must pass verification first.'),
       },
       '/api/v1/admin/devices/{id}': {
         parameters: [pathId],

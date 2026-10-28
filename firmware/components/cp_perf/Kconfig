@@ -1,0 +1,17 @@
+menu "CampusPulse optional profiling"
+config CP_PERF_PROFILE
+    bool "Log bounded CPU and operation timing samples"
+    default n
+    depends on FREERTOS_UNICORE && !FREERTOS_SMP
+    depends on FREERTOS_GENERATE_RUN_TIME_STATS && FREERTOS_USE_TRACE_FACILITY
+    depends on FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER
+    help
+        Optional evaluation-only statistics, sampled by the existing supervisor
+        every ten seconds. Requires explicit FreeRTOS run-time statistics with
+        ESP_TIMER; prefer the U64 run-time counter for long observations.
+        No new task or heap buffer. Scheduler-suspended lookups are measured.
+        Six application-task stack high-water scans add measured suspended
+        scheduler work; SDK task stacks are not scanned.
+        Runtime statistics add per-task storage and context-switch overhead.
+        Operation timings are overlapping wall time, not exclusive CPU time.
+endmenu

@@ -16,6 +16,9 @@ function generate(extra: Record<string, string>) {
       CLOUDFLARE_D1_DATABASE_ID: '11111111-1111-4111-8111-111111111111',
       CLOUDFLARE_R2_RAW_BUCKET: 'synthetic-private-auth-fixture',
       OPERATOR_TOKEN: 'synthetic-unused-config-test-operator',
+      MQTT_PROVISIONING_KEY: 'synthetic-unused-config-test-mqtt-key',
+      ADMIN_TOKEN: 'synthetic-unused-config-test-admin',
+      RESEARCH_TOKEN: 'synthetic-unused-config-test-research',
       ...extra,
     } });
     const path = join(root, '.wrangler/deploy/wrangler.json');

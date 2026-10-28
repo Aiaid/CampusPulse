@@ -1,0 +1,5 @@
+/build*/
+/sdkconfig*
+!/sdkconfig.defaults
+/private*
+/mqtt_config.h

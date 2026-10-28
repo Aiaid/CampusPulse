@@ -1,0 +1,21 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "campuspulse-emqx",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "services": [{"binding": "INGEST_SERVICE", "service": "campuspulse", "entrypoint": "MqttDeviceApi"}],
+  "durable_objects": {"bindings": [{"name": "RPC_GUARDS", "class_name": "EmqxRpc"}]},
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["EmqxRpc"]}],
+  "vars": {"BROKER_HOST": "q9a692f8.ala.cn-hangzhou.emqxsl.cn"},
+  "routes": [{"pattern":"pulse-emqx.anend.net","custom_domain":true}],
+  "secrets": {"required": ["WEBHOOK_KEY", "MQTT_USERNAME", "MQTT_PASSWORD"]},
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {"enabled": true, "invocation_logs": false},
+    "traces": {"enabled": false}
+  }
+}

@@ -65,6 +65,27 @@ describe('device v2 policies and control',()=>{
 });
 
 describe('private v2 ingestion and durable receipts',()=>{
+ it('rejects an inclusive partial-window end atomically and accepts a valid exclusive end',async()=>{
+  // Synthetic regression for a retained historical nine-item batch. No field
+  // identifiers or captured payloads belong in this fixture.
+  const rejected=batch(), item=rejected.items[0];
+  Object.assign(item,{duration_ms:1970,first_offset_ms:10,last_offset_ms:1969,bins:[item.reports]});
+  rejected.items=Array.from({length:9},(_,n)=>({...structuredClone(item),seq:n+1,address:`02:00:00:00:00:${(n+1).toString(16).padStart(2,'0')}`}));
+  rejected.items[0].last_offset_ms=1970;
+  const original=JSON.stringify(rejected);
+  const error=await data(await upload(rejected),422);
+  expect(error).toEqual({error:{code:'invalid_device_v2',message:'Invalid field: items[0].last_offset_ms.',retryable:false}});
+  expect(state.db.prepare('SELECT COUNT(*) n FROM ingestion_batches_v2').get()?.n).toBe(0);
+  expect(state.db.prepare('SELECT COUNT(*) n FROM ingestion_items_v2').get()?.n).toBe(0);
+  expect(JSON.stringify(rejected)).toBe(original);
+  // This independent synthetic window shows the required producer boundary;
+  // it is not a repair or reserialization of immutable queued data.
+  const valid=structuredClone(rejected);valid.batch_id=crypto.randomUUID();
+  for(const summary of valid.items)summary.duration_ms=1971;
+  const ack=await data(await upload(valid));
+  expect(ack).toMatchObject({stream:'address_summaries',accepted_count:9,durability:'committed'});
+  expect(await data(await upload(valid))).toEqual(ack);
+ });
  it.each([1000,1488,1880,4999,5000,30000])('commits a %i ms partial summary with its configured 5s bins',async duration=>{
   const b=batch(), item=b.items[0];
   item.duration_ms=duration;item.first_offset_ms=0;item.last_offset_ms=duration-1;

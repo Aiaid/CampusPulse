@@ -16,6 +16,89 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
+- [ ] Promote the accepted Hangzhou MQTT/TLS→EMQX→CF path into the production
+      device lifecycle: unique runtime credentials, registration/claim and
+      provisioning, verified broker readiness, dynamic node authorization,
+      default firmware transport, frontend operator flow and deployment/CI.
+      Keep public CA certificates/provenance in source and every private key,
+      password, token, pool export and capture outside Git. Preserve old frozen
+      batches and protected device data. Commit/push verified source on main;
+      keep cloud/fleet cutover gated until actual broker and device acceptance.
+      Software/default native transport and protected chunked provisioning pass
+      local tests/SDK/C3 builds; the main API/UI and additive D1 migration are
+      deployed. Sixteen independent device identities are generated pending
+      actual EMQX import/verification. Direct dynamic gateway/six-field rule and
+      physical settings-v3 migration remain rollout gates. See
+      [production operations](../notes/mqtt-production.md).
+
+- [ ] Deploy domestic durable custody after the passing EMQX Hangzhou native
+      MQTT/TLS connectivity trial archived below. Keep account/price
+      authorization separate from research. Design domestic durable custody and
+      asynchronous CF forwarding with distinct receipts, and fix onboard
+      persistence/network coupling; do not release original data on broker ACK.
+      Prepare offline per-device credential/ACL bundles for batch provisioning;
+      keep generated secrets private, avoid rotating existing identities, and
+      distinguish generated CSV/JSON from actual broker registration/API access.
+      See the [provider shortlist](../notes/mqtt-wss-transition.md).
+
+- [ ] Separate durable BLE-window persistence from long MQTT/TLS/RPC ownership.
+      The optimized direct30s-cold trial receives3244 reports but a50.409s seal
+      wait exhausts the finite handoff:2windows/32summaries are not persisted,
+      despite zero callback drops or allocation failures. Preserve the raw
+      evidence and old frozen batches; add interruption/timeout stress acceptance
+      before claiming lossless operation on an unstable path. Do not conceal the
+      issue by reducing scanning or treating broker ACKs as durable storage.
+
+- [ ] Finish direct-route/reconnect and longer-run acceptance of the optional
+      [Cloudflare MQTT/WSS transport](../notes/mqtt-wss-transition.md), after the
+      proxy C3 acceptance archived below. Preserve the original16-address/30s/5s
+      default and frozen batches; validate larger policies separately. Direct
+      routing still fails complete acceptance. Cloudflare Queues is not part of
+      the implemented device gateway.
+
+- [ ] Expand the per-window address capacity beyond the current16-address
+      policy without increasing TLS memory pressure. Allocate active/sealed
+      address and actual-bin banks, retain native64-address/16-bin semantics,
+      publish a new immutable policy only after the compatible image is ready,
+      and preserve old policies/queued bodies. Measure actual address overflow,
+      report rate, heap/stack, producer bytes/batches, durable ACK throughput and
+      journal growth. Model address count × received-report refresh frequency
+      and10/30/60-second windows; distinguish logical addresses from physical
+      devices and modeled saturation from real radio acceptance.
+      The [capacity and path evidence](../notes/address-capacity-and-public-path.md)
+      separates controlled static64 acceptance from direct public-path tests.
+
+- [ ] Complete sustained-load and public-path recovery acceptance after the
+      [bounded performance evaluation](../notes/performance-evaluation.md):
+      the profiling-disabled image, protected Flash, saved boot, peripheral
+      initialization, BLE and fresh cloud persistence are observed; resolve
+      timeouts and verify current-boot ACK/reclamation, then repeat recovery checks
+      over longer runs and interruptions. Full-application and matched protocol
+      latency/CPU evidence are archived below, not a zero-loss field guarantee.
+
+- [ ] Extend the [collector decoupling acceptance](../notes/ble-ingress-decoupling.md)
+      with long-run interruptions, power-loss recovery and larger-policy board
+      acceptance. Current 16-address/raw-off C3 tests pass ten-minute controlled
+      and five-minute direct active collection without callback/window/storage
+      loss or failed allocation. Keep 16-address omissions, finite handoff
+      capacity, remaining direct HTTPS timeouts and the frozen historical422
+      separate from that bounded result; the completed implementation is archived.
+
+- [ ] Finish long-run low-memory/journal recovery acceptance after the
+      measured fixes. Preserve the original historical 422 slot and its exact
+      bytes; its unique candidate reproduces the half-open boundary rejection
+      locally, without an original online response trace. Bounded profiling
+      shows actual HTTPS reuse and pending 195→171 while collecting; validate
+      complete backlog drain, reset/exhaustion/reconnect and explicit losses.
+      See [recovery provenance](../notes/memory-queue-recovery.md).
+
+- [ ] Validate an isolated domestic managed MQTT/TLS -> serverless relay ->
+      existing Cloudflare proof of concept. Inspect available cloud access and
+      existing resources first, preserve exact request bytes/batch identities,
+      distinguish broker delivery from verified cloud receipts, and keep
+      synthetic acceptance separate from field data. Protect device Flash and
+      restore temporary firmware after any authorized hardware test.
+
 - [ ] Restore bounded trustworthy timestamps and sustained collection/upload
       across the four field sites. Preserve authenticated same-boot time anchors
       across SNTP updates, investigate radio/HTTP recovery starvation, correct
@@ -103,6 +186,36 @@ collection and durable upload. Final local software verification passed on
 
 ## P1 — Add interaction and display after collection/upload acceptance
 
+- [ ] Diagnose real collection loss, post-reboot backlog handling and sustained
+      upload capacity observed in the [device debug acceptance](../notes/device-debug-ui.md).
+      Separate aggregation loss from bounded address-table omission; preserve the
+      historical 422 candidate and finish startup/control recovery acceptance. The original
+      debug UI's functional acceptance missed its rendering CPU regression;
+      subsequent glyph clipping/dirty stripes/0.5 FPS and bounded reuse profiles
+      are recorded in the [performance evaluation](../notes/performance-evaluation.md).
+      Remaining collector admission waits and long-run recovery stay open.
+
+- [ ] Investigate the C3 reset observed during the diagnostic's original
+      NimBLE stop/deinitialization completion. Capture a reset reason/backtrace
+      and reproduce with the actual production lifecycle before assigning a
+      cause or claiming a production fix. Cancellation-only retained-runtime
+      completion is verified separately in the [coexistence record](../notes/https-ble-coexistence.md).
+
+- [ ] Evaluate a measured domestic TLS ingress/relay path independently of a
+      possible MQTT/TLS or WebSocket transport change. Preserve batch identity,
+      idempotency and separate local/cloud durable receipts before changing
+      device reclamation; validate both network legs and provider requirements.
+      See [coexistence and transport discussion](../notes/https-ble-coexistence.md).
+
+- [ ] Extend the bounded full-application HTTPS-reuse result with sustained
+      BLE/display/journal coexistence, HTTP idle survival, actual sampling
+      cadence and recovery under loss. Keep strict certificate checks and
+      inspect pinned SDK partial-write/retry behavior before changing timeouts.
+      Use the [integrated profile](../notes/performance-evaluation.md),
+      [controlled LAN baseline](../notes/https-lan-benchmark.md) and
+      [public CF comparison](../notes/cf-longlink-benchmark.md) within their
+      separate receipt, network-path and instrumentation boundaries.
+
 - [ ] Freeze elevator experiment inputs with the versioned address-summary
       contract: retain within-slice timing/RSSI evidence, explicitly scoped
       cross-window association, scan-gap/loss quality and two-node time alignment.
@@ -188,18 +301,130 @@ collection and durable upload. Final local software verification passed on
 
 ## Completed archive
 
-- [x] Record the user-selected backend-first elevator-wait design and device
-      input matrix, including current v1 limits, proposed address summaries,
-      scoped association, manual labels, replay and field/prediction gates.
-      Documentation only; no algorithm, wire change, deployment or device
-      validation. See [elevator design](elevator-wait-estimation.md).
+- [x] 2026-10-28: Replace the Mac verification bridge with native MQTT/TLS→
+      Hangzhou EMQX→HTTPS rule→isolated CF Worker→existing ingestion Service
+      Binding, returning original CF receipts by scoped native MQTT publication.
+      Explicit credential-storage authorization,90 local tests, type/dry-run
+      checks and real Serverless SQL byte-preservation checks pass. Mac bridge
+      exits normally and its process absence is verified. C3 passes303.747s
+      active collection/6310 boot reports, one session/72RPCs/71reused/0errors,
+      50 CF batches/124679B (46current-boot), stable queue4–6, final heap54240B/
+      largest34816B, zero new software-loss/allocation/pause counters. Exclude
+      buffered preboot records after USB access triggers reason11 restart;
+      no subsequent reset/crash. Longer unstable-path/custody work remains open.
 
-- [x] Dump and inspect 149 retained raw batches / 3,566 reports at the
-      2026-10-24 16:57 CST cutoff; separate firmware-declared and fixture cohorts,
-      verify research-response checksums/receipt identity and report one expired
-      raw receipt outside the backup. Add read-only dump/analysis tools and 10
-      passing synthetic analysis/integrity tests. Original frozen upload bytes
-      were not backed up; wire/firmware/API changes remain proposed above.
+- [x] 2026-10-28: Validate Hangzhou EMQX Serverless native MQTT/TLS with
+      consumption limit CNY0, independent device/relay accounts and tested
+      per-user ACLs. Protected app-only C3 transition passes Flash comparison.
+      Physical run passes303.560s continuous active BLE collection,6080 reports,
+      one session,55 CF durable batches/135007B (50 current-boot), queue6→1,
+      zero transport/allocation/software-loss/pause counters. Final free heap
+      55180B/largest34816B; warm RPC median1236ms/p95 2100ms includes CF.
+      Implement offline private batch-provisioning bundles with48 host tests;
+      cloud API account creation remains unverified. The verification bridge
+      runs on the Mac with an explicit CF proxy, not domestic durable custody.
+
+- [x] 2026-10-28: Implement/deploy the isolated authenticated MQTT/WSS gateway
+      with Service Binding to the existing ingestion Worker, and add optional
+      firmware transport with exact durable ACK and bounded outbox ownership.
+      Proxy-path C3 profiling run passes300.730s continuous active collection:
+      one MQTT session,216RPCs/215reused,193verified batches/608620B whole span,
+      boot queue144→1 (preserved historical422),0actual allocation failures,
+      memory deferrals, callback/window/storage losses or pause. Resolve fixed
+      RX residency with IO/encoder mutual exclusion, gate ingress after BLE
+      initialization, use measured MQTT task-stack budgets and move only SDK
+      non-ISR task functions to Flash. Earlier failed-trial losses and direct
+      route limitations remain explicit in the linked record. The installed
+      profiling-off proxy image also passes121.285s active collection and20
+      fresh batches with zero software loss/allocation failure, and remains
+      running with the original16-address policy. No Queues or paid MQ instance.
+
+- [x] Decouple BLE ingress from HTTP memory admission, JSON and Flash work;
+      persist bounded policy-sized handoffs with the existing uploader. Preserve
+      stop/final/old-policy ownership, raw failure accounting, immutable retries
+      and ACKs. Replace the failed full-snapshot design with a compact view:
+      actual16-address net reservation is318B below the old synchronous baseline
+      before allocator metadata, preserving native64-address support. Verify
+      ASan/OOM/lifecycle tests,69 byte-identical server fixtures and C3 builds.
+      Actual repeated sampling: controlled603.752s and direct304.137s active,
+      callback/window/storage/seal loss0 and failed allocation0; final normal
+      image installed, latest queue retained, temporary forwarding stopped.
+      Preserve the failed first trial and its corrected full-journal short-start
+      boundary in [workload and acceptance](../notes/ble-ingress-decoupling.md).
+
+- [x] Install normal optimized image `fix-ccdcdd467c0b` with profiling disabled,
+      verify the complete expected Flash image after app-only write, and retain
+      saved settings, cardid and journal. Observe display/input/battery startup,
+      real BLE, four verified older-boot upload ACKs and current-boot D1 storage
+      for two windows/one status. Preserve the later public-path timeouts,
+      uncertain current-boot ACKs and 615 callback drops as unresolved evidence;
+      this is a bounded startup/recovery check, not stable field acceptance.
+
+- [x] Evaluate one Passport's full application in two 606 s profiles with
+      weighted task CPU, stack margins, failed-allocation callbacks, overlapping
+      operation wall timers, real BLE/Flash/public HTTPS and verified ACKs.
+      Observe bounded pending 195→171 and actual 73 socket reuses; retain 150 BLE
+      callback losses and the historical 422 slot as unresolved limitations.
+      Separate later normal-image checks and long-run acceptance above.
+
+- [x] Isolate the original ten-second regression with UI A/B/A, then clip
+      glyph work, reduce normal display to0.5 FPS and send only dirty four-row
+      stripes. Preserve native pixels/buffers; real supervisor/UI CPU is about
+      1.5% in subsequent profiles. [Evidence](../notes/performance-evaluation.md).
+
+- [x] Compare same-host HTTPS and native MQTT/TLS with matched trust, TLS,
+      payloads, power, BLE and verified RAM application receipts: 30/30 without
+      CPU instrumentation and 46/46 in a separate paired task-CPU profile.
+      Warm latency is comparable; this MQTT implementation uses more measured
+      task CPU/heap. Preserve SDK enqueue/Nagle confounders, small sample and
+      non-durable receipt boundaries; no production transport migration.
+
+- [x] Add and flash the Passport debug dashboard with associated SSID/RSSI/PHY,
+      internal heap/current largest/boot minimum, shared journal bars, verified
+      upload goodput/result/age, HTTP/errors and separate BLE loss counters.
+      Preserve setup screens and unknown Mbps. Actual-font native/sanitizer
+      rendering and selected IDF5.5.3 build pass; protect current Flash data and
+      retain the UI after246s physical boot/stack/new BLE/cloud receipt checks.
+      The frozen build excludes earlier clock/yield WIP without resetting it.
+      See [units, source and physical boundaries](../notes/device-debug-ui.md).
+
+- [x] Observe the original full BLE/journal/HTTPS path for180s before the UI
+      update: six adjacent fresh windows/3473reports and30verified upload
+      completions, with narrow RAM margin,12aggregation drops and address-table
+      omissions. Distinguish historical heap lows from request-local minima;
+      do not infer all allocation success or RF completeness. New UI acceptance
+      separately observed real current-boot receipts and16.5KiB historical heap
+      minimum; rejection/backlog/long-run recovery remain open above.
+
+- [x] Compare public Cloudflare HTTPS fresh/reused sockets and WSS on one
+      isolated authenticated hostname (2026-10-28). C3 verified65/65 synthetic
+      receipts, zero reconnects on22 already-connected HTTP requests,45second
+      WSS heartbeat idle and controlled reconnect. HTTPS reuse reduced median
+      1/8KiB latency84%/79%; WSS had no additional measured advantage. Restore
+      full Flash equality and original boot/USB/credentials, remove temporary
+      Worker/domain and verify production unchanged. Document Workers/DO/Queues
+      roles and transport-vs-durable ACK boundaries in the
+      [measurement record](../notes/cf-longlink-benchmark.md). Production/BLE,
+      HTTP idle/cadence and prolonged network-loss acceptance remain separate.
+
+- [x] Test real passive BLE scanning plus shared RAM aggregation during paced
+      synthetic HTTPS uploads (2026-10-26). Main summaries and server receipts
+      verified 80/80 POSTs; all 40 reuse POSTs retained their connections and
+      four measured phases processed 4,451 reports without application drops.
+      Preserve one missing individual UART metric and the original cleanup
+      reset as limitations. Narrowed scanner/worker completion passed a separate
+      8/8 regression with 499 reports; full SDK deinit is not validated. Fresh
+      complete backup, app-only writes and original full-Flash restoration passed.
+      Production UI/journal/field acceptance remains separate.
+
+- [x] Isolate HTTPS on one connected Passport with a local TLS 1.2 server and
+      embedded public test CA (2026-10-26). The matched-I/O baseline verified
+      all 40 synthetic 1/8 KiB uploads, actual reuse and wrong-CA rejection;
+      preserve earlier short-timeout failures separately. Complete verified
+      8 MiB backup, application-only writes, non-application equality after the
+      experiment, original-application restoration and full-Flash equality
+      passed. Original `cp-aa1b3ec36d40` boot and USB status were confirmed;
+      production concurrency and public-network performance remain separate.
 
 - [x] Show retained field aggregates with unknown/unreliable timestamps as a
       separate receipt-labelled last-report display, without promoting receipt
@@ -432,6 +657,12 @@ collection and durable upload. Final local software verification passed on
       source behavior checked; independent read-only reviews and document-link
       checks passed. Runtime, API and hardware changes remain the P0/P1 work above.
 
+- [x] Record the user-selected backend-first elevator-wait design and device
+      input matrix, including current v1 limits, proposed address summaries,
+      scoped association, manual labels, replay and field/prediction gates.
+      Documentation only; no algorithm, wire change, deployment or device
+      validation. See [elevator design](elevator-wait-estimation.md).
+
 - [x] Import the user-selected AI Passport Radar runtime/BSP from verified
       upstream `5fb8ab5` on `codex/passport-firmware`. Preserve 3 MiB app/cardid
       layout, omit credentials/observations, gate calibration exports, correct
@@ -487,6 +718,13 @@ collection and durable upload. Final local software verification passed on
       tests passed; desktop/390px and all-place runtime checks recorded in
       [campus lighting](campus-lighting.md) and root visual QA. No deployment,
       commit or database writes performed by this lighting task.
+
+- [x] Dump and inspect 149 retained raw batches / 3,566 reports at the
+      2026-10-24 16:57 CST cutoff; separate firmware-declared and fixture cohorts,
+      verify research-response checksums/receipt identity and report one expired
+      raw receipt outside the backup. Add read-only dump/analysis tools and 10
+      passing synthetic analysis/integrity tests. Original frozen upload bytes
+      were not backed up; wire/firmware/API changes remain proposed above.
 
 - [x] Bring the bounded library-entry trial closer to the selected night concept:
       unified building/ground/tree/actor lighting, textured foliage, crisp tiles,

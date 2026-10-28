@@ -7,6 +7,7 @@ import { serialSupport, selectProvisioningPort, connectSerialProvisioning, conne
 import { saveProvisionSettings, cloudProgress, inspectEnrollment, currentProvisionConfig, NODE_PATTERN, TOKEN_PATTERN } from './provisioning/enrollment.js';
 import { diagnosticView, previousDiagnostic, bootEvidence, networkSettingsSaved } from './provisioning/diagnostics.js';
 import { prepareNetworkCredential } from './provisioning/credential-recovery.js';
+import { mqttSettings, provisionAuthorization } from './provisioning/mqtt.js';
 import { wifiPayload, supportsWifiMode } from './provisioning/network.js';
 import './provisioning.css';
 import { observationKinds, formatObservationKinds } from '../shared/observation-kinds.js';
@@ -34,7 +35,8 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
   const knownBoot = useRef(null);
   const [disconnected, setDisconnected] = useState(false), [debugAttached, setDebugAttached] = useState(false), [cloudError, setCloudError] = useState('');
   const preparedNode = useRef(''), configOperation = useRef(crypto.randomUUID()), selectedConnection = useRef(null);
-  const client = useRef(null), diagnosticClient = useRef(null), diagnosticPort = useRef(null), token = useRef('');
+  const client = useRef(null), diagnosticClient = useRef(null), diagnosticPort = useRef(null), token = useRef(''), mqtt = useRef(null);
+  const [mqttPrepared, setMqttPrepared] = useState(false);
   const attempt = useRef(crypto.randomUUID()), started = useRef(0), mounted = useRef(true), selectedNode = useRef('');
   const mutation = useMutation(), places = useResource('/places');
   const node = identity?.node_id || manualNode;
@@ -43,6 +45,7 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
   const physicalReady = mode === 'ap' ? NODE_PATTERN.test(manualNode) : !!identity && !!client.current;
   const reusableCredential = registered && !credentialChanged && identity?.has_saved_credential === true;
   const mayRequestSavedCredential = reusableCredential || (registered && !credentialChanged && mode === 'ap');
+  const mqttReady = mqttPrepared || (credentialMode === 'saved' && (mode === 'ap' || identity?.has_saved_mqtt === true));
   const credentialReady = credentialMode === 'saved' ? mayRequestSavedCredential : credentialMode === 'provided' && TOKEN_PATTERN.test(token.current);
   const authorizationNeeded = registered && physicalReady && !disconnected && mode !== 'ap' &&
     identity?.has_saved_credential === false && !credentialReady && !credentialChanged && !registerUncertain;
@@ -57,7 +60,7 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
       : !registered ? '请先确认设备的云端登记。'
         : !physicalReady || disconnected ? '发送前请连接同一台现场设备。'
           : !credentialReady && !authorizationNeeded ? registerUncertain ? '上次联网授权结果尚未确认，不能再次自动签发。请先核对设备和上次操作。' : '当前连接未确认可用的联网授权，请重连设备或使用备份凭证。'
-            : configDirty || !configId ? '位置或采集设置尚未保存，请先点击保存配置。'
+            : !mqttReady && !authorizationNeeded ? '请先准备已验证的 MQTT 授权；尚未保存 MQTT 的设备需要现场写入。' : configDirty || !configId ? '位置或采集设置尚未保存，请先点击保存配置。'
               : currentConfig?.id !== configId ? '云端当前配置已变化或失效，请重新检查并保存配置。'
               : detail?.device?.enabled === false ? '此设备已停用，请先在设备详情启用。'
                 : mode !== 'ap' && !supportsWifiMode(identity, wifiSecurity) ? '当前固件未报告支持此认证方式，请升级固件或选择受支持的网络。' : '';
@@ -77,9 +80,9 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
     const safe = diagnosticView(status).diagnostic; if (safe) setLastDiagnostic(safe);
     setLocalError('');
   };
-  const clearSecrets = () => { token.current = ''; setCredentialMode(''); setProof(''); setPassword(''); setEapPassword(''); setExistingToken(''); setHandoff(''); };
+  const clearSecrets = () => { token.current = ''; mqtt.current = null; setMqttPrepared(false); setCredentialMode(''); setProof(''); setPassword(''); setEapPassword(''); setExistingToken(''); setHandoff(''); };
   const close = () => { void client.current?.close(); void diagnosticClient.current?.close(); clearSecrets(); onClose(); };
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; void client.current?.close(); void diagnosticClient.current?.close(); client.current = null; diagnosticClient.current = null; token.current = ''; }; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; void client.current?.close(); void diagnosticClient.current?.close(); client.current = null; diagnosticClient.current = null; token.current = ''; mqtt.current = null; }; }, []);
   useEffect(() => { const clear = () => { void client.current?.close(); void diagnosticClient.current?.close(); clearSecrets(); }; window.addEventListener('pagehide', clear); return () => window.removeEventListener('pagehide', clear); }, []);
   const applyLookup = (result, target) => {
     if (!mounted.current || selectedNode.current !== target) return;
@@ -152,8 +155,8 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
     try {
       const result = await sensitiveAction(() => api('/devices', { method: 'POST', body: { id: node, name: name.trim(), board: identity?.board || 'FoloToy AI Passport / ESP32-C3' } }));
       if (!TOKEN_PATTERN.test(result.credential)) throw new Error('登记未返回有效凭证，请查询登记结果。');
-      token.current = result.credential; setCredentialChanged(true); setCredentialMode('provided'); setRegisterUncertain(false);
-      await inspect(); setMessage('首次登记完成。独立设备凭证保留在本向导内存，接下来配置网络。');
+      token.current = result.credential; mqtt.current = mqttSettings(result.mqtt); setMqttPrepared(true); setCredentialChanged(true); setCredentialMode('provided'); setRegisterUncertain(false);
+      await inspect(); setMessage('首次登记完成，已分配通过代理验证的独立 MQTT 授权。凭证仅保留在本向导内存；设备写入和云端回执仍待确认。');
     } catch (error) {
       if (error.status === 409) {
         const existing = await inspectEnrollment(api, node); applyLookup(existing, node); setRegisterUncertain(false);
@@ -162,6 +165,12 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
       if (error.status >= 400 && error.status < 500) setRegisterUncertain(false);
       throw error;
     }
+  });
+  const prepareMqtt = () => mutation.run(async () => {
+    if (!registered || !physicalReady || disconnected || validating) throw new Error('请先连接并确认同一台已登记设备。');
+    const result = await sensitiveAction(() => api(`/devices/${node}/mqtt`, { method: 'POST', body: {} }));
+    mqtt.current = mqttSettings(result.mqtt); setMqttPrepared(true);
+    setMessage('MQTT 授权已通过代理验证并准备好，尚未写入现场设备。重试沿用同一授权。');
   });
   const useSaved = () => mutation.run(async () => {
     if (!TOKEN_PATTERN.test(existingToken.trim())) throw new Error('仅接受这台设备已保存的 cpd_ 独立凭证。');
@@ -195,7 +204,7 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
   });
   const restartNetwork = () => {
     attempt.current = crypto.randomUUID(); started.current = 0;
-    token.current = ''; setCredentialMode(''); setCredentialChanged(false); setRegisterUncertain(false);
+    token.current = ''; mqtt.current = null; setMqttPrepared(false); setCredentialMode(''); setCredentialChanged(false); setRegisterUncertain(false);
     setSubmitted(false); setWriteComplete(false); setHandoff(''); setPassword(''); setEapPassword('');
     setLocalStatus(null); setCloudError('');
     if (mode === 'usb') connect(mode, selectedConnection.current);
@@ -212,13 +221,18 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
     const network = wifiPayload({ mode: wifiSecurity, ssid, password, username: eapUsername, identity: eapIdentity, enterprisePassword: eapPassword });
     if (localStatus?.state === 'failed' || (submitted && localStatus?.state === 'waiting')) attempt.current = crypto.randomUUID();
     let sendMode = credentialMode, sendCredential = token.current;
+    if (authorizationNeeded && !mqtt.current) {
+      const prepared = await sensitiveAction(() => api(`/devices/${node}/mqtt`, { method: 'POST', body: {} }));
+      mqtt.current = mqttSettings(prepared.mqtt); setMqttPrepared(true);
+    }
     // Check the exact serialized local payload before changing a cloud key.
     // A valid enterprise form may still exceed BLE/USB bounds after escaping.
     const estimated = { v: 1, op: 'configure', node_id: node, attempt_id: attempt.current, ...network,
       ...(sendMode === 'saved' ? { reuse_saved_credential: true } : { device_token: authorizationNeeded ? `cpd_${'0'.repeat(64)}` : sendCredential }),
+      ...(mqtt.current ? { mqtt: mqtt.current } : {}),
       ...(mode === 'usb' ? { nonce: identity.nonce || '0'.repeat(32) } : {}) };
-    if (new TextEncoder().encode(JSON.stringify(estimated)).length > (mode === 'usb' ? 1024 : 496)) {
-      throw new Error(mode === 'usb' ? '认证信息过长，请缩短企业身份字段后再试；尚未更改设备授权。' : '认证信息超出蓝牙传输限制，请缩短身份字段或改用 USB；尚未更改设备授权。');
+    if (new TextEncoder().encode(JSON.stringify(estimated)).length > 1536) {
+      throw new Error(mode === 'usb' ? '认证信息过长，请缩短企业身份字段后再试；尚未更改设备授权。' : '认证信息超出配网传输限制，请缩短身份字段后再试；尚未更改设备授权。');
     }
     if (authorizationNeeded) {
       try {
@@ -244,7 +258,7 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
       }
     }
     const body = { op: 'configure', node_id: node, attempt_id: attempt.current, ...network,
-      ...(sendMode === 'saved' ? { reuse_saved_credential: true } : { device_token: sendCredential }) };
+      ...provisionAuthorization(sendMode, sendCredential, mqtt.current) };
     const wasSubmitted = submitted, previousStarted = started.current, previousStatus = localStatus;
     started.current = Date.now(); setWriteComplete(false); setSubmitted(true); setLocalError(''); setCloudError('');
     setLocalStatus({ state: 'sending' });
@@ -258,7 +272,7 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
       throw error;
     }
   });
-  const prepareAp = () => { if (submitReason) return; started.current = Date.now(); setHandoff(JSON.stringify({ v: 1, node_id: node, attempt_id: attempt.current, ...(credentialMode === 'saved' ? { reuse_saved_credential: true } : { device_token: token.current }) })); setSubmitted(true); };
+  const prepareAp = () => { if (submitReason) return; started.current = Date.now(); setHandoff(JSON.stringify({ v: 1, node_id: node, attempt_id: attempt.current, ...provisionAuthorization(credentialMode, token.current, mqtt.current) })); setSubmitted(true); };
   const readStatus = async () => {
     const source = diagnosticClient.current || client.current;
     if (!source) throw new Error('请先连接 USB 诊断或现场设备。');
@@ -276,7 +290,7 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
     const poll = async () => { try { const source = diagnosticClient.current || client.current; const status = await source?.request({ op: 'status' }); if (active) acceptStatus(status); } catch { if (active) setLocalError('USB 状态暂时不可读，已保留最后一次诊断；请检查数据线或串口占用，并继续检查云端。'); } if (active) timer = setTimeout(poll, 1500); };
     timer = setTimeout(poll, 300); return () => { active = false; clearTimeout(timer); };
   }, [submitted, mode, disconnected, debugAttached, mutation.pending, progress.applied, writeComplete]);
-  useEffect(() => { if ((networkSaved || progress.applied) && !writeComplete) { setWriteComplete(true); token.current = ''; setCredentialMode(''); setHandoff(''); setPassword(''); setEapPassword(''); } }, [networkSaved, progress.applied, writeComplete]);
+  useEffect(() => { if ((networkSaved || progress.applied) && !writeComplete) { setWriteComplete(true); token.current = ''; mqtt.current = null; setCredentialMode(''); setHandoff(''); setPassword(''); setEapPassword(''); } }, [networkSaved, progress.applied, writeComplete]);
   return <Dialog title={initialNodeId ? '重新配置设备网络' : '连接并部署设备'} onClose={close} pending={mutation.pending} wide>
     <div className="cp-provision" aria-busy={mutation.pending}>
       <p>已登记设备会带入当前设置。位置、采集配置和 Wi-Fi 可以继续修改，保存后以新设置为准；发送到设备前再核对连接和设备凭证。</p>
@@ -289,12 +303,14 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
         {identity && <p className="cp-admin-mono">{node} · {identity.board} {disconnected ? '（本机连接已断开）' : mode === 'usb' ? '（USB 工厂身份已读取）' : '（已验证身份）'}</p>}
         {initialNodeId && !identity && <p>已选择云端节点。写入前仍需核对同一台现场设备。</p>}
       </section>
-      <section><h3>2 · 设备登记与联网授权</h3>
+      <section><h3>2 · 设备登记与联网授权</h3><Notice>设备默认使用杭州 MQTT/TLS → EMQX → Cloudflare。登记时只分配已通过代理验证的独立授权；代理验证、现场保存和云端回执分别确认。</Notice>
         {lookup === 'idle' && <p>确认工厂节点 ID 后会自动检查登记状态。</p>}{lookup === 'checking' && <p role="status">正在查询云端是否已有此节点…</p>}
         {lookup === 'new' && <><Notice>这是尚未登记的节点。首次登记只创建一次云端身份；连接 Wi-Fi 需要下一步现场写入。</Notice><Field label="设备名称"><input value={name} maxLength={80} onChange={e => setName(e.target.value)} /></Field><button className="cp-admin-button" disabled={mutation.pending || !physicalReady || registerUncertain || !name.trim()} onClick={register}>首次登记并取得设备凭证</button></>}
         {registered && <><div className="cp-provision-existing"><strong>已登记设备 · {detail?.device?.name || '现场节点'}</strong><p>本次重新配置网络，沿用现有云端身份。不会再次创建设备记录。</p></div>
           {detail?.device?.enabled === false && <Notice>此云端节点已停用，设备认证会被拒绝。请在设备详情启用后重新检查登记状态，再提交 Wi-Fi。</Notice>}
           {mayRequestSavedCredential && <label className="cp-provision-option"><input type="radio" name="credential-source" checked={credentialMode === 'saved'} disabled={mutation.pending || registerUncertain || submitted} onChange={() => { token.current = ''; setCredentialMode('saved'); }} /><span><strong>保留设备内现有凭证</strong><small>{mode === 'ap' ? '由设备本地页面核验是否支持复用；旧页面拒绝时请改用备份凭证。不会在浏览器读取设备内凭证。' : '设备已报告可复用保存的凭证；凭证不会被读取到浏览器。'}</small></span></label>}
+          {mqttPrepared && !writeComplete && <p role="status">MQTT 代理授权已验证并准备好，仅在本向导内存保留；现场设备尚待保存确认。</p>}
+          {registered && !mqttPrepared && !writeComplete && <><p>{identity?.has_saved_mqtt === true ? '设备报告已保存 MQTT；只修改 Wi-Fi 时保留原授权。' : '尚未确认现场设备已保存 MQTT。请准备授权后写入设备。'}</p><button className="cp-admin-button" disabled={mutation.pending || !physicalReady || disconnected || validating || writeComplete} onClick={prepareMqtt}>准备或复用 MQTT 授权</button></>}
           {credentialMode === 'provided' && <p role="status">设备凭证已准备，仅保留于当前向导。</p>}
           {!mayRequestSavedCredential && credentialMode !== 'provided' && !registerUncertain && <p>{authorizationNeeded ? '设备还没有保存联网授权。填写 Wi-Fi 后，直接点击下方的重新授权并连接，无需手动复制密钥。' : '当前连接尚未确认设备的联网授权状态。请重连现场设备，或使用备份的设备凭证。'}</p>}
           <details><summary>使用已保存的设备凭证或更换凭证</summary><Field label="已有的独立设备凭证"><input type="password" autoComplete="off" value={existingToken} onChange={e => setExistingToken(e.target.value)} disabled={submitted && !diagnosis.failed} /></Field><button className="cp-admin-button" disabled={mutation.pending || (submitted && !diagnosis.failed)} onClick={useSaved}>使用已有设备凭证</button><details><summary>无法取得旧凭证：明确轮换</summary><Notice>轮换会立即使旧凭证失效，设备可能暂停联网。只在确实需要更换凭证时使用。</Notice><label className="cp-admin-checkbox"><input type="checkbox" checked={rotateConsent} onChange={e => setRotateConsent(e.target.checked)} />我确认旧凭证会立即失效，并将新凭证写入这台设备。</label><button className="cp-admin-button cp-admin-danger" disabled={mutation.pending || !rotateConsent || (submitted && !diagnosis.failed)} onClick={rotate}>确认轮换并重新配网</button></details></details>
@@ -313,9 +329,9 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
       </fieldset>
       <fieldset disabled={mutation.pending || validating}><legend>4 · 设置 Wi-Fi</legend>
         {authorizationNeeded && <Notice>点击“重新授权并连接 Wi-Fi”会为已连接的这台设备重新签发联网凭证，旧凭证立即失效；设备登记、位置和采集配置继续保留。</Notice>}
-        <p>支持 2.4 GHz WPA2、开放网络和 PEAP/MSCHAPv2 企业认证。企业认证不校验服务器证书；云端 HTTPS 仍严格验证。网页登录 / Portal 需要另行处理。</p>
+        <p>支持 2.4 GHz WPA2、开放网络和 PEAP/MSCHAPv2 企业认证。企业认证不校验服务器证书；云端 MQTT/TLS 仍严格验证。网页登录 / Portal 需要另行处理。</p>
         {mode !== 'ap' ? <form onSubmit={e => { e.preventDefault(); transmit(); }}>
-          <Field label="Wi-Fi 认证方式"><select value={wifiSecurity} disabled={validating} onChange={e => { setWifiSecurity(e.target.value); setPassword(''); setEapPassword(''); }}><option value="wpa2">WPA2 个人网络</option><option value="open">开放网络（无密码）</option><option value="enterprise">企业网络 · PEAP/MSCHAPv2（不校验证书）</option></select></Field><Field label="Wi-Fi SSID"><input value={ssid} onChange={e => setSsid(e.target.value)} required autoComplete="off" disabled={validating} /></Field>{wifiSecurity === 'enterprise' && <><Field label="企业认证用户名"><input value={eapUsername} onChange={e => setEapUsername(e.target.value)} required autoComplete="off" disabled={validating} /></Field><Field label="外层身份（可选）" hint="留空使用用户名。"><input value={eapIdentity} onChange={e => setEapIdentity(e.target.value)} autoComplete="off" disabled={validating} /></Field><Field label="企业认证密码"><input type="password" value={eapPassword} onChange={e => setEapPassword(e.target.value)} required autoComplete="new-password" disabled={validating} /></Field></>}{wifiSecurity === 'open' && <p>开放网络不发送 Wi-Fi 密码；设备凭据仍只在严格验证的 HTTPS 连接中使用。</p>}{wifiSecurity === 'wpa2' && <Field label="Wi-Fi 密码" hint={diagnosis.failed ? '修改密码后重试。设备凭证和已选云端配置继续保留。' : '仅经本机连接发往设备，不发送给云端 API。'}><input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8} autoComplete="new-password" disabled={validating} /></Field>}
+          <Field label="Wi-Fi 认证方式"><select value={wifiSecurity} disabled={validating} onChange={e => { setWifiSecurity(e.target.value); setPassword(''); setEapPassword(''); }}><option value="wpa2">WPA2 个人网络</option><option value="open">开放网络（无密码）</option><option value="enterprise">企业网络 · PEAP/MSCHAPv2（不校验证书）</option></select></Field><Field label="Wi-Fi SSID"><input value={ssid} onChange={e => setSsid(e.target.value)} required autoComplete="off" disabled={validating} /></Field>{wifiSecurity === 'enterprise' && <><Field label="企业认证用户名"><input value={eapUsername} onChange={e => setEapUsername(e.target.value)} required autoComplete="off" disabled={validating} /></Field><Field label="外层身份（可选）" hint="留空使用用户名。"><input value={eapIdentity} onChange={e => setEapIdentity(e.target.value)} autoComplete="off" disabled={validating} /></Field><Field label="企业认证密码"><input type="password" value={eapPassword} onChange={e => setEapPassword(e.target.value)} required autoComplete="new-password" disabled={validating} /></Field></>}{wifiSecurity === 'open' && <p>开放网络不发送 Wi-Fi 密码；设备凭据仍只在严格验证的 MQTT/TLS 连接中使用。</p>}{wifiSecurity === 'wpa2' && <Field label="Wi-Fi 密码" hint={diagnosis.failed ? '修改密码后重试。设备凭证和已选云端配置继续保留。' : '仅经本机连接发往设备，不发送给云端 API。'}><input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8} autoComplete="new-password" disabled={validating} /></Field>}
           <button type="submit" className="cp-admin-button cp-admin-primary" disabled={!!submitReason}>{authorizationNeeded ? '重新授权并连接 Wi-Fi' : diagnosis.failed ? '使用修正后的 Wi-Fi 重试' : mode === 'usb' ? '通过 USB 发送给设备' : '加密发送给设备'}</button>{validating && <p role="status">设备正在处理本次设置，请先查看下方阶段；尚未确认失败前不重复改写。</p>}
         </form> : <><button className="cp-admin-button cp-admin-primary" disabled={!!submitReason} onClick={prepareAp}>显示本地配网交接内容</button>{handoff && <Field label="复制到设备本地页面的交接内容" hint={credentialMode === 'saved' ? '仅请求设备使用内部已有凭证；本地页面还会核对节点和能力。' : '包含独立设备凭证；仅粘贴到现场设备页面。'}><textarea readOnly rows={5} value={handoff} autoComplete="off" spellCheck={false} onFocus={e => e.target.select()} /></Field>}<p>本地页面接收后热点会关闭以测试网络。恢复互联网后回到这里查看云端确认；热点消失不代表已联网。</p></>}
         {submitReason && <p role="status">{submitReason}</p>}
@@ -331,7 +347,7 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
         {disconnected && <Notice>本机连接已断开。设备可能正在验证或重启，这本身不能判断成功或失败。继续检查云端，或连接 USB 读取诊断。</Notice>}
         {localError && <p role="status">{localError}</p>}
         {lastDiagnostic && <details><summary>安全诊断详情</summary><pre className="cp-provision-diagnostic">{JSON.stringify(lastDiagnostic, null, 2)}</pre><small>这是最后一次收到的安全诊断，开始新尝试后保留至设备更新。仅含阶段、固定错误代码和数值，不包含网络名称、密码或设备凭证。</small></details>}
-        <ol className="cp-provision-checks"><li>云端身份：{registered ? '沿用已登记节点' : '尚未确认'}</li><li>期望配置：{configId || '尚未选择'}</li><li>本次网络设置：{networkSaved ? '设备已确认保存本次网络设置' : '尚未取得本次保存确认'}</li><li>本次云端联系：{progress.contact ? '已收到' : '尚未收到'}</li><li>本次配置应用确认：{progress.applied ? '已收到当前配置新的 applied ACK' : '尚未收到新的 applied ACK，历史确认不计入本次'}</li></ol>
+        <ol className="cp-provision-checks"><li>云端身份：{registered ? '沿用已登记节点' : '尚未确认'}</li><li>MQTT 代理授权：{mqttPrepared ? networkSaved ? '代理已验证，本次设备保存已确认' : '代理已验证；本次设备保存尚未确认' : identity?.has_saved_mqtt === true ? '设备报告已有保存授权' : '尚未确认'}</li><li>期望配置：{configId || '尚未选择'}</li><li>本次网络设置：{networkSaved ? '设备已确认保存本次网络设置' : '尚未取得本次保存确认'}</li><li>本次云端联系：{progress.contact ? '已收到' : '尚未收到'}</li><li>本次配置应用确认：{progress.applied ? '已收到当前配置新的 applied ACK' : '尚未收到新的 applied ACK，历史确认不计入本次'}</li></ol>
         <div className="cp-provision-actions"><button className="cp-admin-button" disabled={mutation.pending} onClick={() => mutation.run(async () => { setDetail(await api(`/devices/${node}`)); setCloudError(''); })}>检查云端状态</button>{(mode === 'usb' || debugAttached) && <button className="cp-admin-button" disabled={mutation.pending} onClick={() => mutation.run(readStatus)}>读取设备阶段与诊断</button>}</div>{cloudError && <p role="status">{cloudError}</p>}
         {writeComplete && <button className="cp-admin-button cp-admin-primary" onClick={() => { notify(progress.applied ? '设备已重新联系云端并确认应用配置。' : '本次配网已完成；最新采集配置的应用状态请在设备目录查看。'); close(); }}>完成并返回设备目录</button>}
       </section>}

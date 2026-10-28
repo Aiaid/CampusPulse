@@ -1,14 +1,22 @@
 #include "cp_settings.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include <stddef.h>
 #include <string.h>
-/* Exact pre-enterprise v1 blob layout. Migration reads only; the old selector
- * and slot remain untouched until a validated v2 candidate is atomically saved. */
+/* Exact historical layouts. Migration reads only; the old selector and slot
+ * remain untouched until a validated v3 candidate is atomically saved. */
 typedef struct {
     uint32_t version; char node_id[16],ssid[33],password[65];
     char device_token[193],api_origin[64];
 } legacy_settings_t;
 _Static_assert(sizeof(legacy_settings_t)==376,"Legacy settings layout changed");
+typedef struct {
+    uint32_t version;char node_id[16],ssid[33],password[65];
+    char device_token[193],api_origin[64];uint32_t wifi_security;
+    char eap_username[129],eap_identity[129],eap_password[129];
+} legacy_settings_v2_t;
+_Static_assert(sizeof(legacy_settings_v2_t)==768,"Legacy v2 layout changed");
+_Static_assert(offsetof(cp_settings_t,mqtt_uri)==767,"Settings prefix changed");
 static const char *slots[2] = {"settings_a", "settings_b"};
 esp_err_t cp_settings_init(void) { return nvs_flash_init(); }
 esp_err_t cp_settings_load(cp_settings_t *out)
@@ -34,6 +42,13 @@ esp_err_t cp_settings_load(cp_settings_t *out)
         out->wifi_security=CP_WIFI_PERSONAL;
         if(legacy.version!=1 || !cp_settings_validate(out))e=ESP_ERR_INVALID_STATE;
         volatile unsigned char *v=(volatile unsigned char *)&legacy;for(size_t i=0;i<sizeof legacy;++i)v[i]=0;
+    } else if(e==ESP_OK && size==sizeof(legacy_settings_v2_t)) {
+        /* v2's one padding byte overlaps v3's first MQTT byte. Copy named
+         * legacy prefix only; never interpret old padding as a new setting. */
+        bool version_ok=out->version==2;
+        memset(out->mqtt_uri,0,sizeof(*out)-offsetof(cp_settings_t,mqtt_uri));
+        out->version=CP_SETTINGS_VERSION;
+        if(!version_ok||!cp_settings_validate(out))e=ESP_ERR_INVALID_STATE;
     } else if (e==ESP_OK && (size!=sizeof(*out) || !cp_settings_validate(out))) e=ESP_ERR_INVALID_STATE;
     if (e!=ESP_OK) cp_settings_clear_sensitive(out);
     return e==ESP_ERR_NVS_NOT_FOUND ? ESP_ERR_NOT_FOUND : e;

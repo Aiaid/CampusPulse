@@ -1,10 +1,12 @@
 // Exercise actual page sources with a deterministic, finite RTOS scheduler.
 // These stubs verify ownership/queue behavior, not real FreeRTOS concurrency,
-// SPI timing, font layout, radio behavior or device acceptance.
+// SPI timing, glyph rasterization, radio behavior or device acceptance. Status
+// bounds and row spacing do use the actual generated 20 px font metrics.
 #include <assert.h>
 #include <setjmp.h>
 #include <stdlib.h>
 #include <string.h>
+#include "font_zh.h"
 
 #include "../ai-passport-radar/main/page_radar.c"
 #include "../ai-passport-radar/main/page_status.c"
@@ -25,7 +27,19 @@ static void *task_arg;
 static jmp_buf scheduler_return;
 static unsigned task_rounds;
 static bool status_render;
-static bool saw_unavailable, saw_collection, saw_battery;
+static bool saw_unavailable;
+typedef struct { int x, y; char text[80]; } text_command_t;
+static text_command_t status_text[32];
+static unsigned status_text_count, unknown_bar_marks;
+static unsigned activity_bars;
+static int heap_bar_width, queue_bar_width;
+
+static const char *text_at(int y)
+{
+    for (unsigned i = 0; i < status_text_count; i++)
+        if (status_text[i].y == y) return status_text[i].text;
+    return "";
+}
 
 int64_t esp_timer_get_time(void) { return now_us; }
 
@@ -139,29 +153,52 @@ void ui_render(ui_rect_t region, ui_paint_fn paint, void *user)
     (void)region;
     assert(ui_owner);
     render_calls++;
+    if (status_render) {
+        status_text_count = unknown_bar_marks = 0;
+        activity_bars = 0;
+        heap_bar_width = queue_bar_width = 0;
+    }
     paint(user);
 }
 void ui_clear(uint16_t color) { (void)color; assert(ui_owner); }
 void ui_fill(int x, int y, int width, int height, uint16_t color)
 {
-    (void)x; (void)y; (void)width; (void)height; (void)color;
     assert(ui_owner);
+    if (!status_render) return;
+    assert(x >= 0 && y >= 0 && width > 0 && height > 0);
+    assert(x + width <= UI_W && y + height <= UI_H);
+    if (y == 114 && color == UI_COL_TEAL) heap_bar_width = width;
+    if (y == 164 && color == UI_COL_YELLOW) queue_bar_width = width;
+    if ((y == 115 || y == 165) && color == UI_COL_MUTED) unknown_bar_marks++;
+    if (color == UI_COL_TEAL && y >= 160 && y < 194) activity_bars++;
 }
 void ui_text(int x, int y, const char *text, uint16_t color)
 {
-    (void)y; (void)color;
+    (void)color;
     assert(ui_owner && strlen(text) < 80);
     if (!strcmp(text, "Snapshot unavailable")) saw_unavailable = true;
     if (status_render) {
         for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
             assert(*p >= 32 && *p <= 126);
         }
+        assert(x >= 0 && y >= 0 && y + FONT_ZH_CELL <= UI_H);
         assert(x + ui_text_width(text) <= UI_W);
-        if (!strcmp(text, "Collection")) saw_collection = true;
-        if (!strcmp(text, "Battery: unavailable")) saw_battery = true;
+        assert(status_text_count < sizeof status_text / sizeof status_text[0]);
+        status_text[status_text_count].x = x;
+        status_text[status_text_count].y = y;
+        strcpy(status_text[status_text_count++].text, text);
     }
 }
-int ui_text_width(const char *text) { return (int)strlen(text) * 10; }
+int ui_text_width(const char *text)
+{
+    int width = 0;
+    for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
+        uint8_t advance = 8;
+        (void)font_zh_glyph(*p, &advance);
+        width += advance;
+    }
+    return width;
+}
 void ui_digits(int x, int y, const char *text, uint16_t color)
 {
     (void)x; (void)y; (void)text; (void)color;
@@ -293,20 +330,199 @@ static void test_bounded_status(void)
     view.setup_softap = false;
     view.setup_usb = false;
     view.battery_percent = -1;
+    memset(&view.debug, 0, sizeof view.debug);
     ui_owner = status_render = true;
     status_page_render(&view);
-    assert(saw_collection && saw_battery);
+    assert(!strcmp(text_at(70), "Link -- Mb/s"));
+    assert(strstr(text_at(284), "Collect: "));
+    assert(unknown_bar_marks == 54 && !heap_bar_width && !queue_bar_width);
     const unsigned calls = render_calls;
     status_page_render(NULL);
     assert(render_calls == calls);
     // Setup fields are bounded: an 8-digit PIN, 12-character AP password, and USB view.
     view.setup_active = true;
     status_page_render(&view);
+    assert(!strcmp(text_at(6), "Bluetooth setup"));
+    assert(!strcmp(text_at(116), "Setup PIN (5 min)"));
+    assert(strlen(text_at(136)) == 8);
+    assert(!text_at(4)[0]);
     view.setup_softap = true;
     status_page_render(&view);
+    assert(!strcmp(text_at(6), "Wi-Fi hotspot setup"));
+    assert(!strcmp(text_at(176), "Wi-Fi password"));
+    assert(strlen(text_at(196)) == 12);
     view.setup_usb = true;
     status_page_render(&view);
+    assert(!strcmp(text_at(6), "USB setup"));
+    assert(!text_at(136)[0] && !strcmp(text_at(176), "State"));
     assert(render_calls == calls + 3);
+    ui_owner = status_render = false;
+}
+
+static void test_debug_dashboard(void)
+{
+    cp_status_view_t view = {0};
+    cp_debug_snapshot_t *d = &view.debug;
+    strcpy(view.authentication, "ready");
+    strcpy(view.collection, "collecting");
+    strcpy(view.setup_proof, "secret-proof");
+    strcpy(view.setup_password, "secret-password");
+    d->wifi_connected = d->wifi_rssi_known = d->wifi_phy_known = true;
+    strcpy(d->wifi_ssid, "Synthetic Debug Wi-Fi");
+    strcpy(d->wifi_phy, "11n/20");
+    d->wifi_rssi_dbm = -61;
+    d->heap_known = d->queue_known = true;
+    d->heap_internal_free = 64 * 1024;
+    d->heap_internal_total = 256 * 1024;
+    d->heap_sample_min_free = 40 * 1024;
+    d->heap_sample_min_largest = 24 * 1024;
+    d->heap_internal_largest = 22 * 1024;
+    d->heap_boot_min_8bit = 16 * 1024;
+    d->queue_pending = 128;
+    d->queue_capacity = 1024;
+    d->ble_collecting = true;
+    d->upload.known = d->upload.goodput_known = true;
+    d->upload.result = CP_DEBUG_UPLOAD_ACKED;
+    d->upload.goodput_bytes_per_sec = 18 * 1024 + 512;
+    d->upload.last_http_status = 200;
+    d->upload.last_age_ms = 12000;
+    ui_owner = status_render = true;
+    status_page_render(&view);
+    assert(strstr(text_at(26), "SSID:") && strstr(text_at(26), "..."));
+    assert(!strcmp(text_at(48), "-61dBm PHY:11n/20"));
+    assert(!strcmp(text_at(70), "Link -- Mb/s"));
+    assert(!strcmp(text_at(92), "Heap 64/256 KiB"));
+    assert(!strcmp(text_at(120), "Blk22K BootMin16K"));
+    assert(!strcmp(text_at(142), "Q 128/1024 slots"));
+    assert(heap_bar_width == 54 && queue_bar_width == 27 && !unknown_bar_marks);
+    assert(!strcmp(text_at(174), "UP ACK verified"));
+    assert(!strcmp(text_at(196), "Last 18.5KiB/s 12s"));
+    assert(!strcmp(text_at(218), "HTTP 200 Err 0"));
+    assert(!strcmp(text_at(262), "Auth: ready"));
+    assert(!strcmp(text_at(284), "Collect: collecting"));
+    // Ordinary rows have >=22 px pitch around the true 20 px glyph cell.
+    for (unsigned i = 1; i < status_text_count; i++)
+        assert(status_text[i].y - status_text[i - 1].y >= FONT_ZH_CELL + 2);
+    for (unsigned i = 0; i < status_text_count; i++)
+        assert(!strstr(status_text[i].text, "secret-"));
+    d->upload.last_age_ms = 31000;
+    status_page_render(&view);
+    assert(strstr(text_at(196), "Old 18.5KiB/s 31s"));
+    d->wifi_connected = false;
+    status_page_render(&view);
+    assert(!strcmp(text_at(26), "Wi-Fi disconnected"));
+    assert(!strcmp(text_at(48), "--dBm PHY:--"));
+    assert(strstr(text_at(196), "Off 18.5KiB/s 31s"));
+    d->upload.in_flight = true;
+    status_page_render(&view);
+    assert(!strcmp(text_at(174), "UP sending"));
+    d->upload.in_flight = false;
+    d->upload.result = CP_DEBUG_UPLOAD_BAD_ACK;
+    // Even an inconsistent producer cannot display verified speed for bad ACK.
+    status_page_render(&view);
+    assert(!strcmp(text_at(174), "UP bad ACK"));
+    assert(!strcmp(text_at(196), "Last -- KiB/s 31s"));
+    d->upload.result = CP_DEBUG_UPLOAD_ACKED;
+    d->upload.goodput_bytes_per_sec = 0;
+    status_page_render(&view);
+    assert(strstr(text_at(196), "0.0KiB/s"));
+    d->upload.known = false;
+    status_page_render(&view);
+    assert(!strcmp(text_at(174), "UP idle / no result"));
+    assert(!strcmp(text_at(196), "Last -- KiB/s age --"));
+    // All maximal counters, bounded unterminated text and bar arithmetic are
+    // exercised under ASan/UBSan using the real generated font advances.
+    d->wifi_connected = d->wifi_mbps_known = true;
+    memset(d->wifi_ssid, 0xff, sizeof d->wifi_ssid);
+    memset(d->wifi_phy, 'W', sizeof d->wifi_phy);
+    d->wifi_mbps = UINT32_MAX;
+    d->heap_internal_free = d->queue_pending = UINT32_MAX;
+    d->heap_internal_total = d->queue_capacity = 1;
+    d->aggregation_drops = d->summary_drops = d->raw_drops = UINT32_MAX;
+    d->storage_drops = d->windows_dropped = UINT32_MAX;
+    d->upload.known = true;
+    d->upload.last_age_ms = UINT32_MAX;
+    d->upload.last_http_status = INT32_MIN;
+    d->upload.last_error = INT32_MAX;
+    status_page_render(&view);
+    assert(heap_bar_width == UI_W - 24 && queue_bar_width == UI_W - 24);
+    assert(strstr(text_at(26), "SSID: ???") && strstr(text_at(26), "..."));
+    assert(strstr(text_at(196), "999s+"));
+    d->heap_internal_total = d->queue_capacity = 0;
+    status_page_render(&view);
+    assert(unknown_bar_marks == 54 && !heap_bar_width && !queue_bar_width);
+    ui_owner = status_render = false;
+}
+
+static void test_domain_pages(void)
+{
+    cp_status_view_t view = {0};
+    cp_debug_domain_t *d = &view.debug.domain;
+    strcpy(view.collection, "collecting");
+    ui_owner = status_render = true;
+    view.page = CP_DEVICE_PAGE_ACTIVITY;
+    status_page_render(&view);
+    assert(!strcmp(text_at(4), "2/4 BLE activity"));
+    assert(!strcmp(text_at(26), "Reports, not people"));
+    assert(!strcmp(text_at(48), "Slice unavailable"));
+    assert(!strcmp(text_at(136), "Report bins --") && !activity_bars);
+    d->known = d->window_partial = d->address_overflow = true;
+    d->window_seq = 12; d->window_ms = 16000; d->bin_ms = 1000;
+    d->age_ms = 3000; d->bin_count = CP_DEBUG_DOMAIN_BINS;
+    d->bin_reports[0] = 1; d->bin_reports[1] = UINT32_MAX;
+    d->reports_seen = 123; d->reports_aggregated = 120; d->addresses = 8;
+    status_page_render(&view);
+    assert(!strcmp(text_at(48), "Slice 12 partial"));
+    assert(!strcmp(text_at(70), "Age 3s Window 16s"));
+    assert(!strcmp(text_at(92), "Seen 123 Agg 120"));
+    assert(!strcmp(text_at(114), "Addr 8 OVERFLOW"));
+    assert(activity_bars == 2); // A tiny nonzero bin still gets one pixel.
+    d->bin_count = UINT8_MAX; // Corrupt metadata cannot read past 16 bins.
+    status_page_render(&view);
+    assert(activity_bars == 2);
+    d->vehicle_candidates = 3; d->vehicle_name_addresses = 4;
+    d->vehicle_ecosystem_addresses = 2; d->vehicle_excluded_addresses = 1;
+    d->vehicle_parsed_reports = 120; d->vehicle_malformed_reports = 3;
+    view.page = CP_DEVICE_PAGE_VEHICLE;
+    status_page_render(&view);
+    assert(!strcmp(text_at(26), "Candidates, not truth"));
+    assert(!strcmp(text_at(70), "Age3s Addr8 OVF"));
+    assert(!strcmp(text_at(92), "Candidates 3"));
+    assert(!strcmp(text_at(114), "Brand names 4"));
+    assert(!strcmp(text_at(136), "Ecosystem 2"));
+    assert(!strcmp(text_at(158), "Excluded 1"));
+    assert(!strcmp(text_at(202), "Malformed 3"));
+    assert(!strcmp(text_at(224), "No local classifier"));
+    view.page = CP_DEVICE_PAGE_ELEVATOR;
+    status_page_render(&view);
+    assert(!strcmp(text_at(26), "Wait: -- (no model)"));
+    assert(!strcmp(text_at(92), "-- / -- / --"));
+    assert(!strcmp(text_at(158), "Clock unknown"));
+    assert(!strcmp(text_at(180), "Epoch -- Est --"));
+    d->rssi_samples = 12; d->rssi_min = -90; d->rssi_mean = -65; d->rssi_max = -42;
+    view.debug.clock_trusted = view.debug.clock_estimated = true;
+    view.debug.clock_epoch = 7; view.debug.clock_uncertainty_ms = 350;
+    view.debug.summaries_total = 42;
+    status_page_render(&view);
+    assert(!strcmp(text_at(92), "-90 / -65 / -42"));
+    assert(!strcmp(text_at(158), "Clock estimated"));
+    assert(!strcmp(text_at(180), "Epoch 7 Est350ms"));
+    assert(!strcmp(text_at(202), "Boot summaries 42"));
+    assert(!strcmp(text_at(268), "UP/DOWN: pages"));
+    assert(!strcmp(text_at(290), "Hold OK: setup"));
+    d->known = false; // Previously observed values must not masquerade as known.
+    status_page_render(&view);
+    assert(!strcmp(text_at(92), "-- / -- / --"));
+    assert(!strcmp(text_at(114), "Samples --"));
+    view.setup_active = view.setup_usb = true;
+    for (view.page = CP_DEVICE_PAGE_DEBUG; view.page < CP_DEVICE_PAGE_COUNT; view.page++) {
+        status_page_render(&view);
+        assert(!strcmp(text_at(6), "USB setup") && !text_at(4)[0]);
+    }
+    view.setup_active = false;
+    view.page = (cp_device_page_t)255;
+    status_page_render(&view);
+    assert(!strcmp(text_at(4), "1/4 DEBUG UP/DOWN"));
     ui_owner = status_render = false;
 }
 
@@ -317,8 +533,10 @@ int main(void)
     test_delayed_physical_forwarding();
     test_snapshot_availability();
     test_bounded_status();
+    test_debug_dashboard();
+    test_domain_pages();
     vQueueDelete(s_input_queue);
     assert(live_queues == 0);
-    puts("UI owner, failures, queue drops, confirmation time, snapshots and status: PASS");
+    puts("UI owner, snapshots, setup, debug bounds/metrics, bars and upload freshness: PASS");
     return 0;
 }

@@ -1,0 +1,8 @@
+# Only the synthetic example belongs in source control.
+*.json
+!config.example.json
+*.sqlite*
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/

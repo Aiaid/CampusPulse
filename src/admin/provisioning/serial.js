@@ -1,6 +1,6 @@
 import { checkedReply, ProvisioningError } from './protocol.js';
 export const SERIAL_PREFIX = '\x1eCPSETUP/1 ';
-export const SERIAL_MAX_JSON = 1024;
+export const SERIAL_MAX_JSON = 1536;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const encoder = new TextEncoder();
 export function serialSupport(nav = globalThis.navigator) { return !!(globalThis.isSecureContext && nav?.serial?.requestPort && globalThis.crypto?.randomUUID); }
@@ -9,7 +9,7 @@ export function selectProvisioningPort(nav = globalThis.navigator) { return nav.
 export function serialFrame(id, body) {
   if (!UUID.test(id)) throw new Error('USB 请求标识无效。');
   const json = JSON.stringify(body), data = encoder.encode(json);
-  if (!body || typeof body !== 'object' || Array.isArray(body) || data.length > SERIAL_MAX_JSON) throw new Error('USB 配网请求超过 1024 字节限制。');
+  if (!body || typeof body !== 'object' || Array.isArray(body) || data.length > SERIAL_MAX_JSON) throw new Error('USB 配网请求超过 1536 字节限制。');
   return encoder.encode(`${SERIAL_PREFIX}${id} ${json}\n`);
 }
 // Byte-bounded state machine: unrelated logs are discarded without retaining

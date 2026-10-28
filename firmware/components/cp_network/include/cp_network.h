@@ -1,6 +1,7 @@
 #ifndef CP_NETWORK_H
 #define CP_NETWORK_H
 #include "cp_core.h"
+#include "cp_debug.h"
 #include "cp_settings.h"
 #include "cp_network_diag.h"
 #include <stddef.h>
@@ -70,14 +71,25 @@ esp_err_t cp_network_init(const char *node_id, const char *boot_id);
 esp_err_t cp_network_start(const cp_settings_t *settings);
 esp_err_t cp_network_stop(void);
 void cp_network_snapshot(cp_network_snapshot_t *out);
+/* Supervisor task only, at most once/second. Samples current driver association
+ * and copies ingest-only metrics; never changes Wi-Fi configuration. */
+void cp_network_debug_snapshot(cp_debug_snapshot_t *out);
 /* Returns latest validated policy; root uses request_sequence to renew core's
  * monotonic lease but only applies hardware when config ID actually changes. */
 bool cp_network_get_policy(cp_network_policy_t *out);
-/* Worker-task memory admission, shared with HTTPS and radio startup. A zero
+/* Worker-task memory admission, shared with network transports and radio startup. A zero
  * timeout is nonblocking; waits are bounded to 15 seconds. Never nest claims. */
 bool cp_network_begin_memory_work(uint32_t timeout_ms);
+/* Uploader only: may preserve a bounded idle transport when its post-allocation
+ * RAM reserve is sufficient. Encoders/radio must use the generic claim. HTTPS releases idle TLS; MQTT
+ * retains its established session with automatic TLS reconnect disabled. Pair with end_memory_work in the same task. */
+bool cp_network_begin_upload_memory_work(uint32_t timeout_ms,size_t allocation_bytes);
+/* Under a successful upload-memory claim, immediately after malloc and before
+ * the store lock: close idle TLS on failed allocation or insufficient actual
+ * active-attempt RAM. Returns whether the remaining active budget is adequate. */
+bool cp_network_upload_memory_ready(bool allocation_succeeded);
 void cp_network_end_memory_work(void);
-/* Runtime task only: nonblocking admission against HTTPS working-set
+/* Runtime task only: nonblocking admission against transport working-set
  * allocations. Pair every successful claim with end in the same task, before
  * calling report_activation (which acquires the same resource). */
 bool cp_network_begin_radio_transition(void);
@@ -93,10 +105,20 @@ esp_err_t cp_network_validate_candidate(const cp_settings_t *settings, uint32_t 
 esp_err_t cp_network_validate_candidate_with_progress(const cp_settings_t *settings,
     uint32_t timeout_ms,cp_network_progress_fn progress,void *context);
 void cp_network_diagnostic_snapshot(cp_network_diagnostic_t *out);
-/* At most one HTTP attempt. Caller retains exact bytes/identity on any result
+/* At most one transport RPC. Caller retains exact bytes/identity on any result
  * except ACKED; caller schedules bounded retries. No redirects are followed. */
 cp_net_upload_result_t cp_network_upload_frozen(const void *body, size_t length,
     const cp_network_batch_t *expected, cp_network_ack_t *ack);
+/* Upload worker, immediately AFTER freeing its immutable body, with no memory
+ * or store claim held. Optional for callers that do not want reuse: an omitted
+ * finalization expires the provisional transport in the control worker. */
+void cp_network_finalize_upload_body(void);
+typedef enum { CP_ACK_CANONICAL_MATCH, CP_ACK_CANONICAL_INVALID,
+               CP_ACK_NEEDS_GENERAL } cp_ack_canonical_result_t;
+/* Allocation-free canonical Worker ACK path. NEEDS_GENERAL must close any
+ * retained TLS client before calling the general parser below. */
+cp_ack_canonical_result_t cp_network_parse_ack_canonical(const char *json,size_t length,
+    const cp_network_batch_t *expected,cp_network_ack_t *ack);
 /* Pure protocol checks for meaningful host regression tests. */
 bool cp_network_parse_policy(const char *json, size_t length, const char *node_id,
     cp_network_policy_t *out, bool *present, bool *expired);

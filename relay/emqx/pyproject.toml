@@ -1,0 +1,28 @@
+[project]
+name = "campuspulse-emqx-relay"
+version = "0.1.0"
+description = "Local EMQX MQTT/TLS to fixed CampusPulse API verification bridge"
+requires-python = ">=3.12"
+dependencies = ["paho-mqtt==2.1.0", "httpx==0.28.1"]
+
+[dependency-groups]
+dev = ["pytest==8.4.2", "ruff==0.14.2"]
+
+[project.scripts]
+cp-emqx-relay = "cp_emqx_relay:main"
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cp_emqx_relay"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

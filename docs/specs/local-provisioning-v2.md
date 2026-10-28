@@ -1,5 +1,11 @@
 # Local provisioning: short PIN and physical USB
 
+2026-10-29 update: production settings v3 adds runtime `mqtt` credentials and
+defaults to native MQTT/TLS; the MQTT operation contract is in
+[production MQTT operations](../notes/mqtt-production.md). BLE chunks below
+retain the original GATT/Security2 limits; USB/SoftAP candidates now allow1536
+UTF-8 bytes. Earlier physical acceptance in this document predates settings v3.
+
 Status: implemented and locally verified, 2026-10-25; one Passport's startup and
 native USB setup exchange are physically verified. Real BLE, phone hotspot and
 Wi-Fi/cloud enrollment acceptance remain separate. This replaces manual entry of the
@@ -34,7 +40,7 @@ Framing on the existing console is:
 ```
 
 `RS` is byte `0x1e`. Both directions echo the request id, use UTF-8, limit JSON
-payloads to 1024 bytes and discard unrelated console logs. One request is pending
+payloads to 1536 bytes and discard unrelated console logs. One request is pending
 per browser connection. The USB task bounds its input buffer and never logs or
 reflects received credentials.
 
@@ -45,8 +51,18 @@ reflects received credentials.
 - `status` returns bounded current validation state; it contains no PIN, password,
   internal setup secret or device credential.
 - `configure` carries the existing flat v1 candidate fields (`node_id`,
-  `attempt_id`, `ssid`, `password`, `device_token`) plus the USB session nonce.
+  `attempt_id`, `ssid`, `password`, `device_token`) plus the USB session nonce
+  and nested `mqtt: {uri, username, password, namespace}` for production native
+  MQTT. Explicit saved-credential reuse preserves MQTT during Wi-Fi-only edits.
   It copies into the controller queue; Wi-Fi/TLS/NVS stay outside transport tasks.
+
+BLE configuration plaintext remains at most496 bytes (512-byte encrypted GATT
+limit). A larger candidate uses authenticated `configure_chunk` commands with
+`data` strings and first-chunk `reset: true`, followed by `configure_commit`.
+Each serialized UTF-8 command must satisfy the existing frame bound; split by
+encoded bytes rather than JavaScript character count. The assembled candidate
+is bounded to1536 bytes, validated once through the normal path, and wiped on
+commit/expiry/stop/error. No fragment acknowledgment is a successful device save.
 
 The framing adapter handles `begin` through `cp_runtime_request_setup`. The
 public provisioning boundary gains mode `CP_PROVISION_USB = 2` and

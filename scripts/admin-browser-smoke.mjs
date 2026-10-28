@@ -126,8 +126,8 @@ try {
   await result(() => dialog.getByRole('button', { name: '保存资料', exact: true }).click(), `/devices/${node}`, 'PATCH');
   await page.getByRole('heading', { name: renamedNode, exact: true }).waitFor();
 
-  await page.getByRole('button', { name: '轮换凭证', exact: true }).click();
-  dialog = page.getByRole('dialog', { name: '轮换设备凭证？', exact: true });
+  await page.getByRole('button', { name: '轮换备用 HTTP 凭证', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: '轮换备用 HTTP 凭证？', exact: true });
   const rotated = await result(() => dialog.getByRole('button', { name: '确认轮换', exact: true }).click(), `/devices/${node}/rotate-credential`, 'POST');
   const previousToken = deviceToken;
   deviceToken = rotated.credential;

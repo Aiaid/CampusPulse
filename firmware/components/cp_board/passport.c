@@ -14,6 +14,8 @@
 #include "key_guard.h"
 #include "page_radar.h"
 #include "page_status.h"
+#include "cp_perf.h"
+#include "display_schedule.h"
 #include "ui_mini.h"
 #include <stdio.h>
 #include <string.h>
@@ -24,7 +26,11 @@ static void *s_handler_context;
 static key_guard_t s_wake_guard;
 #endif
 static bool s_display_ready, s_battery_ready, s_have_view;
-static cp_board_view_t s_last_view;
+static cp_status_view_t s_last_view;
+static uint64_t s_last_render_ms;
+#ifndef CONFIG_CP_PASSPORT_REFRESH_MS
+#define CONFIG_CP_PASSPORT_REFRESH_MS 2000
+#endif
 static const cp_board_profile_t s_profile = {
     .board_id = "passport_c3",
     .revision = "imported_pins_unverified",
@@ -137,9 +143,10 @@ int cp_board_battery_percent(void) { return s_battery_ready ? bsp_battery_soc() 
 void cp_board_present(const cp_board_view_t *view) {
     if (!view || !s_display_ready)
         return;
-    if (s_have_view && memcmp(view, &s_last_view, sizeof(*view)) == 0)
-        return;
-    cp_status_view_t screen = {.battery_percent = view->battery_percent};
+    const uint64_t now=(uint64_t)esp_timer_get_time()/1000;
+    cp_status_view_t screen;
+    memset(&screen,0,sizeof screen);
+    screen.battery_percent=view->battery_percent;
 #define COPY_FIELD(field) snprintf(screen.field, sizeof(screen.field), "%s", view->field)
     COPY_FIELD(node_id);
     COPY_FIELD(board);
@@ -154,9 +161,22 @@ void cp_board_present(const cp_board_view_t *view) {
     screen.setup_active = view->setup_active;
     screen.setup_softap = view->setup_softap;
     screen.setup_usb = view->setup_usb;
+    screen.debug = view->debug;
+    screen.page = view->page;
+    /* Age text stops at 999s+; subsecond telemetry never defeats redraw
+     * deduplication. This affects presentation only, not producer evidence. */
+    screen.debug.upload.last_age_ms=screen.debug.upload.last_age_ms>=1000000 ?
+        1000000 : screen.debug.upload.last_age_ms/1000*1000;
+    screen.debug.upload.attempt_elapsed_ms=screen.debug.upload.attempt_elapsed_ms/1000*1000;
 #undef COPY_FIELD
-    status_page_render(&screen);
-    s_last_view = *view;
+    if (!cp_display_should_render(&screen, &s_last_view, s_have_view, now,
+                                  s_last_render_ms, CONFIG_CP_PASSPORT_REFRESH_MS))
+        return;
+    CP_PERF_START(paint_started);
+    status_page_render_diff(&screen, s_have_view ? &s_last_view : NULL);
+    CP_PERF_END(CP_PERF_UI_RENDER, 0, paint_started);
+    s_last_render_ms=now;
+    s_last_view = screen;
     s_have_view = true;
 }
 esp_err_t cp_board_start_diagnostic_ui(void) {

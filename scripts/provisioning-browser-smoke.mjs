@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { chromium, webkit, expect } from '@playwright/test';
 import { createServer } from 'vite';
 import { createPeer, TEST_NODE, TEST_PROOF, TEST_TOKEN, TEST_NONCE } from '../tests/provisioning/device-peer.mjs';
+import { MQTT_BROKER_URI } from '../src/admin/provisioning/mqtt.js';
 import { provisionConfig } from '../src/admin/provisioning/enrollment.js';
 // Real Chromium/WebKit UI and WebCrypto/Web Streams, synthetic cloud/GATT/USB.
 // No production requests, hardware operation, screenshots or credential output.
@@ -11,6 +12,7 @@ await server.listen();
 const base = `http://127.0.0.1:${server.httpServer.address().port}`;
 const binary = process.env.CHROMIUM_PATH || (existsSync(chromium.executablePath()) ? chromium.executablePath() : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
 const browser = await chromium.launch({ headless: true, executablePath: binary });
+const TEST_MQTT = { uri: MQTT_BROKER_URI, username: 'qa-device', password: 'qa-mqtt-private-password', namespace: 'qa_pool' };
 function fixture(existing = false) {
   const placement = { id: 'existing-placement', place_id: 'synthetic-place', observation_kinds: ['activity'], valid_from_ms: Date.now() - 60000, valid_until_ms: null, effective_valid_until_ms: null };
   const config = existing ? provisionConfig(TEST_NODE, placement.id, 'existing-config') : null;
@@ -25,19 +27,21 @@ async function setup(context, state) {
     let result = {}, status = 200;
     if (path === '/auth/status') result = { initialized: true, passkeys_enabled: false };
     else if (path === '/session') result = { authenticated: true, role: 'admin', account: { username: 'synthetic', display_name: 'Synthetic test' } };
+    else if (path === '/mqtt/pool') result = { broker_uri: MQTT_BROKER_URI, ready_count: 0, entries: [] };
+    else if (path === `/devices/${TEST_NODE}/mqtt`) { state.mqttRequests = (state.mqttRequests || 0) + 1; result = { mqtt: TEST_MQTT }; }
     else if (path === '/overview') result = { devices_total: 0, devices_enabled: 0, devices_recent: 0, devices_stale: 0, config_pending: 0, server_time: new Date().toISOString() };
     else if (path === '/places') result = { places: [{ id: 'synthetic-place', name: 'Synthetic location', kind: 'activity', observation_kinds: ['activity'] }, { id: 'synthetic-alternate', name: 'Synthetic alternate location', kind: 'activity', observation_kinds: ['activity'] }] };
     else if (path === '/devices' && request.method() === 'POST') {
       state.registrations++; state.registered = true;
       if (state.dropRegistration) { state.dropRegistration = false; return route.abort('failed'); }
       if (state.conflictRegistration) { state.conflictRegistration = false; status = 409; result = { error: { code: 'revision_conflict' } }; }
-      else result = { device: { id: TEST_NODE }, credential: TEST_TOKEN };
+      else result = { device: { id: TEST_NODE }, credential: TEST_TOKEN, mqtt: TEST_MQTT };
     } else if (path === '/devices') result = { devices: [], next_cursor: null };
     else if (path.endsWith('/rotate-credential')) {
       state.rotations++;
       if (state.dropRotation) { state.dropRotation = false; return route.abort('failed'); }
       if (state.dropInfoAfterRotation) { state.dropInfoAfterRotation = false; state.dropInfo = true; }
-      result = { credential: TEST_TOKEN };
+      result = { credential: TEST_TOKEN, mqtt: TEST_MQTT };
     }
     else if (path.endsWith('/placements')) {
       state.placements++; state.placement = structuredClone(body); state.placementHistory.push(state.placement); result = { placement: state.placement };
@@ -85,7 +89,7 @@ async function installUsb(context, state, disableBle = true) {
     else if (request.op === 'info') {
       if (state.dropInfo) { state.dropInfo = false; return []; }
       result = { v: 1, ok: true, node_id: state.infoNode || TEST_NODE, board: 'Synthetic headless board', transport: 'usb', security: 'physical-usb', nonce: state.nonce, state: state.usbState,
-        ...(state.savedCredential === undefined ? {} : { has_saved_credential: state.savedCredential }), ...(state.wifiModes === undefined ? {} : { wifi_modes: state.wifiModes }) };
+        ...(state.savedCredential === undefined ? {} : { has_saved_credential: state.savedCredential, has_saved_mqtt: state.savedMqtt ?? state.savedCredential }), ...(state.wifiModes === undefined ? {} : { wifi_modes: state.wifiModes }) };
     }
     else if (request.op === 'configure') {
       assert.equal(request.nonce, state.nonce); state.configureCalls++; state.candidate = request; state.usbState = 'testing';
@@ -124,7 +128,7 @@ async function existingUsbNetwork(state = fixture(true)) {
 }
 async function assertNetworkSecretsLocal(page, state, secrets) {
   const cloud = JSON.stringify(state.bodies), storage = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }));
-  for (const secret of [TEST_TOKEN, ...secrets]) { assert(!cloud.includes(secret), 'Network secret entered a cloud request'); assert(!storage.includes(secret), 'Network secret entered browser storage'); }
+  for (const secret of [TEST_TOKEN, TEST_MQTT.password, ...secrets]) { assert(!cloud.includes(secret), 'Network secret entered a cloud request'); assert(!storage.includes(secret), 'Network secret entered browser storage'); }
   assert.equal(state.registrations, 0); assert.equal(state.rotations, 0); assert.equal(state.placements, 0); assert.equal(state.configs, 0);
 }
 try {
@@ -134,7 +138,7 @@ try {
   await ble.getByLabel('设备屏幕上的配网码', { exact: true }).fill(TEST_PROOF); await ble.getByRole('button', { name: '选择蓝牙设备并验证' }).click(); await ble.getByText('（已验证身份）', { exact: false }).waitFor(); assert.equal(await ble.evaluate(() => window.syntheticGesture), true);
   await firstRegistration(ble); await ble.getByLabel('部署地点').selectOption('synthetic-place'); await ble.getByRole('button', { name: '保存配置' }).click();
   await ble.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-ssid'); await ble.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-password'); await ble.getByRole('button', { name: '加密发送给设备' }).click(); await ble.getByRole('button', { name: '完成并返回设备目录' }).waitFor({ timeout: 15000 });
-  assert.equal(newState.candidate.device_token, TEST_TOKEN); assert.equal(newState.registrations, 1); assert.equal(newState.rotations, 0); assert(!JSON.stringify(newState.bodies).includes('synthetic-password')); assert(!JSON.stringify(newState.bodies).includes(TEST_TOKEN));
+  assert.deepEqual(newState.candidate.mqtt, TEST_MQTT); assert.equal(newState.candidate.device_token, TEST_TOKEN); assert.equal(newState.registrations, 1); assert.equal(newState.rotations, 0); assert(!JSON.stringify(newState.bodies).includes('synthetic-password')); assert(!JSON.stringify(newState.bodies).includes(TEST_TOKEN));
   const bleRequests = await ble.evaluate(() => window.syntheticBleRequests); await ble.getByRole('button', { name: '重新配置网络', exact: true }).click();
   await ble.getByText('请在设备上开始新配网，输入新显示的配网码后连接同一台设备。', { exact: true }).waitFor();
   assert.equal(await ble.getByLabel('设备屏幕上的配网码', { exact: true }).inputValue(), ''); assert.equal(await ble.evaluate(() => window.syntheticBleRequests), bleRequests);
@@ -176,6 +180,18 @@ try {
   await editable.getByRole('button', { name: '重新检查登记状态', exact: true }).click(); await editable.locator('.cp-provision[aria-busy="false"]').waitFor();
   assert.equal(await editable.getByLabel('数据用途', { exact: true }).inputValue(), 'controlled_test'); assert.equal(await editable.getByRole('button', { name: '通过 USB 发送给设备', exact: true }).isDisabled(), true);
   assert.equal(editableState.registrations, 0); assert.equal(editableState.rotations, 0); await editableNetwork.context.close();
+  // An existing HTTPS-era device upgrades MQTT without rotating its device key.
+  const migrateState = fixture(true); migrateState.savedMqtt = false;
+  const migration = await existingUsbNetwork(migrateState);
+  assert.equal(await migration.page.getByRole('button', { name: '通过 USB 发送给设备', exact: true }).isDisabled(), true);
+  await migration.page.getByRole('button', { name: '准备或复用 MQTT 授权', exact: true }).click();
+  await migration.page.getByText('MQTT 代理授权已验证并准备好，仅在本向导内存保留；现场设备尚待保存确认。', { exact: true }).waitFor();
+  await migration.page.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-migration'); await migration.page.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-migration-password');
+  await migration.page.getByRole('button', { name: '通过 USB 发送给设备', exact: true }).click(); await migration.page.getByText('设备正在验证', { exact: true }).waitFor();
+  assert.deepEqual(migrateState.candidate.mqtt, TEST_MQTT); assert.equal(migrateState.candidate.reuse_saved_credential, true); assert.equal(migrateState.mqttRequests, 1); assert.equal(migrateState.rotations, 0);
+  migrateState.usbState = 'failed'; await migration.page.getByText('本次验证失败', { exact: true }).waitFor(); await migration.page.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-migration-corrected');
+  await migration.page.getByRole('button', { name: '使用修正后的 Wi-Fi 重试', exact: true }).click(); await migration.page.getByText('设备正在验证', { exact: true }).waitFor();
+  assert.deepEqual(migrateState.candidate.mqtt, TEST_MQTT); assert.equal(migrateState.mqttRequests, 1); assert.equal(migrateState.rotations, 0); await migration.context.close();
   // Explicit absence on the physical node makes the network action prepare a
   // replacement credential. Editing and saving settings alone never rotates it.
   const missingState = fixture(true); missingState.savedCredential = false;
@@ -198,7 +214,7 @@ try {
   await missing.getByText('本次验证失败', { exact: true }).waitFor();
   await missing.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-corrected-secret');
   await missing.getByRole('button', { name: '使用修正后的 Wi-Fi 重试', exact: true }).click(); await missing.getByText('设备正在验证', { exact: true }).waitFor();
-  assert.equal(missingState.rotations, 1); assert.equal(missingState.configureCalls, 2); assert.equal(missingState.candidate.device_token, TEST_TOKEN); assert.notEqual(missingState.candidate.attempt_id, replacementAttempt);
+  assert.deepEqual(missingState.candidate.mqtt, TEST_MQTT); assert.equal(missingState.mqttRequests, 1); assert.equal(missingState.rotations, 1); assert.equal(missingState.configureCalls, 2); assert.equal(missingState.candidate.device_token, TEST_TOKEN); assert.notEqual(missingState.candidate.attempt_id, replacementAttempt);
   assert.equal(missingState.candidate.nonce, missingState.nonce);
   const missingStorage = await missing.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }));
   for (const secret of [TEST_TOKEN, 'synthetic-missing-ssid', 'synthetic-missing-secret', 'synthetic-corrected-secret']) { assert(!JSON.stringify(missingState.bodies).includes(secret)); assert(!missingStorage.includes(secret)); }
@@ -206,7 +222,7 @@ try {
   // Re-read the same physical factory identity before issuing a replacement.
   // A newly available saved credential uses the internal path with no rotation;
   // a different node or invalid local Wi-Fi never reaches the cloud mutation.
-  for (const scenario of ['saved', 'different-node', 'unknown', 'unready', 'invalid-wifi', 'oversized-enterprise']) {
+  for (const scenario of ['saved', 'different-node', 'unknown', 'unready', 'invalid-wifi']) {
     const state = fixture(true); state.savedCredential = false; state.scenario = scenario;
     const network = await existingUsbNetwork(state), page = network.page;
     await page.getByLabel('Wi-Fi SSID', { exact: true }).fill(scenario === 'invalid-wifi' ? 's'.repeat(33) : 'synthetic-recovery-ssid');
@@ -401,7 +417,7 @@ try {
   // Unsupported browser + exact embedded page in WebKit; local page validation
   // is distinct from transport or physical network acceptance.
   const apState = fixture(), apContext = await browser.newContext(); await setup(apContext, apState); await unsupported(apContext); const ap = await openWizard(apContext); await ap.getByText('此浏览器没有可用的 Web Bluetooth', { exact: false }).waitFor();
-  await ap.getByLabel('设备屏幕上的工厂节点 ID', { exact: true }).fill(TEST_NODE); await firstRegistration(ap); await ap.getByRole('button', { name: '保存配置' }).click(); await ap.getByRole('button', { name: '显示本地配网交接内容' }).click(); const handoff = JSON.parse(await ap.getByLabel('复制到设备本地页面的交接内容', { exact: true }).inputValue()); assert.equal(handoff.device_token, TEST_TOKEN); await apContext.close();
+  await ap.getByLabel('设备屏幕上的工厂节点 ID', { exact: true }).fill(TEST_NODE); await firstRegistration(ap); await ap.getByRole('button', { name: '保存配置' }).click(); await ap.getByRole('button', { name: '显示本地配网交接内容' }).click(); const handoff = JSON.parse(await ap.getByLabel('复制到设备本地页面的交接内容', { exact: true }).inputValue()); assert.deepEqual(handoff.mqtt, TEST_MQTT); assert.equal(handoff.device_token, TEST_TOKEN); await apContext.close();
   const header = readFileSync(new URL('../firmware/components/cp_provision/setup_page.h', import.meta.url), 'utf8'); const part = name => header.split(`static const char ${name}[] =`)[1].split(';\n')[0].match(/"(?:[^"\\]|\\.)*"/g).map(s => JSON.parse(s)).join(''); const html = part('CP_SETUP_HEAD') + TEST_NODE + part('CP_SETUP_MID') + 'b'.repeat(32) + part('CP_SETUP_END');
   let safari = 'WebKit not installed';
   if (existsSync(webkit.executablePath())) {

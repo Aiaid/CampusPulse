@@ -7,7 +7,7 @@ import { build } from 'esbuild';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { buildProvisioningSql } from './provision-device.mjs';
 
-const source = await build({ entryPoints: ['worker/index.ts'], bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022', external: ['node:*'] });
+const source = await build({ entryPoints: ['worker/index.ts'], bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2022', external: ['node:*','cloudflare:*'] });
 const mf = new Miniflare(convertV4MiniflareOptions({
   workers: [{
   name: 'ingestion-smoke',

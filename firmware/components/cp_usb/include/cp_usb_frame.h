@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#define CP_USB_JSON_MAX 1024u
+#define CP_USB_JSON_MAX 1536u
 #define CP_USB_UUID_SIZE 37u
 #define CP_USB_PREFIX "\x1e" "CPSETUP/1 "
 #define CP_USB_FRAME_MAX ((sizeof(CP_USB_PREFIX)-1u)+36u+1u+CP_USB_JSON_MAX+1u)

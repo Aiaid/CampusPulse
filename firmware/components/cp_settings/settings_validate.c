@@ -6,6 +6,23 @@ static size_t bounded_length(const char *s, size_t cap)
     const char *end = memchr(s, 0, cap);
     return end ? (size_t)(end-s) : cap;
 }
+bool cp_settings_mqtt_ready(const cp_settings_t *s)
+{
+    if(!s || bounded_length(s->mqtt_uri,sizeof s->mqtt_uri)!=strlen(CP_MQTT_PRODUCTION_URI) ||
+       strcmp(s->mqtt_uri,CP_MQTT_PRODUCTION_URI))return false;
+    const char *fields[]={s->mqtt_username,s->mqtt_password};
+    const size_t caps[]={sizeof s->mqtt_username,sizeof s->mqtt_password};
+    for(unsigned i=0;i<2;++i){size_t n=bounded_length(fields[i],caps[i]);
+        if(!n||n==caps[i])return false;
+        for(size_t j=0;j<n;++j)if((unsigned char)fields[i][j]<33||(unsigned char)fields[i][j]>126)return false;
+    }
+    size_t n=bounded_length(s->mqtt_namespace,sizeof s->mqtt_namespace);
+    if(!n||n==sizeof s->mqtt_namespace)return false;
+    for(size_t i=0;i<n;++i){char c=s->mqtt_namespace[i];
+        if(!((c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='_'||c=='-'))return false;
+    }
+    return true;
+}
 bool cp_settings_validate(const cp_settings_t *s)
 {
     if (!s || s->version != CP_SETTINGS_VERSION ||
@@ -38,6 +55,12 @@ bool cp_settings_validate(const cp_settings_t *s)
     }
     for (size_t i=0; i<token; ++i)
         if ((unsigned char)s->device_token[i] < 33 || (unsigned char)s->device_token[i] > 126) return false;
+    const bool absent=!s->mqtt_uri[0]&&!s->mqtt_username[0]&&!s->mqtt_password[0]&&!s->mqtt_namespace[0];
+    /* Require the entire absent fields to be zero, not an embedded suffix. */
+    if(absent){const char *fields[]={s->mqtt_uri,s->mqtt_username,s->mqtt_password,s->mqtt_namespace};
+        const size_t sizes[]={sizeof s->mqtt_uri,sizeof s->mqtt_username,sizeof s->mqtt_password,sizeof s->mqtt_namespace};
+        for(unsigned f=0;f<4;++f)for(size_t i=0;i<sizes[f];++i)if(fields[f][i])return false;
+    }else if(!cp_settings_mqtt_ready(s))return false;
     return true;
 }
 void cp_settings_clear_sensitive(cp_settings_t *s)

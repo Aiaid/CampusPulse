@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include "cp_vehicle.h"
 #define CP_COLLECT_ADDRESSES 64u
@@ -18,28 +19,71 @@ typedef struct {
     int16_t rssi;
     cp_raw_disposition_t raw;
 } cp_report_t;
+/* The common initial sequence is deliberately declared once and exposed via
+ * C11 anonymous unions. Both legacy inline and compact records have a real
+ * correctly-sized typed object: no truncated cp_collect_t or aliasing casts. */
+#define CP_ADDRESS_CORE_FIELDS \
+    bool used; \
+    uint8_t address[6], address_type; \
+    uint32_t reports, adv, scan_responses, first_ms, last_ms, samples; \
+    int16_t rssi_min, rssi_max; \
+    int64_t rssi_sum; \
+    cp_vehicle_evidence_t vehicle_evidence
+
+typedef struct { CP_ADDRESS_CORE_FIELDS; } cp_address_core_t;
 typedef struct {
-    bool used;
-    uint8_t address[6], address_type;
-    uint32_t reports, adv, scan_responses, first_ms, last_ms, samples;
-    int16_t rssi_min, rssi_max;
-    int64_t rssi_sum;
+    union {
+        cp_address_core_t core;
+        struct { CP_ADDRESS_CORE_FIELDS; };
+    };
     uint32_t bins[CP_COLLECT_BINS];
-    cp_vehicle_evidence_t vehicle_evidence;
 } cp_address_summary_t;
+#undef CP_ADDRESS_CORE_FIELDS
+
+#define CP_COLLECT_STATE_FIELDS \
+    uint64_t start_ms; \
+    uint32_t window_ms, bin_ms, window_seq, address_capacity; \
+    uint32_t reports_seen, reports_aggregated, aggregation_drops, adv, scan_responses; \
+    uint32_t rssi_samples; \
+    int16_t rssi_min, rssi_max; \
+    int64_t rssi_sum; \
+    bool address_overflow, raw_enabled; \
+    uint32_t summary_drops, selected, intentional, pressure, raw_drops; \
+    unsigned address_count, raw_count
+
+typedef struct { CP_COLLECT_STATE_FIELDS; } cp_collect_state_t;
+/* Legacy inline storage remains available for diagnostics and existing callers. */
 typedef struct {
-    uint64_t start_ms;
-    uint32_t window_ms, bin_ms, window_seq, address_capacity;
-    uint32_t reports_seen, reports_aggregated, aggregation_drops, adv, scan_responses;
-    uint32_t rssi_samples;
-    int16_t rssi_min, rssi_max;
-    int64_t rssi_sum;
-    bool address_overflow, raw_enabled;
-    uint32_t summary_drops, selected, intentional, pressure, raw_drops;
-    unsigned address_count, raw_count;
+    union {
+        cp_collect_state_t state;
+        struct { CP_COLLECT_STATE_FIELDS; };
+    };
     cp_address_summary_t addresses[CP_COLLECT_ADDRESSES];
     cp_report_t raw[CP_COLLECT_RAW];
 } cp_collect_t;
+/* Caller owns the aligned core and bin arrays. They are allocated only while
+ * ingress is stopped; collection never allocates. bins is row-major with
+ * storage_capacity rows and bin_count uint32_t counters per row. */
+typedef struct {
+    union {
+        cp_collect_state_t state;
+        struct { CP_COLLECT_STATE_FIELDS; };
+    };
+    cp_address_core_t *addresses;
+    uint32_t *bins;
+    unsigned storage_capacity, bin_count;
+    cp_report_t raw[CP_COLLECT_RAW];
+} cp_collect_compact_t;
+#undef CP_COLLECT_STATE_FIELDS
+
+unsigned cp_collect_bin_count(uint32_t window_ms, uint32_t bin_ms);
+size_t cp_collect_bank_bytes(unsigned capacity, unsigned bin_count);
+bool cp_collect_compact_begin(cp_collect_compact_t *, uint64_t start_ms, uint32_t window_ms,
+                              uint32_t bin_ms, uint32_t seq, unsigned max_addresses,
+                              bool raw_enabled);
+bool cp_collect_compact_observe(cp_collect_compact_t *, const cp_report_t *);
+bool cp_collect_compact_losses(cp_collect_compact_t *, uint32_t aggregation_drops,
+                               uint32_t selected_drops, uint32_t intentional, uint32_t pressure);
 bool cp_collect_begin(cp_collect_t *, uint64_t start_ms, uint32_t window_ms, uint32_t bin_ms,
                       uint32_t seq, unsigned max_addresses, bool raw_enabled);
 bool cp_collect_observe(cp_collect_t *, const cp_report_t *);

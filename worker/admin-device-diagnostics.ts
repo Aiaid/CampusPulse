@@ -25,7 +25,7 @@ function publicBatch(row: BatchRow, now: number) {
 function itemSource(row: BatchRow) {
   return row.protocol === 'campuspulse/2' ? 'ingestion_items_v2' : row.stream === 'ble_windows' ? 'sensor_windows' : row.stream === 'node_status' ? 'node_status' : null;
 }
-const sensitiveKey = /password|passphrase|passwd|credential|secret|authorization|private_key|^(wifi|eap|device_token|research_token|operator_token|admin_token|access_token|refresh_token|api_key|pin|proof|setup_pin|setup_proof|pairing_code|wifi_ssid|eap_identity|eap_username|anonymous_identity)$/i;
+const sensitiveKey = /password|passphrase|passwd|credential|secret|authorization|private_key|^(mqtt|mqtt_username|mqtt_namespace|wifi|eap|device_token|research_token|operator_token|admin_token|access_token|refresh_token|api_key|pin|proof|setup_pin|setup_proof|pairing_code|wifi_ssid|eap_identity|eap_username|anonymous_identity)$/i;
 function redact(value: unknown): { value: unknown; changed: boolean } {
   if (!value || typeof value !== 'object') return { value, changed: false };
   let changed = false;

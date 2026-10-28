@@ -9,6 +9,7 @@ import { Bootstrap, Login, ReauthDialog } from './AuthScreens.jsx';
 import './admin.css';
 
 const messages = {
+  mqtt_pool_empty: 'MQTT 授权池中没有已验证的可用账号。请先生成批量材料、导入 EMQX 并完成验证，再登记设备。', mqtt_not_configured: '杭州 MQTT 授权服务尚未就绪，请检查部署设置。', mqtt_broker_verify_failed: 'MQTT 代理验证未通过，请检查认证和授权 CSV 是否都已导入。', mqtt_pool_conflict: '此授权状态已变化，请刷新后检查。',
   unauthorized: '管理员会话已失效，请重新登录。', bootstrap_only: '当前会话仅能初始化账号，请先完成账号创建。', reauth_required: '此操作需要再次验证身份。', rate_limited: '尝试次数过多，请稍后重试。', passkey_not_configured: 'Passkey 服务尚未配置可信来源与 RP 域名，请先使用账号密码。', invalid_passkey_response: 'Passkey 验证未通过，本次操作未完成。请重新发起验证。', auth_conflict: '账号或 Passkey 状态已更新，请刷新后重新操作。', admin_unauthorized: '管理员凭证无效，请重新输入。',
   invalid_name: '名称须为 1–80 个可打印字符，且不能全为空白。',
   invalid_password: '密码须为 12–256 个 Unicode 字符，最多 1024 个 UTF-8 字节。', invalid_username: '用户名须为 3–64 位小写字母、数字、点、下划线或短横线，首位为字母或数字。', invalid_auth_input: '认证表单字段不符合要求，请检查格式与长度。', already_initialized: '账号已完成初始化，请重新登录。', password_storage_invalid: '账号认证暂不可用，请联系部署维护者检查密码存储。', passkey_not_found: '该 Passkey 已不存在，请刷新列表。',
@@ -124,7 +125,7 @@ export default function AdminApp() {
   const refresh = () => setVersion(v => v + 1);
   const notify = text => { setFlash(text); refresh(); };
   const navigate = next => { setCredential(null); setFlash(''); setPage(next); rootRef.current?.scrollTo({ top: 0 }); };
-  const value = { api, version, refresh, notify, navigate, session, authStatus, reauthUntil, requestReauth, sensitiveAction, signedOut, updateAccount: account => setSession(v => ({ ...v, account })), revealCredential: (node, secret) => setCredential({ node, secret }) };
+  const value = { api, version, refresh, notify, navigate, session, authStatus, reauthUntil, requestReauth, sensitiveAction, signedOut, updateAccount: account => setSession(v => ({ ...v, account })), revealCredential: (node, secret, mqtt) => setCredential({ node, secret, mqtt, attempt: crypto.randomUUID() }) };
   const logout = useMutation();
   const logoutAction = () => logout.run(async () => { await api('/session', { method: 'DELETE' }); signedOut(); });
   return <div className="admin-root" ref={rootRef}><AdminContext.Provider value={value}>
@@ -140,7 +141,7 @@ export default function AdminApp() {
 function Credential({ credential, onClose }) {
   const [revealed, setRevealed] = useState(false);
   // Native modal traps focus and keeps the one-time secret out of the page behind it.
-  return <CredentialDialog title="一次性设备凭证" onClose={onClose}><Notice>请现在安全保存设备 <strong>{credential.node}</strong> 的凭证并配置到设备。关闭后无法再次查看；遗失时只能重新轮换。</Notice><Field label="设备凭证"><input className="cp-admin-secret" aria-label="一次性设备凭证" type={revealed ? 'text' : 'password'} readOnly value={credential.secret} autoComplete="off" spellCheck={false} /></Field><label className="cp-admin-checkbox"><input type="checkbox" checked={revealed} onChange={e => setRevealed(e.target.checked)} />显示本次凭证</label><p className="cp-admin-muted">请勿放入源码、日志、公开截图或聊天。仅本次界面内存持有该凭证。</p><div className="cp-admin-form-actions"><button className="cp-admin-button cp-admin-primary" onClick={onClose}>已安全保存，关闭并清除</button></div></CredentialDialog>;
+  return <CredentialDialog title="一次性设备凭证" onClose={onClose}><Notice>{credential.mqtt ? <>请安全保存设备 <strong>{credential.node}</strong> 的完整 MQTT 配网材料并写入同一设备。</> : <>这是设备 <strong>{credential.node}</strong> 的备用 HTTP 凭证，MQTT 授权没有改变；它不是完整的 MQTT 配网材料。</>}关闭后不再显示本次材料。</Notice><Field label={credential.mqtt ? '兼容设备凭证' : '备用 HTTP 凭证'}><input className="cp-admin-secret" aria-label="一次性设备凭证" type={revealed ? 'text' : 'password'} readOnly value={credential.secret} autoComplete="off" spellCheck={false} /></Field><label className="cp-admin-checkbox"><input type="checkbox" checked={revealed} onChange={e => setRevealed(e.target.checked)} />显示本次凭证</label>{credential.mqtt && <Field label="现场 MQTT 配网材料" hint="包含独立密码，仅粘贴到同一台现场设备；默认隐藏。"><input type={revealed ? 'text' : 'password'} readOnly value={JSON.stringify({ v: 1, node_id: credential.node, attempt_id: credential.attempt, device_token: credential.secret, mqtt: credential.mqtt })} autoComplete="off" spellCheck={false} /></Field>}<p className="cp-admin-muted">请勿放入源码、日志、公开截图或聊天。仅本次界面内存持有该凭证。</p><div className="cp-admin-form-actions"><button className="cp-admin-button cp-admin-primary" onClick={onClose}>已安全保存，关闭并清除</button></div></CredentialDialog>;
 }
 // Separate import name makes the credential lifecycle explicit.
 import { Dialog as CredentialDialog } from './shared.jsx';

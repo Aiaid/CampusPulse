@@ -57,6 +57,10 @@ describe('ESP-IDF 5.5.3 Security 2 client interoperability', () => {
     const selection = selectProvisioningDevice({ bluetooth: { requestDevice: () => { requested = true; return Promise.resolve(device); } } }); expect(requested).toBe(true);
     const { client, identity } = await connectProvisioning(await selection, TEST_PROOF); expect(identity.node_id).toBe(TEST_NODE);
     await client.request({ op: 'configure', attempt_id: '11111111-2222-4333-8444-555555555555', password: 'synthetic-password' }); expect(candidates).toHaveLength(1);
-    const count = writes; await expect(client.request({ op: 'configure', password: '界'.repeat(170) })).rejects.toThrow('长度'); expect(writes).toBe(count); expect(connected).toBe(false);
+    const large = { op: 'configure', attempt_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', ssid: '汉字😀'.repeat(35), password: '\\"'.repeat(80) };
+    const beforeChunks = writes; await client.request(large);
+    expect(writes - beforeChunks).toBeGreaterThan(2);
+    expect(candidates.at(-1)).toEqual({ v: 1, ...large });
+    const count = writes; await expect(client.request({ op: 'configure', password: '界'.repeat(520) })).rejects.toThrow('长度'); expect(writes).toBe(count); expect(connected).toBe(false);
   });
 });

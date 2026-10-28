@@ -18,7 +18,7 @@ export function createPeer(onCandidate = () => {}, pin = TEST_PROOF) {
   const salt = Buffer.from(fixture.salt, 'hex'), b = num(Buffer.from(fixture.server_private, 'hex'));
   const k = num(hash(bin(N, 384), bin(g, 384))), x = num(hash(salt, hash(Buffer.from(`campuspulse:${pin}`))));
   const verifier = power(g, x), B = (k * verifier + power(g, b)) % N;
-  const nonce = Buffer.from(fixture.nonce, 'hex'); let key, client, proof, authenticated = false, attempt;
+  const nonce = Buffer.from(fixture.nonce, 'hex'); let key, client, proof, authenticated = false, attempt, configure = '';
   const increment = () => nonce.writeUInt32BE(nonce.readUInt32BE(8) + 1, 8);
   return async (kind, input) => {
     input = Buffer.from(input);
@@ -42,10 +42,13 @@ export function createPeer(onCandidate = () => {}, pin = TEST_PROOF) {
     }
     if (!authenticated) throw new Error('Unauthenticated synthetic request');
     const decrypt = createDecipheriv('aes-256-gcm', key.subarray(0, 32), nonce); decrypt.setAuthTag(input.subarray(-16));
-    const r = JSON.parse(Buffer.concat([decrypt.update(input.subarray(0, -16)), decrypt.final()]).toString()); increment();
+    let r = JSON.parse(Buffer.concat([decrypt.update(input.subarray(0, -16)), decrypt.final()]).toString()); increment();
+    let chunkBytes;
+    if (r.op === 'configure_chunk') { if (r.reset) configure = ''; configure += r.data; chunkBytes = Buffer.byteLength(configure); if (chunkBytes > 1536) throw new Error('Oversized synthetic candidate'); }
+    if (r.op === 'configure_commit') { r = JSON.parse(configure); configure = ''; }
     if (r.op === 'configure') { attempt = r.attempt_id; onCandidate(r); }
     const result = r.op === 'info' ? { v: 1, ok: true, node_id: TEST_NODE, board: 'Synthetic ESP32-C3', transport: 'ble', security: 'security2', session_expires_in_ms: 300000 }
-      : { v: 1, ok: true, state: 'received', attempt_id: attempt };
+      : chunkBytes ? { v: 1, ok: true, received_bytes: chunkBytes } : { v: 1, ok: true, state: 'received', attempt_id: attempt };
     const encrypt = createCipheriv('aes-256-gcm', key.subarray(0, 32), nonce);
     const reply = Buffer.concat([encrypt.update(Buffer.from(JSON.stringify(result))), encrypt.final(), encrypt.getAuthTag()]); increment();
     return Array.from(reply);

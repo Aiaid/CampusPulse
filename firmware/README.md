@@ -1,5 +1,16 @@
 # CampusPulse firmware
 
+As of2026-10-29, normal builds default to native MQTT/TLS through Hangzhou EMQX
+and the CF gateway. Settings v3 stores independent MQTT URI, username, password
+and routing namespace at runtime; firmware images contain no broker password.
+Legacy v1/v2 settings are preserved and require MQTT migration through setup,
+with no silent HTTP upload fallback. Wi-Fi-only reconfiguration reuses saved
+MQTT credentials. BLE uses authenticated bounded chunks for larger candidates;
+USB/SoftAP accept1536-byte candidates. See
+[production MQTT operations](../docs/notes/mqtt-production.md) for software,
+deployed-service and current hardware-rollout boundaries. The original chain
+acceptance below is historical evidence, not validation of every new image.
+
 The current local AI Passport implementation connects protected browser BLE or
 device-hosted SoftAP setup, durable enrollment, v2 policy control, canonical
 MAC/address-type summaries, a frozen Flash journal and exact upload receipts.

@@ -9,6 +9,26 @@ static const char *address_types[] = {"public", "random", "public_identity", "ra
 static const char *report_types[] = {"adv_ind", "adv_direct_ind", "adv_scan_ind", "adv_nonconn_ind",
                                      "scan_rsp"};
 
+/* These schema keys have static lifetime. Interning only this closed set keeps
+ * caller-owned/dynamic keys safe while avoiding one heap allocation per field
+ * in the common six-address tree. Values still retain normal copy semantics. */
+static const char *schema_key(const char *key) {
+    static const char *const keys[] = {
+        "seq", "time", "mono_ms", "clock_epoch", "utc_ms", "uncertainty_ms",
+        "window_seq", "duration_ms", "bin_ms", "address", "address_type",
+        "reports", "adv_reports", "scan_response_reports", "first_offset_ms",
+        "last_offset_ms", "rssi", "samples", "min_dbm", "max_dbm", "mean_dbm",
+        "bins", "vehicle_evidence", "schema_version", "parsed_reports",
+        "malformed_reports", "name_brand_mask", "exclusion_mask", "ecosystem_mask",
+        "protocol", "node_id", "boot_id", "placement_id", "capture_config_id",
+        "dataset", "firmware_version", "batch_id", "stream", "items"
+    };
+    for (size_t i = 0; i < sizeof keys / sizeof keys[0]; ++i)
+        if (!strcmp(key, keys[i]))
+            return keys[i];
+    return NULL;
+}
+
 static void dropped(cp_codec_t *c, const char *stream, unsigned count) {
     c->failed_batches++;
     c->failed_items += count;
@@ -27,7 +47,10 @@ static cJSON *attach(cp_codec_t *c, cJSON *parent, const char *key, cJSON *child
         cJSON_Delete(child);
         return NULL;
     }
-    bool ok = key ? cJSON_AddItemToObject(parent, key, child) : cJSON_AddItemToArray(parent, child);
+    const char *interned = key ? schema_key(key) : NULL;
+    bool ok = !key ? cJSON_AddItemToArray(parent, child)
+              : interned ? cJSON_AddItemToObjectCS(parent, interned, child)
+                         : cJSON_AddItemToObject(parent, key, child);
     if (!ok) {
         c->build_failed = true;
         cJSON_Delete(child);
@@ -117,6 +140,27 @@ static void rssi_json(cp_codec_t *c, cJSON *parent, uint32_t n, int16_t min, int
 static void mac_text(const uint8_t *a, char out[18]) {
     snprintf(out, 18, "%02x:%02x:%02x:%02x:%02x:%02x", a[0], a[1], a[2], a[3], a[4], a[5]);
 }
+static char *print_bounded(const cJSON *value, unsigned body_limit) {
+    /* cJSON requests five spare bytes for PrintPreallocated. A failed print
+     * only means this buffer is too small (or the tree is invalid); it never
+     * reallocates. Release it before growing, so the tree coexists with at most
+     * one bounded output buffer, never both a growth buffer and a final copy. */
+    if (body_limit > INT_MAX - 5u)
+        return NULL;
+    const size_t limit = (size_t)body_limit + 5u;
+    size_t capacity = limit < 256u ? limit : 256u;
+    for (;;) {
+        char *body = cJSON_malloc(capacity);
+        if (!body)
+            return NULL;
+        if (cJSON_PrintPreallocated((cJSON *)value, body, (int)capacity, false))
+            return body;
+        cJSON_free(body);
+        if (capacity == limit)
+            return NULL;
+        capacity = capacity > limit / 2u ? limit : capacity * 2u;
+    }
+}
 bool cp_codec_emit_items(cp_codec_t *c, const char *stream, cJSON *items, bool control) {
     if (!c || !stream) {
         cJSON_Delete(items);
@@ -151,42 +195,45 @@ bool cp_codec_emit_items(cp_codec_t *c, const char *stream, cJSON *items, bool c
         cp_codec_string(c, b, "batch_id", id);
         cp_codec_string(c, b, "stream", stream);
         if (!c->build_failed) {
-            if (cJSON_AddItemToObject(b, "items", items))
+            if (cJSON_AddItemToObjectCS(b, "items", items))
                 items = NULL;
             else
                 c->build_failed = true;
         }
         if (!c->build_failed) {
-            body = cJSON_PrintUnformatted(b);
+            body = print_bounded(b, c->max_body_bytes);
             if (!body)
                 c->build_failed = true;
         }
     }
+    /* The sink only needs immutable request bytes. Free the construction tree
+     * before Flash work, preserving the body's lifetime until sink returns. */
+    cJSON_Delete(items);
+    cJSON_Delete(b);
     if (!c->build_failed && body) {
         size_t n = strlen(body);
         if (n <= c->max_body_bytes && count <= c->max_items)
             ok = c->sink(c->sink_context, body, n, stream, count, control);
     }
     cJSON_free(body);
-    cJSON_Delete(items);
-    cJSON_Delete(b);
     if (!ok)
         dropped(c, stream, count);
     return ok;
 }
-bool cp_codec_flush_raw(cp_codec_t *c, cp_collect_t *w) {
-    if (!c || !w || !c->sink || !c->uuid || !c->max_items || w->raw_count > CP_COLLECT_RAW)
+bool cp_codec_flush_raw_reports(cp_codec_t *c, const cp_report_t *reports,
+                                unsigned report_count, uint32_t window_seq) {
+    if (!c || !reports || !c->sink || !c->uuid || !c->max_items || report_count > CP_COLLECT_RAW)
         return false;
-    if (!w->raw_count)
+    if (!report_count)
         return true;
     bool all_ok = true;
-    for (unsigned first = 0; first < w->raw_count;) {
-        unsigned count = w->raw_count - first;
+    for (unsigned first = 0; first < report_count;) {
+        unsigned count = report_count - first;
         if (count > c->max_items)
             count = c->max_items;
         cJSON *items = cp_codec_begin_items(c, count);
         for (unsigned i = first; i < first + count; i++) {
-            const cp_report_t *r = &w->raw[i];
+            const cp_report_t *r = &reports[i];
             cJSON *o = cp_codec_object(c, items, NULL);
             char mac[18], hex[63];
             mac_text(r->address, mac);
@@ -199,7 +246,7 @@ bool cp_codec_flush_raw(cp_codec_t *c, cp_collect_t *w) {
             hex[r->payload_length * 2] = 0;
             cp_codec_number(c, o, "seq", r->report_seq);
             cp_codec_time(c, o, r->mono_ms);
-            cp_codec_number(c, o, "window_seq", w->window_seq);
+            cp_codec_number(c, o, "window_seq", window_seq);
             cJSON *id = cp_codec_object(c, o, "identity");
             cp_codec_string(c, id, "scheme", "mac");
             cp_codec_string(c, id, "address", mac);
@@ -219,24 +266,98 @@ bool cp_codec_flush_raw(cp_codec_t *c, cp_collect_t *w) {
         if (ok)
             c->raw_committed += count;
         else {
-            w->raw_drops += count;
             all_ok = false;
         }
         first += count;
     }
-    /* The journal owns every successful frozen batch. Never serialize an old
-     * report again under a different batch UUID after this flush attempt. */
-    w->raw_count = 0;
     return all_ok;
 }
-bool cp_codec_window(cp_codec_t *c, cp_collect_t *w, uint32_t duration) {
+bool cp_codec_flush_raw(cp_codec_t *c, cp_collect_t *w) {
+    if (!c || !w || !c->sink || !c->uuid || !c->max_items || w->raw_count > CP_COLLECT_RAW)
+        return false;
+    unsigned before = c->raw_dropped;
+    bool ok = cp_codec_flush_raw_reports(c, w->raw, w->raw_count, w->window_seq);
+    w->raw_drops += c->raw_dropped - before;
+    /* Successful bodies are frozen in the journal; failed attempts are explicit
+     * drops. Neither may be serialized again with a new batch identity. */
+    w->raw_count = 0;
+    return ok;
+}
+cp_codec_window_view_t cp_codec_window_from_collect(const cp_collect_t *w) {
+    if (!w)
+        return (cp_codec_window_view_t){0};
+    return (cp_codec_window_view_t){
+        .start_ms = w->start_ms, .window_ms = w->window_ms, .bin_ms = w->bin_ms,
+        .window_seq = w->window_seq, .address_capacity = w->address_capacity,
+        .reports_seen = w->reports_seen, .reports_aggregated = w->reports_aggregated,
+        .aggregation_drops = w->aggregation_drops, .adv = w->adv,
+        .scan_responses = w->scan_responses, .rssi_samples = w->rssi_samples,
+        .rssi_min = w->rssi_min, .rssi_max = w->rssi_max, .rssi_sum = w->rssi_sum,
+        .address_overflow = w->address_overflow, .raw_enabled = w->raw_enabled,
+        .summary_drops = w->summary_drops, .selected = w->selected,
+        .intentional = w->intentional, .pressure = w->pressure, .raw_drops = w->raw_drops,
+        .address_count = w->address_count, .raw_count = w->raw_count,
+        .addresses = w->addresses, .raw = w->raw
+    };
+}
+cp_codec_window_view_t cp_codec_window_from_compact(const cp_collect_compact_t *w) {
+    if (!w)
+        return (cp_codec_window_view_t){0};
+    return (cp_codec_window_view_t){
+        .start_ms = w->start_ms, .window_ms = w->window_ms, .bin_ms = w->bin_ms,
+        .window_seq = w->window_seq, .address_capacity = w->address_capacity,
+        .reports_seen = w->reports_seen, .reports_aggregated = w->reports_aggregated,
+        .aggregation_drops = w->aggregation_drops, .adv = w->adv,
+        .scan_responses = w->scan_responses, .rssi_samples = w->rssi_samples,
+        .rssi_min = w->rssi_min, .rssi_max = w->rssi_max, .rssi_sum = w->rssi_sum,
+        .address_overflow = w->address_overflow, .raw_enabled = w->raw_enabled,
+        .summary_drops = w->summary_drops, .selected = w->selected,
+        .intentional = w->intentional, .pressure = w->pressure, .raw_drops = w->raw_drops,
+        .address_count = w->address_count, .raw_count = w->raw_count,
+        .cores = w->addresses, .bins = w->bins, .bin_count = w->bin_count, .raw = w->raw
+    };
+}
+static const cp_address_core_t *address_core(const cp_codec_window_view_t *w, unsigned i) {
+    return w->addresses ? &w->addresses[i].core : &w->cores[i];
+}
+static const uint32_t *address_bins(const cp_codec_window_view_t *w, unsigned i) {
+    return w->addresses ? w->addresses[i].bins : w->bins + (size_t)i * w->bin_count;
+}
+static bool window_valid(const cp_codec_t *c, const cp_codec_window_view_t *w,
+                         uint32_t duration) {
     if (!c || !w || !c->summary_sequence || !c->uuid || !c->sink || !c->max_items ||
         c->max_body_bytes < 1024 || duration > w->window_ms || !w->bin_ms ||
-        (duration + w->bin_ms - 1) / w->bin_ms > CP_COLLECT_BINS ||
-        w->address_count > CP_COLLECT_ADDRESSES)
+        ((uint64_t)w->window_ms + w->bin_ms - 1) / w->bin_ms > CP_COLLECT_BINS ||
+        w->address_count > CP_COLLECT_ADDRESSES || w->raw_count > CP_COLLECT_RAW ||
+        (w->addresses && (w->cores || w->bins || w->bin_count)) ||
+        (!w->addresses && w->address_count &&
+         (!w->cores || !w->bins || w->bin_count > CP_COLLECT_BINS ||
+          w->bin_count < ((uint64_t)w->window_ms + w->bin_ms - 1) / w->bin_ms)) ||
+        (w->raw_count && !w->raw))
+        return false;
+    return true;
+}
+bool cp_codec_window(cp_codec_t *c, cp_collect_t *w, uint32_t duration) {
+    if (!w)
+        return false;
+    const cp_codec_window_view_t view = cp_codec_window_from_collect(w);
+    if (!window_valid(c, &view, duration))
+        return false;
+    unsigned before = c->raw_dropped;
+    bool ok = cp_codec_encode_window_view(c, &view, duration);
+    w->raw_drops += c->raw_dropped - before;
+    w->raw_count = 0;
+    return ok;
+}
+bool cp_codec_encode_window_view(cp_codec_t *c, const cp_codec_window_view_t *w,
+                                 uint32_t duration) {
+    if (!window_valid(c, w, duration))
         return false;
     uint64_t end = w->start_ms + duration;
-    (void)cp_codec_flush_raw(c, w);
+    unsigned before = c->raw_dropped;
+    if (w->raw_count)
+        (void)cp_codec_flush_raw_reports(c, w->raw, w->raw_count, w->window_seq);
+    uint32_t raw_drops = w->raw_drops + (c->raw_dropped - before);
     if (duration < 1000) {
         /* The wire protocol requires at least one second. Preserve selected
          * raw reports, then account for the omitted window/summary records. */
@@ -251,7 +372,8 @@ bool cp_codec_window(cp_codec_t *c, cp_collect_t *w, uint32_t duration) {
      * boundary. Preserve selected raw and account for the unrepresentable
      * aggregate instead of freezing a batch the server can never accept. */
     for (unsigned i = 0; i < w->address_count; i++) {
-        const cp_address_summary_t *a = &w->addresses[i];
+        const cp_address_core_t *a = address_core(w, i);
+        const uint32_t *bins = address_bins(w, i);
         uint64_t reports = 0;
         bool valid = a->first_ms <= a->last_ms && a->last_ms < duration;
         const cp_vehicle_evidence_t *e = &a->vehicle_evidence;
@@ -261,13 +383,14 @@ bool cp_codec_window(cp_codec_t *c, cp_collect_t *w, uint32_t duration) {
             (e->ecosystem_mask & ~CP_VEHICLE_ECOSYSTEM_MASK_ALL) ||
             (!e->parsed_reports && (e->name_brand_mask || e->exclusion_mask || e->ecosystem_mask)))
             valid = false;
-        for (unsigned k = 0; k < CP_COLLECT_BINS; k++) {
-            reports += a->bins[k];
-            if (a->bins[k] && (k < a->first_ms / w->bin_ms || k > a->last_ms / w->bin_ms))
+        unsigned bin_count = w->addresses ? CP_COLLECT_BINS : w->bin_count;
+        for (unsigned k = 0; k < bin_count; k++) {
+            reports += bins[k];
+            if (bins[k] && (k < a->first_ms / w->bin_ms || k > a->last_ms / w->bin_ms))
                 valid = false;
         }
-        if (!valid || reports != a->reports || !a->bins[a->first_ms / w->bin_ms] ||
-            !a->bins[a->last_ms / w->bin_ms]) {
+        if (!valid || reports != a->reports || !bins[a->first_ms / w->bin_ms] ||
+            !bins[a->last_ms / w->bin_ms]) {
             dropped(c, "ble_windows", 1);
             dropped(c, "address_summaries", w->address_count);
             c->unpersisted_window_reports += w->reports_seen;
@@ -295,7 +418,8 @@ bool cp_codec_window(cp_codec_t *c, cp_collect_t *w, uint32_t duration) {
         }
         cJSON *items = cp_codec_begin_items(c, count);
         for (unsigned i = first; i < first + count; i++) {
-            const cp_address_summary_t *a = &w->addresses[i];
+            const cp_address_core_t *a = address_core(w, i);
+            const uint32_t *address_counts = address_bins(w, i);
             cJSON *o = cp_codec_object(c, items, NULL);
             char mac[18];
             mac_text(a->address, mac);
@@ -318,8 +442,8 @@ bool cp_codec_window(cp_codec_t *c, cp_collect_t *w, uint32_t duration) {
             cp_codec_number(c, o, "last_offset_ms", a->last_ms);
             rssi_json(c, o, a->samples, a->rssi_min, a->rssi_max, a->rssi_sum);
             cJSON *bins = cp_codec_array(c, o, "bins");
-            for (unsigned k = 0; k < (duration + w->bin_ms - 1) / w->bin_ms; k++)
-                cp_codec_number(c, bins, NULL, a->bins[k]);
+            for (unsigned k = 0; k < ((uint64_t)duration + w->bin_ms - 1) / w->bin_ms; k++)
+                cp_codec_number(c, bins, NULL, address_counts[k]);
             const cp_vehicle_evidence_t *e = &a->vehicle_evidence;
             cJSON *vehicle = cp_codec_object(c, o, "vehicle_evidence");
             cp_codec_string(c, vehicle, "schema_version", CP_VEHICLE_SCHEMA_VERSION);
@@ -351,7 +475,7 @@ bool cp_codec_window(cp_codec_t *c, cp_collect_t *w, uint32_t duration) {
     cp_codec_number(c, r, "selected_reports", w->selected);
     cp_codec_number(c, r, "intentional_skips", w->intentional);
     cp_codec_number(c, r, "pressure_skips", w->pressure);
-    cp_codec_number(c, r, "drops", w->raw_drops);
+    cp_codec_number(c, r, "drops", raw_drops);
     cJSON *f = cp_codec_array(c, o, "quality_flags");
     if (duration < w->window_ms)
         cp_codec_string(c, f, NULL, "partial_window");
@@ -359,7 +483,7 @@ bool cp_codec_window(cp_codec_t *c, cp_collect_t *w, uint32_t duration) {
         cp_codec_string(c, f, NULL, "unique_table_overflow");
     if (w->aggregation_drops)
         cp_codec_string(c, f, NULL, "aggregation_drops");
-    if (w->raw_drops)
+    if (raw_drops)
         cp_codec_string(c, f, NULL, "raw_drops");
     if (w->pressure)
         cp_codec_string(c, f, NULL, "raw_pressure_pause");

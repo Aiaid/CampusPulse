@@ -3,12 +3,16 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "esp_err.h"
-#define CP_SETTINGS_VERSION 2u
+#define CP_SETTINGS_VERSION 3u
 #define CP_WIFI_PERSONAL 0u
 #define CP_WIFI_OPEN 1u
 #define CP_WIFI_ENTERPRISE_PEAP 2u
 #define CP_API_ORIGIN "https://pulse.anend.net"
 #define CP_SETTINGS_TOKEN_SIZE 193u
+#define CP_MQTT_PRODUCTION_URI "mqtts://q9a692f8.ala.cn-hangzhou.emqxsl.cn:8883"
+#define CP_MQTT_CA_PROFILE "public-ca-bundle"
+#define CP_SETTINGS_MQTT_USERNAME_SIZE 65u
+#define CP_SETTINGS_MQTT_PASSWORD_SIZE 97u
 /* Application-owned ordinary NVS; this is not encryption at rest. */
 typedef struct {
     uint32_t version;
@@ -19,10 +23,15 @@ typedef struct {
     char api_origin[64];
     uint32_t wifi_security;
     char eap_username[129], eap_identity[129], eap_password[129];
+    char mqtt_uri[64], mqtt_username[CP_SETTINGS_MQTT_USERNAME_SIZE];
+    char mqtt_password[CP_SETTINGS_MQTT_PASSWORD_SIZE], mqtt_namespace[16];
 } cp_settings_t;
 /* Does not erase NVS on any initialization/recovery error. */
 esp_err_t cp_settings_init(void);
 bool cp_settings_validate(const cp_settings_t *settings);
+/* All-empty MQTT fields are accepted by validate only to retain migrated v1/v2
+ * credentials. Production network admission and new candidates require ready. */
+bool cp_settings_mqtt_ready(const cp_settings_t *settings);
 /* Missing enrollment returns ESP_ERR_NOT_FOUND. Output is cleared on errors. */
 esp_err_t cp_settings_load(cp_settings_t *out);
 /* Call only after the candidate's network/cloud validation succeeds. Writes an

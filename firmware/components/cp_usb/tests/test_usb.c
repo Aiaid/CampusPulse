@@ -44,12 +44,12 @@ static void bounds_and_resync(void)
     cp_usb_frame_parser_t p;cp_usb_frame_init(&p);uint8_t frame[CP_USB_FRAME_MAX],max_json[CP_USB_JSON_MAX+1];
     memcpy(max_json,"{\"x\":\"",6);memset(max_json+6,'a',CP_USB_JSON_MAX-8);memcpy(max_json+CP_USB_JSON_MAX-2,"\"}",2);max_json[CP_USB_JSON_MAX]=0;
     size_t n=0;assert(cp_usb_frame_encode(ID,max_json,CP_USB_JSON_MAX,frame,sizeof frame,&n)&&n==CP_USB_FRAME_MAX);
-    unsigned before=frames;cp_usb_frame_feed(&p,frame,n,receive,&frames);assert(frames==before+1&&received_length==1024);assert_clear(&p);
-    assert(!cp_usb_frame_encode(ID,max_json,1025,frame,sizeof frame,&n)&&!n);
-    assert(!cp_usb_frame_encode(ID,max_json,1024,frame,sizeof frame-1,&n)&&!n);
+    unsigned before=frames;cp_usb_frame_feed(&p,frame,n,receive,&frames);assert(frames==before+1&&received_length==CP_USB_JSON_MAX);assert_clear(&p);
+    assert(!cp_usb_frame_encode(ID,max_json,CP_USB_JSON_MAX+1,frame,sizeof frame,&n)&&!n);
+    assert(!cp_usb_frame_encode(ID,max_json,CP_USB_JSON_MAX,frame,sizeof frame-1,&n)&&!n);
     uint8_t oversized[CP_USB_FRAME_MAX+2];size_t good=encode("{}",frame),header=good-3;
-    memcpy(oversized,frame,header);memset(oversized+header,'a',1025);oversized[header+1025]='\n';
-    cp_usb_frame_feed(&p,oversized,header+1026,receive,&frames);assert(frames==before+1);assert_clear(&p);
+    memcpy(oversized,frame,header);memset(oversized+header,'a',CP_USB_JSON_MAX+1);oversized[header+CP_USB_JSON_MAX+1]='\n';
+    cp_usb_frame_feed(&p,oversized,header+CP_USB_JSON_MAX+2,receive,&frames);assert(frames==before+1);assert_clear(&p);
     good=encode("{\"v\":1,\"op\":\"status\"}",frame);cp_usb_frame_feed(&p,frame,good,receive,&frames);assert(frames==before+2);
     frame[sizeof(CP_USB_PREFIX)-1]='A';cp_usb_frame_feed(&p,frame,good,receive,&frames);assert(frames==before+2);
     const uint8_t invalid[]={0xc0,0x80};assert(!cp_usb_utf8_valid(invalid,sizeof invalid));

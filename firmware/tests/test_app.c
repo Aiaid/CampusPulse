@@ -45,6 +45,9 @@ static void *input_context;
 static cp_input_event_t last_diagnostic_input;
 static cp_board_view_t last_view;
 static int64_t now_us;
+static unsigned debug_samples;
+static uint32_t heap_free=43000, heap_largest=22000;
+static cp_debug_domain_t domain_view;
 static jmp_buf scheduler_exit;
 
 static void run_one_supervisor_round(bool before_boot)
@@ -58,6 +61,16 @@ static void run_one_supervisor_round(bool before_boot)
 }
 
 int64_t esp_timer_get_time(void) { return now_us; }
+size_t heap_caps_get_free_size(uint32_t caps) { assert(caps==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)); return heap_free; }
+size_t heap_caps_get_total_size(uint32_t caps) { assert(caps==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)); return 320000; }
+size_t heap_caps_get_largest_free_block(uint32_t caps) { assert(caps==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)); return heap_largest; }
+size_t heap_caps_get_minimum_free_size(uint32_t caps) { assert(caps==MALLOC_CAP_8BIT); return 16464; }
+void cp_network_debug_snapshot(cp_debug_snapshot_t *out) {
+    ++debug_samples;
+    out->wifi_connected=true;
+    memcpy(out->wifi_ssid,"synthetic",10);
+}
+void cp_pipeline_domain_snapshot(cp_debug_domain_t *out) { *out = domain_view; }
 const char *esp_err_to_name(esp_err_t error) { (void)error; return "synthetic_error"; }
 
 QueueHandle_t xQueueCreate(unsigned capacity, size_t item_size)
@@ -109,7 +122,12 @@ int xTaskCreate(void (*entry)(void *), const char *name, unsigned stack,
                 void *context, unsigned priority, TaskHandle_t *out)
 {
     assert(!board_calls && !input_handler && live_queues == 1);
-    assert(!strcmp(name, "cp_supervisor") && stack && priority);
+    assert(!strcmp(name, "cp_supervisor") && priority);
+#if CONFIG_CP_NETWORK_MQTT_WSS
+    assert(stack == 6144);
+#else
+    assert(stack == 8192);
+#endif
     if (fail_task) return pdFALSE;
     task_entry = entry;
     task_context = context;
@@ -267,6 +285,11 @@ static void reset_fixture(void)
     s_input_drops = 0;
     memset(&s_core, 0, sizeof s_core);
     memset(s_node_id, 0, sizeof s_node_id);
+    memset(&s_debug,0,sizeof s_debug);
+    memset(&domain_view,0,sizeof domain_view);
+    s_page=CP_DEVICE_PAGE_DEBUG;
+    s_debug_sampled=false;s_debug_sample_ms=0;debug_samples=0;
+    heap_free=43000;heap_largest=22000;
     fail_queue = fail_task = display_ready = input_ready = false;
     runtime_prepare_calls = runtime_start_calls = runtime_snapshot_calls = 0;
     runtime_setup_calls = runtime_resume_calls = 0;
@@ -510,6 +533,99 @@ static void test_usb_console_is_explicit_and_separate(void)
 #endif
 }
 
+static void test_debug_sampling_and_queue_provenance(void)
+{
+    reset_fixture();
+    assert(cp_app_start()==ESP_OK);
+    runtime_view.pipeline.capacity_slots=341;
+    runtime_view.pipeline.pending=5;
+    runtime_view.pipeline.aggregation_drops=12;
+    run_one_supervisor_round(false);
+    assert(last_view.debug.heap_known && last_view.debug.heap_internal_free==43000);
+    assert(last_view.debug.heap_internal_total==320000 && last_view.debug.heap_boot_min_8bit==16464);
+    assert(last_view.debug.heap_sample_min_free==43000 && last_view.debug.heap_sample_min_largest==22000);
+#if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
+    assert(debug_samples==1 && last_view.debug.queue_known);
+    assert(last_view.debug.queue_pending==5 && last_view.debug.queue_capacity==341);
+    assert(last_view.debug.aggregation_drops==12);
+#else
+    assert(!debug_samples && !last_view.debug.queue_known);
+#endif
+    heap_free=32000;heap_largest=18000;
+    run_one_supervisor_round(false); /* Only 500ms: cached telemetry. */
+    assert(last_view.debug.heap_internal_free==43000);
+    run_one_supervisor_round(false);
+    assert(last_view.debug.heap_sample_min_free==32000 && last_view.debug.heap_sample_min_largest==18000);
+    heap_free=56000;heap_largest=24000;
+    run_one_supervisor_round(false);
+    run_one_supervisor_round(false);
+    assert(last_view.debug.heap_internal_free==56000 && last_view.debug.heap_internal_largest==24000);
+    assert(last_view.debug.heap_sample_min_free==32000 && last_view.debug.heap_sample_min_largest==18000);
+#if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
+    assert(debug_samples==3);
+    runtime_view.pipeline.storage_ready=false;
+    run_one_supervisor_round(false);
+    run_one_supervisor_round(false);
+    assert(!last_view.debug.queue_known); /* Never publish zero as a healthy queue. */
+#endif
+}
+
+static void test_device_paging_preserves_setup_and_domain_samples(void)
+{
+    reset_fixture();
+    assert(cp_app_start() == ESP_OK);
+#if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
+    domain_view.known = true;
+    domain_view.reports_seen = 123;
+    domain_view.vehicle_candidates = 3;
+    domain_view.rssi_samples = 20;
+    runtime_view.pipeline.reports_seen = 456;
+    runtime_view.pipeline.windows_committed = 7;
+    runtime_view.pipeline.summaries_committed = 42;
+    runtime_view.network.clock_trusted = true;
+    runtime_view.network.clock_epoch = 3;
+    runtime_view.network.clock_uncertainty_ms = 500;
+    run_one_supervisor_round(false);
+    assert(last_view.page == CP_DEVICE_PAGE_DEBUG);
+    assert(last_view.debug.domain.known && last_view.debug.domain.reports_seen == 123);
+    assert(last_view.debug.domain.vehicle_candidates == 3);
+    assert(last_view.debug.reports_total == 456 && last_view.debug.windows_total == 7);
+    assert(last_view.debug.summaries_total == 42 && last_view.debug.clock_epoch == 3);
+    cp_input_event_t event = {.button = CP_BUTTON_UP, .kind = CP_INPUT_CLICK};
+    input_handler(&event, input_context); run_one_supervisor_round(false);
+    assert(last_view.page == CP_DEVICE_PAGE_ELEVATOR); // Wrap backward.
+    event.button = CP_BUTTON_DOWN;
+    for (unsigned page = 0; page < CP_DEVICE_PAGE_COUNT; page++) {
+        input_handler(&event, input_context); run_one_supervisor_round(false);
+        assert(last_view.page == (cp_device_page_t)page);
+    }
+    assert(!runtime_setup_calls && !runtime_resume_calls);
+    event.kind = CP_INPUT_PRESS;
+    input_handler(&event, input_context); run_one_supervisor_round(false);
+    assert(last_view.page == CP_DEVICE_PAGE_ELEVATOR);
+    event.kind = CP_INPUT_LONG;
+    input_handler(&event, input_context); run_one_supervisor_round(false);
+    assert(last_view.page == CP_DEVICE_PAGE_ELEVATOR && !runtime_setup_calls);
+    event.button = CP_BUTTON_OK;
+    input_handler(&event, input_context); run_one_supervisor_round(false);
+    assert(runtime_setup_calls == 1 && requested_setup_mode == CP_PROVISION_BLE);
+    assert(last_view.page == CP_DEVICE_PAGE_ELEVATOR);
+    runtime_view.provision.active = true;
+    runtime_view.provision.mode = CP_PROVISION_USB;
+    event.kind = CP_INPUT_CLICK; event.button = CP_BUTTON_DOWN;
+    input_handler(&event, input_context); run_one_supervisor_round(false);
+    assert(runtime_setup_calls == 2 && requested_setup_mode == CP_PROVISION_SOFTAP);
+    assert(last_view.page == CP_DEVICE_PAGE_ELEVATOR && last_view.setup_usb);
+    event.button = CP_BUTTON_UP;
+    input_handler(&event, input_context); run_one_supervisor_round(false);
+    assert(runtime_setup_calls == 3 && requested_setup_mode == CP_PROVISION_BLE);
+    event.button = CP_BUTTON_OK; event.kind = CP_INPUT_LONG;
+    input_handler(&event, input_context); run_one_supervisor_round(false);
+    assert(runtime_resume_calls == 1 && last_view.page == CP_DEVICE_PAGE_ELEVATOR);
+    assert(!cp_collection_allowed(cp_core_decide(&s_core, (uint64_t)now_us / 1000)));
+#endif
+}
+
 int main(void)
 {
     test_allocation_failures_before_callbacks();
@@ -521,8 +637,10 @@ int main(void)
     test_runtime_setup_and_resume_input_routes();
     test_usb_console_is_explicit_and_separate();
     test_actual_capture_and_pressure_status();
+    test_debug_sampling_and_queue_provenance();
+    test_device_paging_preserves_setup_and_domain_samples();
     reset_fixture();
-    printf("actual cp_app startup/supervisor (diagnostics=%d): 8 host test groups passed\n",
+    printf("actual cp_app startup/supervisor (diagnostics=%d): 11 host test groups passed\n",
            CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS);
     return 0;
 }

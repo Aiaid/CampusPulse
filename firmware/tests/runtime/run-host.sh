@@ -3,7 +3,9 @@ set -euo pipefail
 CP_FW="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 CP_TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cp-runtime-test.XXXXXX")"
 trap 'rm -rf "$CP_TEST_DIR"' EXIT
+for CP_MQTT in 0 1; do
 clang -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+  -DCONFIG_CP_NETWORK_MQTT_WSS="$CP_MQTT" -DCONFIG_CP_NETWORK_MQTT_NATIVE_TLS="$CP_MQTT" \
   -I"$CP_FW/tests/runtime" -I"$CP_FW/components/cp_runtime/include" \
   -I"$CP_FW/components/cp_core/include" -I"$CP_FW/components/cp_settings/include" \
   -I"$CP_FW/components/cp_network/include" -I"$CP_FW/components/cp_pipeline/include" \
@@ -20,4 +22,6 @@ for CP_CASE in enrolled_boot unassigned_boot headless_explicit_usb headless_usb_
   memory_start_recovery memory_pause_recovery memory_expired memory_invalid_policy memory_stop_failure init_fault_usb_setup init_fault_no_retry http_start_deferral \
   radio_start_deferral radio_deferred_expiry radio_deferred_rejection radio_claim_rechecks_policy radio_recovery_deferral radio_apply_error_releases no_false_activation; do
   "$CP_TEST_DIR/test-runtime" "$CP_CASE"
+done
+if [[ "$CP_MQTT" == 1 ]]; then "$CP_TEST_DIR/test-runtime" legacy_mqtt_setup; fi
 done

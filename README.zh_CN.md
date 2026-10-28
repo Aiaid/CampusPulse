@@ -1,5 +1,12 @@
 # CampusPulse
 
+设备的正式默认上传链路已改为 **MQTT/TLS → 杭州 EMQX → Cloudflare**，
+入库回执仍由 CF 返回并由设备校验。管理员一次生成、导入并验证一批独立 MQTT
+账号后，后续登记设备会自动分配可用账号；蓝牙、USB 和设备热点配网负责写入，
+单独修改 Wi-Fi 会保留已有 MQTT 身份。凭据池就绪、设备保存成功和实际入库是不同状态。
+详见[正式 MQTT 运维](docs/notes/mqtt-production.md)和[公开 CA 证书说明](firmware/certs/README.md)。
+公开 CA 可以随代码版本管理，密码、私钥和配网材料不进入 Git；实际硬件迁移单独验收。
+
 [English](README.md) · [体验原型](https://pulse.anend.net) · [文档索引](docs/README.md)
 
 **Hackathon 截止时间：北京时间 2026 年 10 月 25 日 20:00（UTC+8，即 UTC 12:00）。**

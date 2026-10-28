@@ -3,7 +3,9 @@
 #include "cp_core.h"
 #include "cp_runtime.h"
 #include "cp_usb.h"
+#include "cp_perf.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -12,6 +14,16 @@
 #include "sdkconfig.h"
 #include <stdio.h>
 
+/* ESP-IDF task stack sizes are bytes. Repeated ten-minute C3 HTTP/profile runs
+ * used 4,460 bytes of the former 8 KiB supervisor stack (minimum free 3,732).
+ * The MQTT budget leaves 1,684 measured bytes; MQTT/BLE and other paths still
+ * need on-device high-water verification, not just a passing host test. */
+#if CONFIG_CP_NETWORK_MQTT_WSS
+enum { CP_SUPERVISOR_STACK_BYTES = 6144 };
+#else
+enum { CP_SUPERVISOR_STACK_BYTES = 8192 };
+#endif
+
 static const char *TAG = "cp_app";
 static TaskHandle_t s_task;
 static QueueHandle_t s_input;
@@ -19,8 +31,82 @@ static uint32_t s_input_drops;
 static bool s_boot_ready, s_diagnostics, s_diagnostic_ui;
 static cp_core_t s_core;
 static char s_node_id[CP_NODE_ID_SIZE];
+/* Fixed storage in the supervisor; no new task or heap allocation. Minima are
+ * one-second samples, deliberately distinct from the SDK boot low-water mark. */
+static cp_debug_snapshot_t s_debug;
+static cp_device_page_t s_page;
+static bool s_debug_sampled;
+static uint64_t s_debug_sample_ms;
+static void sample_debug(const cp_runtime_snapshot_t *runtime, uint64_t now) {
+    if (s_debug_sampled && now >= s_debug_sample_ms && now-s_debug_sample_ms < 1000) return;
+    const uint32_t caps=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;
+    s_debug.heap_internal_free=(uint32_t)heap_caps_get_free_size(caps);
+    s_debug.heap_internal_total=(uint32_t)heap_caps_get_total_size(caps);
+    s_debug.heap_internal_largest=(uint32_t)heap_caps_get_largest_free_block(caps);
+    s_debug.heap_boot_min_8bit=(uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+    if (!s_debug_sampled || s_debug.heap_internal_free < s_debug.heap_sample_min_free)
+        s_debug.heap_sample_min_free=s_debug.heap_internal_free;
+    if (!s_debug_sampled || s_debug.heap_internal_largest < s_debug.heap_sample_min_largest)
+        s_debug.heap_sample_min_largest=s_debug.heap_internal_largest;
+    s_debug.heap_known=true;
+#if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
+    cp_network_debug_snapshot(&s_debug);
+    s_debug.queue_known=runtime->pipeline.storage_ready && runtime->pipeline.capacity_slots>0;
+    s_debug.queue_pending=runtime->pipeline.pending;
+    s_debug.queue_capacity=runtime->pipeline.capacity_slots;
+    s_debug.queue_quarantined=runtime->pipeline.quarantined_slots;
+    s_debug.ble_collecting=runtime->pipeline.collecting;
+    s_debug.ble_memory_paused=runtime->pipeline.memory_paused;
+    s_debug.ble_raw_paused=runtime->pipeline.raw_paused || runtime->pipeline.memory_raw_paused;
+    s_debug.ble_pressure_paused=runtime->pipeline.pressure_paused;
+    s_debug.aggregation_drops=runtime->pipeline.aggregation_drops;
+    s_debug.summary_drops=runtime->pipeline.summary_drops;
+    s_debug.raw_drops=runtime->pipeline.raw_drops;
+    s_debug.storage_drops=runtime->pipeline.storage_drops;
+    s_debug.windows_dropped=runtime->pipeline.windows_dropped;
+    cp_pipeline_domain_snapshot(&s_debug.domain);
+    s_debug.reports_total=runtime->pipeline.reports_seen;
+    s_debug.windows_total=runtime->pipeline.windows_committed;
+    s_debug.summaries_total=runtime->pipeline.summaries_committed;
+    s_debug.clock_trusted=runtime->network.clock_trusted;
+    s_debug.clock_estimated=runtime->network.clock_estimated;
+    s_debug.clock_epoch=runtime->network.clock_epoch;
+    s_debug.clock_uncertainty_ms=runtime->network.clock_uncertainty_ms;
+#else
+    (void)runtime;
+#endif
+    s_debug_sampled=true;
+    s_debug_sample_ms=now;
+}
 #if !CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS
 static esp_err_t s_runtime_error;
+static void log_pipeline_state(const cp_runtime_snapshot_t *runtime) {
+    static uint64_t last_ms;
+    static bool logged;
+    uint64_t now=(uint64_t)esp_timer_get_time()/1000;
+    if (logged && now>=last_ms && now-last_ms<30000) return;
+    logged=true;
+    last_ms=now;
+    const cp_pipeline_snapshot_t *p=&runtime->pipeline;
+    const uint32_t caps=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;
+    (void)p;
+    (void)caps; /* Keep log-disabled builds valid without querying the heap. */
+    /* Numeric state remains observable even while no window can be persisted.
+     * A stopped radio must never look like a successful zero-loss experiment. */
+    ESP_LOGI(TAG,"pipeline_state collecting=%u memory_paused=%u pressure_paused=%u stop_failed=%u pending=%lu free_slots=%lu reports_seen=%lu callbacks_dropped=%lu observer_rejected=%lu windows_dropped=%lu storage_drops=%lu summary_drops=%lu raw_drops=%lu upload_failures=%lu ack_failures=%lu sealed_pending=%lu final_window_pending=%lu seal_overflows=%lu seal_wait_max_ms=%lu persist_max_ms=%lu free=%u largest=%u",
+        (unsigned)p->collecting,(unsigned)p->memory_paused,
+        (unsigned)p->pressure_paused,(unsigned)p->stop_failed,
+        (unsigned long)p->pending,(unsigned long)p->free_slots,
+        (unsigned long)p->reports_seen,(unsigned long)p->callback_queue_drops,
+        (unsigned long)p->collector_rejections,(unsigned long)p->windows_dropped,
+        (unsigned long)p->storage_drops,(unsigned long)p->summary_drops,
+        (unsigned long)p->raw_drops,(unsigned long)p->upload_failures,
+        (unsigned long)p->ack_failures,(unsigned long)p->sealed_pending,
+        (unsigned long)p->final_window_pending,(unsigned long)p->seal_overflows,
+        (unsigned long)p->seal_wait_max_ms,(unsigned long)p->persist_max_ms,
+        (unsigned)heap_caps_get_free_size(caps),
+        (unsigned)heap_caps_get_largest_free_block(caps));
+}
 static bool begin_usb_setup(void *unused) {
     (void)unused;
     return cp_runtime_request_setup(CP_PROVISION_USB);
@@ -33,8 +119,10 @@ static void input_received(const cp_input_event_t *event, void *context) {
         __atomic_add_fetch(&s_input_drops, 1u, __ATOMIC_RELAXED);
 }
 static void show_status(const cp_runtime_snapshot_t *runtime) {
-    (void)runtime;
+    sample_debug(runtime,(uint64_t)esp_timer_get_time()/1000);
     cp_board_view_t view = {.battery_percent = cp_board_battery_percent()};
+    view.debug=s_debug;
+    view.page=s_page;
     snprintf(view.node_id, sizeof(view.node_id), "%s", s_node_id);
     snprintf(view.board, sizeof(view.board), "%s", cp_board_profile()->board_id);
     snprintf(view.network, sizeof(view.network), "NEEDS WIFI SETUP");
@@ -118,6 +206,11 @@ static void supervisor(void *context) {
                         (void)cp_runtime_request_setup(CP_PROVISION_BLE);
                     if (event.button == CP_BUTTON_DOWN)
                         (void)cp_runtime_request_setup(CP_PROVISION_SOFTAP);
+                } else if (!runtime.provision.active && event.kind == CP_INPUT_CLICK) {
+                    if (event.button == CP_BUTTON_DOWN)
+                        s_page=(cp_device_page_t)((s_page+1)%CP_DEVICE_PAGE_COUNT);
+                    else if (event.button == CP_BUTTON_UP)
+                        s_page=(cp_device_page_t)((s_page+CP_DEVICE_PAGE_COUNT-1)%CP_DEVICE_PAGE_COUNT);
                 }
             }
 #endif
@@ -132,12 +225,14 @@ static void supervisor(void *context) {
             show_status(NULL);
 #else
             cp_runtime_snapshot(&runtime);
+            log_pipeline_state(&runtime);
             show_status(&runtime);
 #endif
         }
         if (stack_sample_rounds < 10 && ++stack_sample_rounds == 10)
             ESP_LOGI(TAG, "Supervisor minimum free stack: %u bytes",
                      (unsigned)uxTaskGetStackHighWaterMark(NULL));
+        cp_perf_poll();
     }
 }
 esp_err_t cp_app_start(void) {
@@ -161,7 +256,7 @@ esp_err_t cp_app_start(void) {
         return ESP_ERR_NO_MEM;
     /* Start the consumer before enabling callbacks; task failure is still safe
      * to clean up because no input driver holds a reference to the queue. */
-    if (xTaskCreate(supervisor, "cp_supervisor", 8192, NULL, 5, &s_task) != pdPASS) {
+    if (xTaskCreate(supervisor, "cp_supervisor", CP_SUPERVISOR_STACK_BYTES, NULL, 5, &s_task) != pdPASS) {
         vQueueDelete(s_input);
         s_input = NULL;
         return ESP_ERR_NO_MEM;

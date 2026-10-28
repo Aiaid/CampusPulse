@@ -1,0 +1,30 @@
+menu "CampusPulse network transport"
+config CP_NETWORK_MQTT_WSS
+    bool "Use MQTT RPC transport (Cloudflare WSS or native TLS)"
+    default y
+    select MQTT_PROTOCOL_311
+    select MQTT_TRANSPORT_SSL
+    select MQTT_TRANSPORT_WEBSOCKET if !CP_NETWORK_MQTT_NATIVE_TLS
+    select MQTT_TRANSPORT_WEBSOCKET_SECURE if !CP_NETWORK_MQTT_NATIVE_TLS
+    help
+        Production transport for contact, configuration, activation and frozen
+        ingest RPCs. Disable explicitly only for HTTPS diagnostics. MQTT PUBACK never replaces the
+        exact durable Cloudflare application ACK. Physical memory, reconnection
+        and capture acceptance are required before enabling a field build.
+config CP_NETWORK_MQTT_NATIVE_TLS
+    bool "Use native MQTT/TLS with independent broker credentials"
+    depends on CP_NETWORK_MQTT_WSS
+    default y
+    help
+        Connect to a native MQTT/TLS broker instead of the Cloudflare WSS
+        gateway. The broker needs a separate RPC relay; broker PUBACK does not
+        acknowledge Cloudflare persistence. Never reuse a Cloudflare device
+        token as the broker password. The existing runtime token is preserved.
+config CP_NETWORK_MQTT_WSS_URI
+    string "Public gateway WSS URL (no credentials or query)"
+    depends on CP_NETWORK_MQTT_WSS && !CP_NETWORK_MQTT_NATIVE_TLS
+    default ""
+    help
+        Set wss://host/mqtt through an external/private sdkconfig override.
+        Device bearer credentials still come only from runtime settings.
+endmenu

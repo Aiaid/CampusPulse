@@ -22,6 +22,12 @@ The service UUID is `f0c00000-7b3a-4f1d-a848-8baf42c67a01`; the session and
 protected application characteristics end in `ff51` and `ff52` respectively.
 Each request is a write-with-response then a read, with one request outstanding.
 Encrypted messages are at most 512 bytes, including the 16-byte GCM tag.
+The plaintext maximum remains 496 bytes. Larger configure JSON uses authenticated
+`configure_chunk` requests (`v:1`, `data`, and `reset:true` on the first chunk),
+followed by `configure_commit`. Measure the UTF-8 bytes of each complete JSON
+wrapper including escapes; do not split by a fixed character count. Each chunk
+reply returns cumulative `received_bytes`. Assembly is bounded to 1536 bytes in
+temporary heap memory, wiped/freed before candidate validation, expiry or stop.
 
 The wrapper validates protobuf shape, bounds, public values and session phase
 before calling SDK handlers. Authentication and expiry checks share a
@@ -64,7 +70,7 @@ a failed network test. A changed factory identity closes the connection before
 any candidate credential is sent.
 
 `cp_provision_usb_exchange()` returns an allocated response to its caller, which
-must clear/free it. Payloads are bounded to 1024 bytes. Status remains available
+must clear/free it. Payloads are bounded to 1536 UTF-8 bytes. Status remains available
 while radio setup has stopped for network validation; it returns no PIN, nonce,
 hotspot password, internal secret or cloud device credential. USB RX and TX have
 one owner and bounded buffers. The native driver is USB Serial/JTAG, never UART0
@@ -76,7 +82,8 @@ independent driver/profile acceptance.
 The device hosts a WPA2-personal hotspot with a separate 12-character
 unambiguous base32 password, one client and a page at `http://192.168.4.1`.
 The local form uses the eight-digit PIN and nonce, fixed Host/origin and JSON
-content type, bounded scalar parsing and duplicate/NUL rejection. It relies on
+content type, bounded parsing (only `mqtt` may be a nested object) and
+duplicate/NUL rejection. It relies on
 the WPA2 link, not HTTP TLS. It is not a plaintext protocomm endpoint.
 
 Users copy the node-bound cloud handoff while online, join the device hotspot,
@@ -91,9 +98,32 @@ local hotspot remain distinct routes. A PWA does not itself add a missing API.
 `cp_provision_start(mode,node_id,master_secret,submit,ctx)` accepts the existing
 internal 32-hex master. The callback copies candidate settings and a lowercase
 UUIDv4 attempt ID to the controller queue and returns promptly. It performs no
-Wi-Fi, TLS or NVS work. Only independent `cpd_` device credentials are accepted;
-API origin is fixed. Target networks currently support WPA2 personal, not
-Enterprise/PEAP or open networks.
+Wi-Fi, TLS or NVS work. API origin is fixed. Target networks support WPA2
+personal, open networks and PEAP/MSCHAPv2 enterprise authentication. Enterprise
+RADIUS server certificates are not checked; MQTT/TLS validates the public CA
+chain, hostname and validity dates using the full SDK CA bundle.
+
+Production candidates include exactly `mqtt:{uri,username,password,namespace}`.
+The fixed public URI is `mqtts://q9a692f8.ala.cn-hangzhou.emqxsl.cn:8883` and
+the public CA profile is `public-ca-bundle`. Username/password are independent
+per-device broker credentials, bounded to 64/96 printable non-space ASCII bytes;
+namespace matches `[a-z0-9_-]{1,15}`. Topic namespaces may differ from the factory
+node: requests and replies use the provisioned namespace, while the MQTT client
+ID and canonical body identity retain the factory node and boot ID. Cloud
+device tokens are never used as broker passwords.
+
+Settings v3 appends these MQTT fields. Reads migrate exact v1/v2 blob layouts
+only in RAM and never rewrite old slots or selectors. Migrated credentials
+without MQTT enter setup with `mqtt_setup_required`; they remain available for
+same-node `reuse_saved_credential`. That mode preserves both credentials and
+accepts a new explicit MQTT object for migration. New production candidates and
+production network admission require complete MQTT settings. `info` exposes
+`mqtt_required` and `has_saved_mqtt` booleans; physical USB also reports the public
+broker URI and CA profile. No endpoint returns saved passwords or tokens.
+
+Production builds use native MQTT/TLS by default, with no HTTPS upload fallback.
+An explicit diagnostic configuration may disable MQTT or select the legacy WSS
+adapter. Broker credentials have no compile-time Kconfig fallback.
 
 An accepted attempt freezes the complete length-framed settings digest. Exact
 retries return the current known state; changing the body under the same ID is

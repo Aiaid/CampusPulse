@@ -12,6 +12,7 @@
 #include "esp_bt.h"
 #include "esp_app_desc.h"
 #include "cJSON.h"
+#include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include <stdlib.h>
@@ -19,7 +20,7 @@
 #include <string.h>
 #include <ctype.h>
 
-#define REQUEST_MAX 1024
+#define REQUEST_MAX 1536
 #define SESSION_US (5LL * 60 * 1000000)
 #define MAX_FAILURES 5
 static cp_provision_snapshot_t state;
@@ -48,6 +49,8 @@ static bool have_previous_attempt;
 static esp_err_t diagnostic_history_error;
 static cp_provision_credential_resolver_fn credential_resolver;
 static void *credential_context;
+static char *chunk_json;
+static size_t chunk_used;
 static const char *str(const cJSON *obj, const char *key) {
     const cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, key);
     return cJSON_IsString(item) ? item->valuestring : NULL;
@@ -57,6 +60,7 @@ static bool same(const char *a, const char *b) {
     unsigned diff = 0; for (size_t i = 0; a[i]; i++) diff |= (unsigned char)a[i] ^ (unsigned char)b[i]; return diff == 0;
 }
 static void wipe(void *p, size_t n) { volatile unsigned char *v = p; while (n--) *v++ = 0; }
+static void clear_chunks(void){if(chunk_json){wipe(chunk_json,REQUEST_MAX+1);free(chunk_json);}chunk_json=NULL;chunk_used=0;}
 static bool take_session(void) {
     SemaphoreHandle_t mutex=__atomic_load_n(&session_mutex,__ATOMIC_ACQUIRE);
     if(!mutex) {
@@ -71,6 +75,7 @@ static void give_session(void){xSemaphoreGive(session_mutex);}
 static bool session_allowed(void) {
     if(!state.active || security_fatal)return false;
     if(proof_failures>=MAX_FAILURES || esp_timer_get_time()>=expires) {
+        clear_chunks();
         cp_provision_set_status(proof_failures>=MAX_FAILURES?"locked":"expired","Start a new setup session");
         portENTER_CRITICAL(&lock);wipe(state.proof,sizeof state.proof);wipe(state.ap_password,sizeof state.ap_password);portEXIT_CRITICAL(&lock);
         return false;
@@ -110,8 +115,8 @@ void cp_provision_set_previous_attempt(const cp_network_attempt_t *value,esp_err
     if(valid)previous_attempt=*value;else memset(&previous_attempt,0,sizeof previous_attempt);
     diagnostic_history_error=history_error;portEXIT_CRITICAL(&lock);
 }
-static bool saved_credential(const char *node,char *token,size_t capacity,uint32_t *generation) {
-    return credential_resolver&&credential_resolver(node,token,capacity,generation,credential_context);
+static bool saved_credential(const char *node,cp_settings_t *saved,uint32_t *generation) {
+    return credential_resolver&&credential_resolver(node,saved,generation,credential_context);
 }
 static cJSON *diagnostic_json(const cp_network_diagnostic_t *d) {
     cJSON *o=cJSON_CreateObject();if(!o)return NULL;
@@ -125,7 +130,7 @@ static cJSON *diagnostic_json(const cp_network_diagnostic_t *d) {
 }
 static bool copy_field(char *dest, size_t cap, const cJSON *obj, const char *key) { const char *v = str(obj, key); if (!v || strlen(v) >= cap) return false; memcpy(dest, v, strlen(v) + 1); return true; }
 static cJSON *parse_request(const char *data, size_t len) {
-    /* All v1 fields are scalar. Bound nesting before cJSON recursion. */
+    /* Only mqtt may contain a second-level scalar object. */
     unsigned depth = 0; bool quoted = false, escaped = false;
     for (size_t i = 0; i < len; i++) {
         unsigned char ch = data[i]; if (!ch) return NULL;
@@ -139,54 +144,60 @@ static cJSON *parse_request(const char *data, size_t len) {
     while (end && end < data + len && isspace((unsigned char)*end)) ++end;
     if (!cJSON_IsObject(r) || end != data + len) { cJSON_Delete(r); return NULL; }
     for(cJSON *a=r->child;a;a=a->next){
-        if(cJSON_IsArray(a)||cJSON_IsObject(a)){cJSON_Delete(r);return NULL;}
+        if(cJSON_IsArray(a)||(cJSON_IsObject(a)&&strcmp(a->string,"mqtt"))){cJSON_Delete(r);return NULL;}
+        if(cJSON_IsObject(a))for(cJSON *m=a->child;m;m=m->next){
+            if(!cJSON_IsString(m)){cJSON_Delete(r);return NULL;}
+            for(cJSON *b=m->next;b;b=b->next)if(!strcmp(m->string,b->string)){cJSON_Delete(r);return NULL;}
+        }
         for(cJSON *b=a->next;b;b=b->next)if(!strcmp(a->string,b->string)){cJSON_Delete(r);return NULL;}
     }
     return r;
 }
 static void delete_request(cJSON *request) {
-    const char *keys[] = { "password", "device_token", "proof", "eap_username", "eap_identity", "eap_password" };
-    for (unsigned i = 0; request && i < sizeof(keys)/sizeof(keys[0]); i++) { cJSON *v = cJSON_GetObjectItemCaseSensitive(request, keys[i]); if (cJSON_IsString(v)) wipe(v->valuestring, strlen(v->valuestring)); }
+    for(cJSON *v=request?request->child:NULL;v;v=v->next){
+        if(cJSON_IsString(v))wipe(v->valuestring,strlen(v->valuestring));
+        else if(cJSON_IsObject(v))for(cJSON *m=v->child;m;m=m->next)
+            if(cJSON_IsString(m))wipe(m->valuestring,strlen(m->valuestring));
+    }
     cJSON_Delete(request);
 }
 static cJSON *reply(bool ok, const char *reason) { cJSON *r = cJSON_CreateObject(); if (!r) return NULL; cJSON_AddNumberToObject(r, "v", 1); cJSON_AddBoolToObject(r, "ok", ok); if (reason) cJSON_AddStringToObject(r, "reason", reason); return r; }
-/* JSON is already decrypted by protocomm, or arrived over the strong WPA2 AP
- * after Host/Origin/content-type checks. Never return/log submitted secrets. */
-static cJSON *handle(const cJSON *request, cp_provision_mode_t transport) {
-    const cJSON *version=cJSON_GetObjectItemCaseSensitive(request,"v");
-    if(!cJSON_IsNumber(version)||version->valuedouble!=1)return reply(false,"unsupported_version");
-    const char *op=str(request,"op");if(!op)return reply(false,"invalid_operation");
-    /* Physical USB status is intentionally available after radio handoff. */
-    bool usb_status=transport==CP_PROVISION_USB&&!strcmp(op,"status");
-    if(usb_status&&state.active)(void)session_allowed();
-    if(!usb_status && (!state.active||state.mode!=transport))return reply(false,"setup_not_ready");
-    if(!usb_status && !session_allowed())return reply(false,proof_failures>=MAX_FAILURES?"setup_locked":"setup_expired");
-    if(transport==CP_PROVISION_SOFTAP && (!same(str(request,"nonce"),nonce)||!same(str(request,"proof"),state.proof))){authentication_failure();return reply(false,proof_failures>=MAX_FAILURES?"setup_locked":"invalid_setup_pin");}
-    if(!strcmp(op,"info")||!strcmp(op,"status")) {
+/* Keep large settings snapshots out of the BLE dispatch/commit stack frame. */
+static __attribute__((noinline)) cJSON *handle_info(const cJSON *request,cp_provision_mode_t transport) {
+    const char *op=str(request,"op");
         cp_provision_snapshot_t snapshot;cp_network_diagnostic_t current;
         cp_network_attempt_t previous;bool have_previous;char boot[37],attempt[37];uint32_t reset;esp_err_t history;
         portENTER_CRITICAL(&lock);snapshot=state;current=diagnostic;previous=previous_attempt;have_previous=have_previous_attempt;
         memcpy(boot,diagnostic_boot_id,sizeof boot);memcpy(attempt,diagnostic_attempt_id,sizeof attempt);
         reset=diagnostic_reset_reason;history=diagnostic_history_error;portEXIT_CRITICAL(&lock);
         cJSON *r=reply(true,NULL);if(!r)return NULL;
-        bool has_saved=saved_credential(snapshot.node_id,NULL,0,NULL);
+        cp_settings_t saved={0};bool has_saved=saved_credential(snapshot.node_id,&saved,NULL);
+        bool has_saved_mqtt=has_saved&&cp_settings_mqtt_ready(&saved);cp_settings_clear_sensitive(&saved);
         bool ok=cJSON_AddStringToObject(r,"node_id",snapshot.node_id)&&cJSON_AddStringToObject(r,"boot_id",boot)&&
             cJSON_AddStringToObject(r,"state",snapshot.state)&&cJSON_AddBoolToObject(r,"active",snapshot.active)&&
             cJSON_AddBoolToObject(r,"has_saved_credential",has_saved)&&
+            cJSON_AddBoolToObject(r,"has_saved_mqtt",has_saved_mqtt)&&
             cJSON_AddNumberToObject(r,"uptime_ms",(double)(esp_timer_get_time()/1000))&&cJSON_AddNumberToObject(r,"reset_reason",reset);
         if(!strcmp(op,"info")) {
+#if CONFIG_CP_NETWORK_MQTT_NATIVE_TLS
+            ok=ok&&cJSON_AddBoolToObject(r,"mqtt_required",true);
+#else
+            ok=ok&&cJSON_AddBoolToObject(r,"mqtt_required",false);
+#endif
             ok=ok&&cJSON_AddStringToObject(r,"board","FoloToy AI Passport / ESP32-C3")&&
                 cJSON_AddStringToObject(r,"firmware_version",esp_app_get_description()->version)&&cJSON_AddNumberToObject(r,"wifi_modes",7)&&
                 cJSON_AddStringToObject(r,"transport",transport==CP_PROVISION_USB?"usb":transport==CP_PROVISION_SOFTAP?"ap":"ble")&&
                 cJSON_AddStringToObject(r,"security",transport==CP_PROVISION_USB?"physical-usb":transport==CP_PROVISION_SOFTAP?"wpa2-local":"security2");
-            if(transport==CP_PROVISION_USB)ok=ok&&cJSON_AddStringToObject(r,"nonce",nonce);
+            if(transport==CP_PROVISION_USB)ok=ok&&cJSON_AddStringToObject(r,"nonce",nonce)&&
+                cJSON_AddStringToObject(r,"mqtt_uri",CP_MQTT_PRODUCTION_URI)&&
+                cJSON_AddStringToObject(r,"mqtt_ca_profile",CP_MQTT_CA_PROFILE);
             int64_t left=expires-esp_timer_get_time();ok=ok&&cJSON_AddNumberToObject(r,"session_expires_in_ms",left>0?left/1000:0);
         } else {
             ok=ok&&cJSON_AddStringToObject(r,"attempt_id",snapshot.attempt_id[0]?snapshot.attempt_id:attempt);
             if(current.stage==CP_DIAG_IDLE)ok=ok&&cJSON_AddStringToObject(r,"reason",snapshot.reason);
             cJSON *d=diagnostic_json(&current);
             if(!d||!cJSON_AddItemToObject(r,"diagnostic",d)){cJSON_Delete(d);ok=false;}
-            /* Full previous-boot evidence is exposed on the 1024-byte physical
+            /* Full previous-boot evidence is exposed on the physical
              * USB status channel; BLE has only 496 plaintext bytes per reply. */
             if(transport==CP_PROVISION_USB) {
                 ok=ok&&cJSON_AddNumberToObject(r,"history_error",history);
@@ -202,7 +213,9 @@ static cJSON *handle(const cJSON *request, cp_provision_mode_t transport) {
             }
         }
         if(!ok){cJSON_Delete(r);return NULL;}return r;
-    }
+}
+static __attribute__((noinline)) cJSON *handle_configure(const cJSON *request,cp_provision_mode_t transport) {
+    const char *op=str(request,"op");
     if(transport==CP_PROVISION_USB&&!same(str(request,"nonce"),nonce))return reply(false,"invalid_session_nonce");
     if (strcmp(op, "configure")) return reply(false, "invalid_operation");
     const char *attempt = str(request, "attempt_id");
@@ -211,7 +224,7 @@ static cJSON *handle(const cJSON *request, cp_provision_mode_t transport) {
     bool reuse=cJSON_IsTrue(reuse_field);
     if((reuse_field&&!reuse)||(reuse&&cJSON_GetObjectItemCaseSensitive(request,"device_token")))return reply(false,"invalid_credential_mode");
     for(const cJSON *field=request->child;field;field=field->next) {
-        const char *allowed[]={"v","op","nonce","proof","node_id","attempt_id","ssid","password","device_token","reuse_saved_credential","wifi_security","eap_username","eap_identity","eap_password"};bool known=false;
+        const char *allowed[]={"v","op","nonce","proof","node_id","attempt_id","ssid","password","device_token","reuse_saved_credential","wifi_security","eap_username","eap_identity","eap_password","mqtt"};bool known=false;
         for(unsigned i=0;i<sizeof allowed/sizeof allowed[0];++i)if(!strcmp(field->string,allowed[i]))known=true;
         if(!known)return reply(false,"invalid_settings");
     }
@@ -236,9 +249,32 @@ static cJSON *handle(const cJSON *request, cp_provision_mode_t transport) {
         } else memcpy(candidate.eap_identity,candidate.eap_username,sizeof candidate.eap_identity);
     } else if(cJSON_GetObjectItemCaseSensitive(request,"eap_username")||cJSON_GetObjectItemCaseSensitive(request,"eap_password")||cJSON_GetObjectItemCaseSensitive(request,"eap_identity"))return reply(false,"invalid_wifi_security");
     uint32_t saved_generation=0;
-    bool credential_ok=reuse?saved_credential(state.node_id,candidate.device_token,sizeof candidate.device_token,&saved_generation):
+    cp_settings_t saved={0};bool credential_ok=reuse?saved_credential(state.node_id,&saved,&saved_generation):
         copy_field(candidate.device_token,sizeof candidate.device_token,request,"device_token");
+    if(reuse&&credential_ok){
+        memcpy(candidate.device_token,saved.device_token,sizeof candidate.device_token);
+        memcpy(candidate.mqtt_uri,saved.mqtt_uri,sizeof candidate.mqtt_uri);
+        memcpy(candidate.mqtt_username,saved.mqtt_username,sizeof candidate.mqtt_username);
+        memcpy(candidate.mqtt_password,saved.mqtt_password,sizeof candidate.mqtt_password);
+        memcpy(candidate.mqtt_namespace,saved.mqtt_namespace,sizeof candidate.mqtt_namespace);
+    }
+    cp_settings_clear_sensitive(&saved);
     if(reuse&&!credential_ok){wipe(&candidate,sizeof candidate);return reply(false,"saved_credential_unavailable");}
+    const cJSON *mqtt=cJSON_GetObjectItemCaseSensitive(request,"mqtt");
+    if(mqtt){
+        unsigned count=0;bool valid=cJSON_IsObject(mqtt);
+        for(const cJSON *f=mqtt->child;valid&&f;f=f->next){++count;
+            if(strcmp(f->string,"uri")&&strcmp(f->string,"username")&&strcmp(f->string,"password")&&strcmp(f->string,"namespace"))valid=false;
+        }
+        valid=valid&&count==4&&copy_field(candidate.mqtt_uri,sizeof candidate.mqtt_uri,mqtt,"uri")&&
+            copy_field(candidate.mqtt_username,sizeof candidate.mqtt_username,mqtt,"username")&&
+            copy_field(candidate.mqtt_password,sizeof candidate.mqtt_password,mqtt,"password")&&
+            copy_field(candidate.mqtt_namespace,sizeof candidate.mqtt_namespace,mqtt,"namespace")&&cp_settings_mqtt_ready(&candidate);
+        if(!valid){wipe(&candidate,sizeof candidate);return reply(false,"invalid_mqtt_settings");}
+    }
+#if CONFIG_CP_NETWORK_MQTT_NATIVE_TLS
+    if(!cp_settings_mqtt_ready(&candidate)){wipe(&candidate,sizeof candidate);return reply(false,"mqtt_settings_required");}
+#endif
     if (!copy_field(candidate.ssid, sizeof(candidate.ssid), request, "ssid") ||
         !copy_field(candidate.password, sizeof(candidate.password), request, "password") ||
         !credential_ok ||
@@ -262,6 +298,43 @@ static cJSON *handle(const cJSON *request, cp_provision_mode_t transport) {
     memcpy(attempt_digest, digest, sizeof(attempt_digest)); wipe(digest, sizeof(digest));
     portENTER_CRITICAL(&lock); snprintf(state.attempt_id, sizeof(state.attempt_id), "%s", attempt); snprintf(state.state, sizeof(state.state), "received"); portEXIT_CRITICAL(&lock);
     cJSON *r = reply(true, NULL); cJSON_AddStringToObject(r, "state", "received"); cJSON_AddStringToObject(r, "attempt_id", attempt); return r;
+}
+/* JSON is already decrypted by protocomm, or arrived over the strong WPA2 AP
+ * after Host/Origin/content-type checks. Never return/log submitted secrets. */
+static cJSON *handle(const cJSON *request, cp_provision_mode_t transport) {
+    const cJSON *version=cJSON_GetObjectItemCaseSensitive(request,"v");
+    if(!cJSON_IsNumber(version)||version->valuedouble!=1)return reply(false,"unsupported_version");
+    const char *op=str(request,"op");if(!op)return reply(false,"invalid_operation");
+    /* Physical USB status is intentionally available after radio handoff. */
+    bool usb_status=transport==CP_PROVISION_USB&&!strcmp(op,"status");
+    if(usb_status&&state.active)(void)session_allowed();
+    if(!usb_status && (!state.active||state.mode!=transport))return reply(false,"setup_not_ready");
+    if(!usb_status && !session_allowed())return reply(false,proof_failures>=MAX_FAILURES?"setup_locked":"setup_expired");
+    if(transport==CP_PROVISION_SOFTAP && (!same(str(request,"nonce"),nonce)||!same(str(request,"proof"),state.proof))){authentication_failure();return reply(false,proof_failures>=MAX_FAILURES?"setup_locked":"invalid_setup_pin");}
+    if(!strcmp(op,"info")||!strcmp(op,"status"))return handle_info(request,transport);
+    if(transport==CP_PROVISION_BLE&&!strcmp(op,"configure_chunk")){
+        const cJSON *reset=cJSON_GetObjectItemCaseSensitive(request,"reset");const char *data=str(request,"data");
+        for(const cJSON *f=request->child;f;f=f->next)
+            if(strcmp(f->string,"v")&&strcmp(f->string,"op")&&strcmp(f->string,"data")&&strcmp(f->string,"reset")){clear_chunks();return reply(false,"invalid_chunk");}
+        if(!data||!data[0]||(reset&&!cJSON_IsTrue(reset))){clear_chunks();return reply(false,"invalid_chunk");}
+        if(reset)clear_chunks();
+        if(!chunk_json&&!reset)return reply(false,"chunk_reset_required");
+        size_t n=strlen(data);if(n>REQUEST_MAX-chunk_used){clear_chunks();return reply(false,"settings_too_large");}
+        if(!chunk_json)chunk_json=calloc(REQUEST_MAX+1,1);
+        if(!chunk_json)return reply(false,"settings_buffer_unavailable");
+        memcpy(chunk_json+chunk_used,data,n);chunk_used+=n;chunk_json[chunk_used]=0;
+        cJSON *r=reply(true,NULL);if(r)cJSON_AddNumberToObject(r,"received_bytes",chunk_used);return r;
+    }
+    if(transport==CP_PROVISION_BLE&&!strcmp(op,"configure_commit")){
+        for(const cJSON *f=request->child;f;f=f->next)
+            if(strcmp(f->string,"v")&&strcmp(f->string,"op")){clear_chunks();return reply(false,"invalid_chunk");}
+        if(!chunk_json)return reply(false,"chunk_reset_required");
+        cJSON *full=parse_request(chunk_json,chunk_used);clear_chunks();
+        if(!full)return reply(false,"invalid_json");
+        if(!same(str(full,"op"),"configure")){delete_request(full);return reply(false,"invalid_operation");}
+        cJSON *r=handle_configure(full,transport);delete_request(full);return r;
+    }
+    return handle_configure(request,transport);
 }
 static esp_err_t app_handler(uint32_t session_id, const uint8_t *in, ssize_t len, uint8_t **out, ssize_t *out_len, void *ctx) {
     (void)session_id; (void)ctx;
@@ -348,6 +421,7 @@ esp_err_t cp_provision_start(cp_provision_mode_t mode,const char *node,const cha
     for(unsigned i=3;i<15;i++)if(!((node[i]>='0'&&node[i]<='9')||(node[i]>='a'&&node[i]<='f')))return ESP_ERR_INVALID_ARG;
     if(!take_session())return ESP_ERR_INVALID_STATE;
     if(state.active||security_fatal||teardown_fault!=ESP_OK){give_session();return ESP_ERR_INVALID_STATE;}
+    clear_chunks();
     cp_provision_snapshot_t next={.active=true,.mode=mode};snprintf(next.node_id,sizeof next.node_id,"%s",node);snprintf(next.service_name,sizeof next.service_name,"CampusPulse-%s",node+9);
     uint8_t context[44],srp_salt[16];esp_fill_random(context,32);uint64_t now=(uint64_t)esp_timer_get_time();uint32_t seq=++session_sequence;
     for(unsigned i=0;i<8;i++)context[32+i]=(uint8_t)(now>>(56-8*i));
@@ -378,6 +452,7 @@ esp_err_t cp_provision_start(cp_provision_mode_t mode,const char *node,const cha
 fail:{wipe(srp_salt,sizeof srp_salt);esp_err_t stopped=stop_locked();give_session();return stopped==ESP_OK?err:stopped;}
 }
 static esp_err_t stop_locked(void) {
+    clear_chunks();
     if (teardown_fault != ESP_OK) return teardown_fault;
     esp_err_t err;
     if (http) { if ((err = httpd_stop(http)) != ESP_OK) goto failed; http = NULL; }

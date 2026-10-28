@@ -29,11 +29,13 @@ bash "$CP_FW/tests/run-vehicle.sh"
     "$CP_FW/components/cp_pipeline/scheduler.c" -o "$CP_BUILD/test_scheduler"
 "$CP_BUILD/test_scheduler"
 bash "$CP_FW/tests/run-memory-guard.sh"
+bash "$CP_FW/tests/run-domain-debug.sh"
+bash "$CP_FW/tests/run-perf-profile.sh"
 bash "$CP_FW/tests/pipeline/run-host.sh"
 # Only the pinned upstream JSON implementation needs platform deprecation suppression.
 "$CP_CC" -std=c11 -Wall -Wextra -Werror -Wno-deprecated-declarations -g \
     -fsanitize=address,undefined -I"$CP_JSON" -c "$CP_JSON/cJSON.c" -o "$CP_BUILD/cJSON.o"
-for CP_TEST in test_codec generate_fixtures; do
+for CP_TEST in test_codec test_codec_memory generate_fixtures; do
     "$CP_CC" "${CP_FLAGS[@]}" -I"$CP_JSON" \
         -I"$CP_FW/components/cp_pipeline/include" -I"$CP_FW/components/cp_collect/include" \
         -I"$CP_FW/components/cp_vehicle/include" \
@@ -42,6 +44,7 @@ for CP_TEST in test_codec generate_fixtures; do
         "$CP_FW/components/cp_vehicle/cp_vehicle.c" "$CP_BUILD/cJSON.o" -o "$CP_BUILD/$CP_TEST"
 done
 "$CP_BUILD/test_codec"
+"$CP_BUILD/test_codec_memory"
 bash "$CP_FW/components/cp_settings/tests/run-host.sh"
 bash "$CP_FW/components/cp_network/tests/run-host.sh"
 bash "$CP_FW/components/cp_usb/tests/run-host.sh"

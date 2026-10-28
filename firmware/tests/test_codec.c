@@ -371,7 +371,7 @@ static void short_windows(void) {
     }
 }
 static void invalid_partial_boundaries(void) {
-    const unsigned durations[] = {1000, 5000, 5001};
+    const unsigned durations[] = {1000, 1970, 5000, 5001};
     for (unsigned i = 0; i < sizeof durations / sizeof durations[0]; i++) {
         reset(0);
         uint32_t seq = 0;
@@ -386,6 +386,22 @@ static void invalid_partial_boundaries(void) {
         assert(c.windows_dropped == 1 && c.summaries_dropped == 1);
         assert(c.unpersisted_window_reports == 1 && !seq);
         assert(!sink_items[0] && !sink_items[1] && sink_items[2] == 1);
+        assert(!live_allocations);
+
+        /* Millisecond ingress at the stop instant belongs to a window ending
+         * one millisecond later. A valid exclusive end must preserve it. */
+        reset(0);
+        seq = 0;
+        c = context(&seq);
+        assert(cp_collect_begin(&w, 1000, 30000, 5000, 1, 64, true));
+        assert(cp_collect_observe(&w, &report));
+        expected_uncertainty = 21; /* One ceil-rounded 10-second drift interval. */
+        assert(cp_codec_window(&c, &w, durations[i] + 1));
+        expected_uncertainty = 23;
+        assert(c.raw_committed == 1 && c.summaries_committed == 1 && c.windows_committed == 1);
+        assert(!c.raw_dropped && !c.summaries_dropped && !c.windows_dropped);
+        assert(!c.unpersisted_window_reports && seq == 1);
+        assert(sink_items[0] == 1 && sink_items[1] == 1 && sink_items[2] == 1);
         assert(!live_allocations);
     }
 }
@@ -426,6 +442,261 @@ static void memory_pause_status(void) {
     assert(!live_allocations);
     expected_pause = expected_scan = expected_raw = NULL;
 }
+/* Exact transcript comparison includes batch identities, ordering and failure
+ * attempts. Keep test capture storage separate from the production allocator. */
+static char view_transcript[131072];
+static size_t view_offset, view_length;
+static bool view_compare, view_reject_raw, view_saw_aggregate;
+static unsigned view_calls;
+static bool view_sink(void *ctx, const char *body, size_t length, const char *stream,
+                      unsigned count, bool control) {
+    (void)ctx;
+    (void)count;
+    (void)control;
+    assert(length == strlen(body));
+    if (!strcmp(stream, "ble_reports"))
+        assert(!view_saw_aggregate);
+    else
+        view_saw_aggregate = true;
+    assert(view_offset + length + 1 <= sizeof view_transcript);
+    if (view_compare) {
+        assert(view_offset + length + 1 <= view_length);
+        assert(!memcmp(view_transcript + view_offset, body, length + 1));
+    } else {
+        memcpy(view_transcript + view_offset, body, length + 1);
+    }
+    view_offset += length + 1;
+    ++view_calls;
+    return !view_reject_raw || strcmp(stream, "ble_reports");
+}
+static void assert_codec_losses_equal(const cp_codec_t *a, const cp_codec_t *b) {
+#define SAME(field) assert(a->field == b->field)
+    SAME(windows_committed); SAME(summaries_committed); SAME(raw_committed);
+    SAME(failed_batches); SAME(failed_items); SAME(summaries_dropped);
+    SAME(windows_dropped); SAME(raw_dropped); SAME(status_dropped);
+    SAME(unpersisted_window_reports); SAME(build_failed); SAME(build_items);
+#undef SAME
+}
+static uint64_t record_hash(const void *data, size_t length) {
+    const unsigned char *bytes = data;
+    uint64_t hash = 14695981039346656037ULL;
+    for (size_t i = 0; i < length; ++i)
+        hash = (hash ^ bytes[i]) * 1099511628211ULL;
+    return hash;
+}
+static void window_views(void) {
+    _Static_assert(sizeof(cp_codec_window_view_t) <= 160, "window view must stay small");
+    for (unsigned capacity = 16; capacity <= 64; capacity *= 4) {
+        for (unsigned variant = 0; variant < 6; ++variant) {
+            cp_collect_t w;
+            assert(cp_collect_begin(&w, 1000, 30000, 2000, 9, capacity, true));
+            for (unsigned i = 0; i < capacity; ++i) {
+                cp_report_t report = {.mono_ms = 1001 + i, .report_seq = i + 1,
+                    .address = {2, 0, 0, 0, 0, (uint8_t)i}, .address_type = 1,
+                    .rssi = -60, .raw = i < CP_COLLECT_RAW ? CP_RAW_SELECTED : CP_RAW_INTENTIONAL};
+                assert(cp_collect_observe(&w, &report));
+            }
+            w.summary_drops = 3;
+            w.raw_drops = 7;
+            if (variant == 3)
+                w.addresses[0].last_ms = 30000; /* Reject only after raw. */
+            if (variant == 4)
+                w.raw[0].payload_length = 32; /* Entire raw batch is dropped. */
+            const cp_collect_t original = w;
+            uint64_t original_hash = record_hash(&original, sizeof original);
+            const cp_codec_window_view_t view = cp_codec_window_from_collect(&original);
+            const cp_codec_window_view_t saved_view = view;
+#define SCALAR(field) assert(view.field == original.field)
+            SCALAR(start_ms); SCALAR(window_ms); SCALAR(bin_ms); SCALAR(window_seq);
+            SCALAR(address_capacity); SCALAR(reports_seen); SCALAR(reports_aggregated);
+            SCALAR(aggregation_drops); SCALAR(adv); SCALAR(scan_responses);
+            SCALAR(rssi_samples); SCALAR(rssi_min); SCALAR(rssi_max); SCALAR(rssi_sum);
+            SCALAR(address_overflow); SCALAR(raw_enabled); SCALAR(summary_drops);
+            SCALAR(selected); SCALAR(intentional); SCALAR(pressure); SCALAR(raw_drops);
+            SCALAR(address_count); SCALAR(raw_count);
+#undef SCALAR
+            assert(view.addresses == original.addresses && view.raw == original.raw);
+            uint32_t wrapper_seq = 10, view_seq = 10;
+            cp_codec_t wrapper = context(&wrapper_seq), reader = context(&view_seq);
+            wrapper.sink = reader.sink = view_sink;
+            /* Existing lifetime losses must not be counted a second time. */
+            wrapper.raw_dropped = reader.raw_dropped = 19;
+            uint32_t duration = variant == 2 ? 999 : 30000;
+            view_reject_raw = variant == 1;
+            view_compare = view_saw_aggregate = false;
+            view_offset = view_calls = uuid_counter = 0;
+            reset(variant == 5 ? 1 : 0); /* Fail raw allocation before aggregate work. */
+            bool wrapper_ok = cp_codec_window(&wrapper, &w, duration);
+            unsigned wrapper_calls = view_calls;
+            view_length = view_offset;
+            view_compare = true;
+            view_saw_aggregate = false;
+            view_offset = view_calls = uuid_counter = 0;
+            reset(variant == 5 ? 1 : 0);
+            bool view_ok = cp_codec_encode_window_view(&reader, &view, duration);
+            assert(wrapper_ok == view_ok && view_seq == wrapper_seq);
+            assert(view_offset == view_length && view_calls == wrapper_calls);
+            assert_codec_losses_equal(&wrapper, &reader);
+            assert(!memcmp(&view, &saved_view, sizeof view));
+            assert(record_hash(&original, sizeof original) == original_hash);
+            assert(!memcmp(w.addresses, original.addresses, sizeof w.addresses));
+            assert(!memcmp(w.raw, original.raw, sizeof w.raw));
+            assert(w.raw_count == 0 && original.raw_count == CP_COLLECT_RAW);
+            assert(w.raw_drops == original.raw_drops + (reader.raw_dropped - 19));
+            if (variant == 1 || variant >= 4)
+                assert(reader.raw_dropped == 23 && reader.windows_committed == 1);
+            if (variant == 2 || variant == 3)
+                assert(!view_ok && reader.raw_committed == CP_COLLECT_RAW &&
+                       reader.windows_dropped == 1 && reader.summaries_dropped == capacity);
+            assert(!live_allocations);
+        }
+    }
+    view_compare = false;
+}
+static void invalid_window_views(void) {
+    cp_collect_t w = window();
+    const cp_collect_t original = w;
+    for (unsigned variant = 0; variant < 9; ++variant) {
+        cp_codec_window_view_t view = cp_codec_window_from_collect(&w);
+        uint32_t seq = 0, duration = 30000;
+        cp_codec_t c = context(&seq);
+        c.sink = view_sink;
+        if (variant == 0) view.addresses = NULL;
+        if (variant == 1) view.raw = NULL;
+        if (variant == 2) view.address_count = CP_COLLECT_ADDRESSES + 1;
+        if (variant == 3) view.raw_count = CP_COLLECT_RAW + 1;
+        if (variant == 4) view.bin_ms = 0;
+        if (variant == 5) duration = view.window_ms + 1;
+        if (variant == 6) view.bin_ms = 1;
+        if (variant == 7) { view.window_ms = UINT32_MAX; duration = UINT32_MAX; }
+        if (variant == 8) c.summary_sequence = NULL;
+        view_calls = 0;
+        reset(0);
+        assert(!cp_codec_encode_window_view(&c, &view, duration));
+        assert(!view_calls && !allocation_calls && !c.failed_items && !seq);
+        assert(!memcmp(&w, &original, sizeof w));
+    }
+    uint32_t seq = 0;
+    cp_codec_t c = context(&seq);
+    w.raw_count = CP_COLLECT_RAW + 1;
+    assert(!cp_codec_window(&c, &w, 30000));
+    assert(w.raw_count == CP_COLLECT_RAW + 1 && w.raw_drops == original.raw_drops);
+    assert(!cp_codec_encode_window_view(NULL, NULL, 0));
+    const cp_codec_window_view_t empty = cp_codec_window_from_collect(NULL);
+    assert(!empty.addresses && !empty.raw && !empty.address_count && !empty.raw_count);
+    /* Empty borrowed arrays are valid and must never be dereferenced. */
+    cp_codec_window_view_t no_records = cp_codec_window_from_collect(&original);
+    no_records.addresses = NULL; no_records.raw = NULL;
+    no_records.address_count = no_records.raw_count = 0;
+    c.sink = view_sink;
+    view_offset = 0;
+    view_reject_raw = false;
+    assert(cp_codec_encode_window_view(&c, &no_records, 30000));
+    assert(c.windows_committed == 1 && !c.raw_dropped);
+}
+static void compact_window_views(void) {
+    const unsigned bin_counts[] = {1, 6, 16};
+    for (unsigned b = 0; b < sizeof bin_counts / sizeof bin_counts[0]; ++b) {
+        unsigned bin_count = bin_counts[b];
+        /* Exact heap allocations make ASan catch even a one-bin overread. */
+        cp_address_core_t *cores = calloc(CP_COLLECT_ADDRESSES, sizeof *cores);
+        uint32_t *bins = calloc(CP_COLLECT_ADDRESSES * bin_count, sizeof *bins);
+        assert(cores && bins);
+        for (unsigned variant = 0; variant < 7; ++variant) {
+            cp_collect_t legacy;
+            unsigned window_ms = bin_count * 5000u;
+            assert(cp_collect_begin(&legacy, 1000, window_ms, 5000, 9, 64, true));
+            cp_collect_compact_t compact = {.addresses = cores, .bins = bins,
+                .storage_capacity = CP_COLLECT_ADDRESSES, .bin_count = bin_count};
+            assert(cp_collect_compact_begin(&compact, 1000, window_ms, 5000, 9, 64, true));
+            for (unsigned i = 0; i < CP_COLLECT_ADDRESSES; ++i) {
+                /* Put observations in every bin, including the final one. */
+                for (unsigned k = 0; k < bin_count; ++k) {
+                    cp_report_t report = {.mono_ms = 1001 + k * 5000u + i,
+                        .report_seq = i * bin_count + k + 1,
+                        .address = {2, 0, 0, 0, 0, (uint8_t)i}, .address_type = 1,
+                        .rssi = -60, .payload_length = 3, .payload = {2, 1, 6},
+                        .raw = i == 0 && k < CP_COLLECT_RAW ? CP_RAW_SELECTED : CP_RAW_INTENTIONAL};
+                    assert(cp_collect_observe(&legacy, &report));
+                    assert(cp_collect_compact_observe(&compact, &report));
+                }
+            }
+            legacy.summary_drops = compact.summary_drops = 3;
+            legacy.raw_drops = compact.raw_drops = 7;
+            if (variant == 3) legacy.addresses[0].last_ms = cores[0].last_ms = window_ms;
+            if (variant == 4) legacy.raw[0].payload_length = compact.raw[0].payload_length = 32;
+            if (variant == 6) {
+                legacy.addresses[0].vehicle_evidence.parsed_reports++;
+                cores[0].vehicle_evidence.parsed_reports++;
+            }
+            assert(!memcmp(&legacy.state, &compact.state, sizeof legacy.state));
+            assert(!memcmp(legacy.raw, compact.raw, sizeof legacy.raw));
+            for (unsigned i = 0; i < CP_COLLECT_ADDRESSES; ++i) {
+                assert(!memcmp(&cores[i], &legacy.addresses[i].core, sizeof *cores));
+                assert(!memcmp(bins + i * bin_count, legacy.addresses[i].bins,
+                               bin_count * sizeof *bins));
+            }
+            const cp_codec_window_view_t view = cp_codec_window_from_compact(&compact);
+            assert(!view.addresses && view.cores == cores && view.bins == bins &&
+                   view.bin_count == bin_count && view.raw == compact.raw);
+            const cp_collect_compact_t saved = compact;
+            const cp_codec_window_view_t saved_view = view;
+            uint64_t cores_hash = record_hash(cores, CP_COLLECT_ADDRESSES * sizeof *cores);
+            uint64_t bins_hash = record_hash(bins, CP_COLLECT_ADDRESSES * bin_count * sizeof *bins);
+            uint32_t legacy_seq = 10, compact_seq = 10;
+            cp_codec_t writer = context(&legacy_seq), reader = context(&compact_seq);
+            writer.sink = reader.sink = view_sink;
+            writer.raw_dropped = reader.raw_dropped = 19;
+            uint32_t duration = variant == 2 ? 999 : window_ms;
+            view_reject_raw = variant == 1;
+            view_compare = view_saw_aggregate = false;
+            view_offset = view_calls = uuid_counter = 0;
+            reset(variant == 5 ? 1 : 0);
+            bool legacy_ok = cp_codec_window(&writer, &legacy, duration);
+            unsigned legacy_calls = view_calls;
+            view_length = view_offset;
+            view_compare = true;
+            view_saw_aggregate = false;
+            view_offset = view_calls = uuid_counter = 0;
+            reset(variant == 5 ? 1 : 0);
+            bool compact_ok = cp_codec_encode_window_view(&reader, &view, duration);
+            assert(legacy_ok == compact_ok && legacy_seq == compact_seq);
+            assert(view_calls == legacy_calls && view_offset == view_length);
+            assert_codec_losses_equal(&writer, &reader);
+            assert(!memcmp(&compact, &saved, sizeof compact));
+            assert(!memcmp(&view, &saved_view, sizeof view));
+            assert(record_hash(cores, CP_COLLECT_ADDRESSES * sizeof *cores) == cores_hash);
+            assert(record_hash(bins, CP_COLLECT_ADDRESSES * bin_count * sizeof *bins) == bins_hash);
+            assert(!live_allocations);
+        }
+        /* Malformed storage descriptions fail before raw or allocation work. */
+        cp_collect_compact_t compact = {.start_ms = 1000, .window_ms = bin_count * 5000u,
+            .bin_ms = 5000, .address_capacity = 64, .address_count = 64,
+            .addresses = cores, .bins = bins, .bin_count = bin_count};
+        for (unsigned variant = 0; variant < 6; ++variant) {
+            cp_codec_window_view_t view = cp_codec_window_from_compact(&compact);
+            cp_address_summary_t dummy = {0};
+            if (variant == 0) view.cores = NULL;
+            if (variant == 1) view.bins = NULL;
+            if (variant == 2) view.bin_count--;
+            if (variant == 3) view.bin_count = CP_COLLECT_BINS + 1;
+            if (variant == 4) view.addresses = &dummy;
+            if (variant == 5) view.raw_count = 1, view.raw = NULL;
+            uint32_t seq = 0;
+            cp_codec_t reader = context(&seq);
+            reader.sink = view_sink;
+            view_calls = 0;
+            reset(0);
+            assert(!cp_codec_encode_window_view(&reader, &view, compact.window_ms));
+            assert(!view_calls && !allocation_calls && !reader.failed_items && !seq);
+        }
+        free(bins);
+        free(cores);
+    }
+    const cp_codec_window_view_t empty = cp_codec_window_from_compact(NULL);
+    assert(!empty.addresses && !empty.cores && !empty.bins && !empty.bin_count && !empty.raw);
+    view_compare = false;
+}
 int main(void) {
     cJSON_Hooks hooks = {.malloc_fn = checked_malloc, .free_fn = checked_free};
     cJSON_InitHooks(&hooks);
@@ -442,9 +713,13 @@ int main(void) {
     invalid_partial_boundaries();
     recovered_unknown_metadata();
     memory_pause_status();
+    window_views();
+    invalid_window_views();
+    compact_window_views();
     cJSON_InitHooks(NULL);
     printf("Codec OOM checks: %zu window/raw/summary allocation sites, %zu status sites; valid "
-           "sinks, exact loss accounting, zero leaks, aged clocks: PASS\n",
+           "sinks, exact loss accounting, zero leaks, aged clocks, read-only legacy/compact "
+           "64-address views at 1/6/16 bins: PASS\n",
            batches, health);
     return 0;
 }

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../worker/index';
 import { sha256 } from '../worker/ingest';
+import { seedMqtt } from './helpers/mqtt';
 import { DEVICE_TOKEN, fixture, seedConfig, setup } from './helpers/ingestion';
 
 // These tests execute every production migration and actual Worker SQL on a
@@ -44,6 +45,7 @@ async function draft(id = 'admin-config-v2') {
 }
 beforeEach(async () => {
   state = await setup();
+  await seedMqtt(state,4);
   state.env.ADMIN_TOKEN = ADMIN;
   cookie = '';
 });
@@ -108,15 +110,38 @@ describe('administrator security boundary', () => {
 });
 
 describe('device registry and received health', () => {
+  it('reports safe MQTT assignment metadata without claiming device application', async () => {
+    await login();
+    const readNode = async () => (await data(await admin(`/devices/${state.config.node_id}`))).device;
+    expect((await readNode()).mqtt_assignment).toEqual({ state: 'unconfigured', broker_verified: false, namespace: null });
+    const [identity] = await seedMqtt(state, 1, state.config.node_id);
+    const expected = { state: 'assigned', broker_verified: true, namespace: identity.namespace };
+    expect((await readNode()).mqtt_assignment).toEqual(expected);
+    const listed = (await data(await admin('/devices'))).devices.find((node: any) => node.id === state.config.node_id);
+    expect(listed.mqtt_assignment).toEqual(expected);
+    expect(listed.applied_config_id).toBeNull();
+    const serialized = JSON.stringify([listed, await readNode()]);
+    for (const privateValue of [identity.password_ciphertext, 'synthetic-mqtt-password-only-for-tests', 'password_ciphertext', 'mqtt_password', 'credential_sha256']) {
+      expect(serialized).not.toContain(privateValue);
+    }
+    expect(Object.keys(listed.mqtt_assignment).sort()).toEqual(['broker_verified', 'namespace', 'state']);
+    state.db.prepare("UPDATE mqtt_credentials SET state='pending_broker',verified_at=NULL WHERE id=?").run(identity.id);
+    expect((await readNode()).mqtt_assignment).toEqual({ state: 'pending_broker', broker_verified: false, namespace: identity.namespace });
+  });
+
   it('shows unknown telemetry as null, returns credentials once, rotates and disables them', async () => {
     await login();
     const created = await data(await admin('/devices', 'POST', { id: 'admin-node', name: 'Synthetic node', board: 'esp32-s3' }), 201);
     const oldToken = created.credential;
     expect(oldToken).toMatch(/^[!-~]{16,256}$/);
     expect(created.device).toMatchObject({ id: 'admin-node', name: 'Synthetic node', enabled: true, last_seen_at: null, latest_status: null, firmware_version: null, contact_state: 'unknown' });
+    expect(created.device.mqtt_assignment).toEqual({ state: 'assigned', broker_verified: true, namespace: created.mqtt.namespace });
     expect((await admin('/devices', 'POST', { id: 'admin-node', name: 'Duplicate', board: 'esp32-s3' })).status).toBe(409);
     expect((await request('/api/v1/device/config', { headers: { Authorization: `Bearer ${oldToken}` } })).status).toBe(403); // Auth succeeds, no policy yet.
+    const mqttBefore = state.db.prepare('SELECT * FROM mqtt_credentials ORDER BY id').all();
     const rotated = await data(await admin('/devices/admin-node/rotate-credential', 'POST', {}));
+    expect(state.db.prepare('SELECT * FROM mqtt_credentials ORDER BY id').all()).toEqual(mqttBefore);
+    expect((await data(await admin('/devices/admin-node'))).device.mqtt_assignment).toEqual(created.device.mqtt_assignment);
     expect(rotated.credential).not.toBe(oldToken);
     expect((await request('/api/v1/device/config', { headers: { Authorization: `Bearer ${oldToken}` } })).status).toBe(401);
     expect((await request('/api/v1/device/config', { headers: { Authorization: `Bearer ${rotated.credential}` } })).status).toBe(403);

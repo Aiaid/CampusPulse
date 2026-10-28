@@ -35,12 +35,12 @@ describe('bounded USB provisioning framing', () => {
     expect(frames).toEqual([[id, { v: 1, ok: true }], [id, undefined]]);
     parser.push(new Uint8Array([30, 255, 10])); expect(parser.length).toBe(0);
   });
-  it('enforces exact 1024 UTF-8 payload bytes and lowercase UUIDv4', () => {
-    const padding = 1024 - encoder.encode(JSON.stringify({ text: '' })).length;
+  it('enforces exact 1536 UTF-8 payload bytes and lowercase UUIDv4', () => {
+    const padding = 1536 - encoder.encode(JSON.stringify({ text: '' })).length;
     const frame = serialFrame(id, { text: 'x'.repeat(padding) });
     const frames = []; new SerialFrames((...f) => frames.push(f)).push(frame); expect(frames).toHaveLength(1);
-    expect(() => serialFrame(id, { text: 'x'.repeat(padding + 1) })).toThrow('1024');
-    expect(() => serialFrame(id, { text: '界'.repeat(350) })).toThrow('1024');
+    expect(() => serialFrame(id, { text: 'x'.repeat(padding + 1) })).toThrow('1536');
+    expect(() => serialFrame(id, { text: '界'.repeat(520) })).toThrow('1536');
     for (const bad of [id.toUpperCase(), id.replace('-4333-', '-1333-'), id.replace('-8444-', '-7444-')]) {
       // The all-numeric valid ID has no uppercase characters; use alphabetic UUID.
       if (bad !== id) expect(() => serialFrame(bad, {})).toThrow();

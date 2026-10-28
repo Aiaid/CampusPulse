@@ -1,4 +1,5 @@
 import type { BatchV2, V2Stream } from './device-v2-validation';
+import type { AuthAssertion } from './admin-auth';
 import { IngestStoreError } from './ingest-store';
 export interface AckV2 {
  node_id: string; boot_id: string; stream: V2Stream; batch_id: string; body_sha256: string;
@@ -8,7 +9,7 @@ export async function findReceiptV2(db: D1Database, node: string, batch: string)
  const row = await db.prepare('SELECT node_id,boot_id,stream,batch_id,body_sha256,accepted_count,receipt_id,received_at FROM ingestion_batches_v2 WHERE node_id=? AND batch_id=?').bind(node,batch).first<Omit<AckV2,'durability'>>();
  return row ? { ...row, durability: 'committed' } : null;
 }
-export async function commitBatchV2(db: D1Database, batch: BatchV2, hash: string, rawKey: string | null, rawHours: number, aggregateDays: number, acceptUntil: number, now: number): Promise<AckV2> {
+export async function commitBatchV2(db: D1Database, batch: BatchV2, hash: string, rawKey: string | null, rawHours: number, aggregateDays: number, acceptUntil: number, now: number, authorization?:AuthAssertion): Promise<AckV2> {
  const prior = await findReceiptV2(db,batch.node_id,batch.batch_id);
  if (prior) { if (prior.body_sha256 !== hash) throw new IngestStoreError(409,'batch_conflict'); return prior; }
  // R2 archival may have crossed the upload cutoff after route authorization.
@@ -31,6 +32,8 @@ export async function commitBatchV2(db: D1Database, batch: BatchV2, hash: string
     'duration_ms' in item ? item.duration_ms : null, 'window_seq' in item ? item.window_seq : null,
     'address' in item ? item.address : null,'address_type' in item ? item.address_type : null,serialized,ack.received_at,expiry));
  }
+ const authGuard=crypto.randomUUID();
+ if(authorization){statements.unshift(db.prepare(`INSERT INTO admin_write_assertions(id,ok) SELECT ?,CASE WHEN (${authorization.sql}) THEN 1 ELSE 0 END`).bind(authGuard,...authorization.bindings));statements.push(db.prepare('DELETE FROM admin_write_assertions WHERE id=?').bind(authGuard));}
  try { await db.batch(statements); }
  catch (error) {
   const winner = await findReceiptV2(db,batch.node_id,batch.batch_id);

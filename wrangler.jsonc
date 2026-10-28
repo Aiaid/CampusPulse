@@ -4,6 +4,7 @@
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-23",
   "compatibility_flags": ["nodejs_compat"],
+  "secrets": {"required": ["MQTT_PROVISIONING_KEY", "ADMIN_TOKEN", "OPERATOR_TOKEN", "RESEARCH_TOKEN"]},
   "assets": { "directory": "./dist", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*", "/docs", "/docs/*", "/openapi.json"] },
   "d1_databases": [{ "binding": "DB", "database_name": "campuspulse", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }],
   "r2_buckets": [{ "binding": "RAW_BUCKET", "bucket_name": "campuspulse-raw" }],

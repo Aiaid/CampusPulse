@@ -11,6 +11,16 @@ config CP_PASSPORT_BUTTONS
     bool "Enable Passport ADC buttons"
     default y
 
+config CP_PASSPORT_REFRESH_MS
+    int "Passport normal display interval (milliseconds)"
+    range 1000 10000
+    default 2000
+    help
+        Minimum interval between changed normal telemetry frames. Page, setup,
+        authentication, collection and new upload/storage failure changes draw
+        immediately. Identical views are skipped. This does not change sensor
+        sampling or network scheduling.
+
 config CP_LEGACY_RADAR_DIAGNOSTICS
     bool "Run the inherited local-only Radar diagnostics"
     default n

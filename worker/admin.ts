@@ -5,6 +5,8 @@ import { json, readBytes, sha256 } from './ingest';
 import { adminOrigin, adminSecret, requireAdminSession, requireFreshSession, sessionAssertion, AuthRateLimitError } from './admin-auth';
 import { handleAdminIdentity } from './admin-account';
 import { handleAdminDeviceDiagnostics } from './admin-device-diagnostics';
+import { handleAdminMqtt } from './admin-mqtt';
+import { assignMqtt, decryptMqtt, mqttReadyAssertion, readyMqtt } from './mqtt-credentials';
 import { readRuntimeSettings, readSettingsRecord, validateSettings } from './admin-settings';
 export { readRuntimeSettings, readPublicSettings } from './admin-settings';
 
@@ -58,8 +60,10 @@ interface DeviceRow {
   status_json: string | null; status_received_at: string | null; status_boot_id: string | null; status_config_id: string | null; status_batch_id: string | null;
   ingestion_received_at: string | null; ingestion_boot_id: string | null; ingestion_stream: string | null; ingestion_batch_id: string | null;
   applied_config_id: string | null; control_json: string | null; control_received_at: string | null; desired_protocol: string | null;
+  mqtt_state: 'pending_broker' | 'ready' | 'assigned' | null; mqtt_verified_at: string | null; mqtt_namespace: string | null;
 }
 const DEVICE_SELECT = `SELECT n.id,n.name,n.board,n.enabled,
+  m.state AS mqtt_state,m.verified_at AS mqtt_verified_at,m.namespace AS mqtt_namespace,
   CASE WHEN c.received_at IS NOT NULL AND (b.received_at IS NULL OR c.received_at>b.received_at) THEN c.received_at ELSE b.received_at END AS last_seen_at,
   CASE WHEN c.received_at IS NOT NULL AND (b.received_at IS NULL OR c.received_at>b.received_at) THEN c.firmware_version ELSE b.firmware_version END AS firmware_version,
   b.capture_config_id AS reported_config_id,d.capture_config_id AS desired_config_id,
@@ -72,6 +76,7 @@ const DEVICE_SELECT = `SELECT n.id,n.name,n.board,n.enabled,
   c.contact_json AS control_json,c.received_at AS control_received_at,
   s.item_json AS status_json,s.received_at AS status_received_at,s.boot_id AS status_boot_id,s.capture_config_id AS status_config_id,s.batch_id AS status_batch_id
   FROM device_nodes n
+  LEFT JOIN mqtt_credentials m ON m.node_id=n.id
   LEFT JOIN all_ingestion_batches b ON b.node_id=n.id AND b.batch_id=(SELECT x.batch_id FROM all_ingestion_batches x WHERE x.node_id=n.id ORDER BY x.received_at DESC,x.batch_id DESC LIMIT 1)
   LEFT JOIN device_desired_configs d ON d.node_id=n.id
   LEFT JOIN capture_configs p ON p.id=d.capture_config_id
@@ -82,6 +87,9 @@ const DEVICE_SELECT = `SELECT n.id,n.name,n.board,n.enabled,
 function deviceFromRow(row: DeviceRow, staleSeconds: number, now: number) {
   const lastSeen = row.last_seen_at ? Date.parse(row.last_seen_at) : NaN;
   return { id: row.id, name: row.name || row.id, board: row.board, enabled: row.enabled === 1,
+    // Registry assignment and broker verification do not prove that this device
+    // has saved the identity or successfully connected with it.
+    mqtt_assignment: { state: row.mqtt_state ?? 'unconfigured', broker_verified: row.mqtt_verified_at !== null, namespace: row.mqtt_namespace },
     last_seen_at: row.last_seen_at,
     contact_state: !Number.isFinite(lastSeen) ? 'unknown' : now - lastSeen <= staleSeconds * 1000 ? 'recent' : 'stale',
     firmware_version: row.firmware_version,
@@ -196,6 +204,8 @@ export async function handleAdmin(request: Request, env: Env): Promise<Response 
     if (diagnostics) return diagnostics;
     const transact = (writes: D1PreparedStatement[], action: string, target: string, detail: ObjectValue, assertions: Assertion[] = []) =>
       atomic(env, writes, action, target, detail, [sessionAssertion(session), ...assertions]);
+    const mqttAdmin = await handleAdminMqtt(request, env, route, session, transact);
+    if (mqttAdmin) return mqttAdmin;
     if (route === '/overview' && request.method === 'GET') {
       const settings = await readRuntimeSettings(env);
       const since = new Date(Date.now() - settings.stale_after_seconds * 1000).toISOString();
@@ -223,9 +233,23 @@ export async function handleAdmin(request: Request, env: Env): Promise<Response 
         const credential = `cpd_${Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, '0')).join('')}`;
         const hash = await sha256(new TextEncoder().encode(credential));
         const now = new Date().toISOString();
-        await transact([env.DB.prepare('INSERT INTO device_nodes(id,credential_sha256,name,board,created_at,updated_at) VALUES (?,?,?,?,?,?)')
-          .bind(id, hash, name, board, now, now)], 'device.register', id, { fields: ['name', 'board'] }, [sessionAssertion(session, true)]);
-        return json({ device: await findDevice(env, id), credential }, 201);
+        // Registry, assignment and audit share one D1 transaction. Retry only
+        // a competing pool allocation; never create a half-enrolled node.
+        for (let attempt = 0; attempt < 4; attempt++) {
+          if (await env.DB.prepare('SELECT id FROM device_nodes WHERE id=?').bind(id).first()) conflict();
+          const pool = await readyMqtt(env), mqtt = await decryptMqtt(env, pool);
+          try {
+            await transact([env.DB.prepare('INSERT INTO device_nodes(id,credential_sha256,name,board,created_at,updated_at) VALUES (?,?,?,?,?,?)')
+              .bind(id, hash, name, board, now, now), assignMqtt(env, pool, id)], 'device.register', id,
+              { fields: ['name', 'board'], mqtt_pool_id: pool.id }, [sessionAssertion(session, true), mqttReadyAssertion(pool)]);
+            return json({ device: await findDevice(env, id), credential, mqtt }, 201);
+          } catch (error) {
+            if (!(error instanceof IngestError) || error.code !== 'revision_conflict') throw error;
+            const winner = await env.DB.prepare('SELECT state,node_id FROM mqtt_credentials WHERE id=?').bind(pool.id).first<{state:string;node_id:string|null}>();
+            if (winner?.state === 'ready' || winner?.node_id === id) throw error;
+          }
+        }
+        throw new IngestError(409, 'mqtt_pool_busy', 'MQTT identities were allocated concurrently. Retry enrollment.');
       }
     }
     const deviceRoute = /^\/devices\/([a-z0-9_-]{1,64})(?:\/(rotate-credential|placements))?$/.exec(route);

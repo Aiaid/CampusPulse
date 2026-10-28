@@ -1,5 +1,6 @@
 #pragma once
 #include "cp_core.h"
+#include "cp_debug.h"
 #include "esp_err.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -24,6 +25,8 @@ typedef struct {
     int battery_percent;
     bool setup_active,setup_softap,setup_usb;
     char setup_name[32],setup_proof[33],setup_password[33],setup_state[24];
+    cp_debug_snapshot_t debug;
+    cp_device_page_t page;
 } cp_board_view_t;
 
 const cp_board_profile_t *cp_board_profile(void);

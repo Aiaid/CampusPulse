@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 static void fill(cp_settings_t *s) {
+    strcpy(s->mqtt_uri,CP_MQTT_PRODUCTION_URI);strcpy(s->mqtt_username,"fixture_pool");strcpy(s->mqtt_password,"synthetic-mqtt-password");strcpy(s->mqtt_namespace,"fixture_pool");
     s->version = CP_SETTINGS_VERSION; s->wifi_security=CP_WIFI_PERSONAL;
     memset(s->eap_username,0,sizeof s->eap_username);memset(s->eap_identity,0,sizeof s->eap_identity);memset(s->eap_password,0,sizeof s->eap_password);
     strcpy(s->node_id, "cp_001122aabbcc"); strcpy(s->ssid, "test-network");
@@ -35,9 +36,9 @@ int main(void) {
     cp_settings_t first, second; memset(&first, 0xa5, sizeof(first)); memset(&second, 0x5a, sizeof(second)); fill(&first); fill(&second);
     uint8_t a[32], b[32]; assert(cp_provision_settings_digest(&first, a)); assert(cp_provision_settings_digest(&second, b)); assert(cp_provision_digest_equal(a,b));
     /* Every persisted candidate field participates; struct padding does not. */
-    for (unsigned i = 0; i < 10; i++) {
+    for (unsigned i = 0; i < 14; i++) {
         fill(&second);
-        switch(i) { case 0: second.version++; break; case 1: second.node_id[3]='f'; break; case 2: second.ssid[0]='x'; break; case 3: second.password[0]='x'; break; case 4: second.device_token[4]='x'; break; case 5: second.api_origin[8]='x'; break; case 6: second.wifi_security=CP_WIFI_OPEN; break; case 7: strcpy(second.eap_username,"synthetic-user"); break; case 8: strcpy(second.eap_identity,"synthetic-identity"); break; case 9: strcpy(second.eap_password,"synthetic-password"); break; }
+        switch(i) { case 0: second.version++; break; case 1: second.node_id[3]='f'; break; case 2: second.ssid[0]='x'; break; case 3: second.password[0]='x'; break; case 4: second.device_token[4]='x'; break; case 5: second.api_origin[8]='x'; break; case 6: second.wifi_security=CP_WIFI_OPEN; break; case 7: strcpy(second.eap_username,"synthetic-user"); break; case 8: strcpy(second.eap_identity,"synthetic-identity"); break; case 9: strcpy(second.eap_password,"synthetic-password"); break;case 10: second.mqtt_uri[8]='x';break;case 11: second.mqtt_username[0]='x';break;case 12: second.mqtt_password[0]='x';break;case 13: second.mqtt_namespace[0]='x';break; }
         assert(cp_provision_settings_digest(&second,b)); assert(!cp_provision_digest_equal(a,b));
     }
     fill(&first); fill(&second); strcpy(first.ssid,"ab"); strcpy(first.password,"c"); strcpy(second.ssid,"a"); strcpy(second.password,"bc");

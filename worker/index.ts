@@ -201,3 +201,5 @@ export default {
     return handleDocs(request) ?? await handleApi(request, env) ?? (env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 }));
   },
 };
+
+export { MqttDeviceApi } from './mqtt-entrypoint';

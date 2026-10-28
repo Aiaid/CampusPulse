@@ -51,6 +51,8 @@ export interface Env extends Pick<WorkerBindings, 'DB'> {
   RESEARCH_TOKEN?: string;
   /** Bootstrap/cookie-signing secret; token login is disabled after account setup. */
   ADMIN_TOKEN?: string;
+  /** Base64url 32-byte AES-GCM key for independent MQTT provisioning secrets. */
+  MQTT_PROVISIONING_KEY?: string;
   /** Exact trusted HTTPS origin and hostname RP ID; localhost is development-only. */
   ADMIN_WEBAUTHN_ORIGIN?: string;
   ADMIN_WEBAUTHN_RP_ID?: string;

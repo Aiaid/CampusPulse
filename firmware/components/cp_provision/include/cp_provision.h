@@ -43,8 +43,8 @@ void cp_provision_set_status(const char *state, const char *reason);
 
 /* Nonblocking resolver over already validated application RAM. NULL output is a
  * capability query. Never access NVS/network from this callback. */
-typedef bool (*cp_provision_credential_resolver_fn)(const char *node_id,char *token,
-    size_t capacity,uint32_t *generation,void *context);
+typedef bool (*cp_provision_credential_resolver_fn)(const char *node_id,cp_settings_t *saved,
+    uint32_t *generation,void *context);
 esp_err_t cp_provision_bind_context(const char *node_id,const char *boot_id,uint32_t reset_reason,
     cp_provision_credential_resolver_fn resolver,void *context);
 void cp_provision_set_diagnostic(const cp_network_diagnostic_t *diagnostic,const char *attempt_id);

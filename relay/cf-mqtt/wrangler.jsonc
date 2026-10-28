@@ -1,0 +1,20 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "campuspulse-mqtt-gateway",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "services": [{ "binding": "INGEST_SERVICE", "service": "campuspulse" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "campuspulse", "database_id": "00000000-0000-0000-0000-000000000000" }],
+  "durable_objects": { "bindings": [{ "name": "MQTT_SESSIONS", "class_name": "MqttSession" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MqttSession"] }],
+  "secrets": { "required": ["SESSION_WRAP_KEY"] },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": { "enabled": true, "invocation_logs": false },
+    "traces": { "enabled": false }
+  }
+}

@@ -113,6 +113,19 @@ available in the data selector.
 
 ## Managing devices and data
 
+Production device transport now defaults to **native MQTT/TLS → Hangzhou EMQX →
+Cloudflare**, with exact Cloudflare application receipts returned over MQTT.
+The administrator prepares a batch of independent MQTT identities, imports the
+private authentication/ACL files into EMQX once, and verifies the broker's actual
+login/topic permissions. Registration then allocates a verified identity
+automatically. The device setup wizard writes it through protected BLE, USB or
+the device hotspot; Wi-Fi-only changes preserve the saved identity. Pool
+allocation, device save and actual cloud receipts remain separate states.
+See [production MQTT operations](docs/notes/mqtt-production.md) and the
+[public CA certificate](firmware/certs/README.md). Credentials and private keys
+are never stored in Git. Existing field-device rollout is reported separately
+from source/build and browser acceptance.
+
 CampusPulse includes an [administrator workspace](https://pulse.anend.net/admin)
 for operating the observation network alongside the public map. Its pages and
 APIs cover the device lifecycle:

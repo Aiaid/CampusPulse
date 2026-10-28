@@ -1,4 +1,5 @@
 import type { Env } from './types';
+import type { AuthAssertion } from './admin-auth';
 import { IngestError, parseIngestJson } from './ingest-validation';
 import { IngestStoreError } from './ingest-store';
 import { archive, authorizeResearch, device, json, MAX_INGEST_BYTES, readBytes, sha256 } from './ingest';
@@ -21,7 +22,7 @@ function trustedConfig(row:ConfigRow):CaptureConfigV2 {
 }
 async function currentControl(env:Env,node:string) { return env.DB.prepare('SELECT * FROM device_control_v2 WHERE node_id=?').bind(node).first<ControlRow>(); }
 function contactAck(node:string,boot:string,seq:number,received:string) { return { node_id:node,boot_id:boot,contact_seq:seq,received_at:received,control:{lease_ms:DEFAULT_LEASE} }; }
-async function contact(request:Request,env:Env,node:string) {
+async function contact(request:Request,env:Env,node:string,authorization?:AuthAssertion) {
  const bytes=await readBytes(request,4096),hash=await sha256(bytes);
  const o=object(parseIngestJson(bytes),'contact',['protocol','boot_id','contact_seq','firmware_version','uptime_ms','wifi_state','capture_state','applied_config_id']);
  choice(o.protocol,'contact.protocol',['campuspulse/2']);
@@ -41,6 +42,7 @@ async function contact(request:Request,env:Env,node:string) {
  const now=new Date().toISOString(),guard=crypto.randomUUID();
  try {
   await env.DB.batch([
+   ...(authorization?[env.DB.prepare(`INSERT INTO admin_write_assertions(id,ok) SELECT ?,CASE WHEN (${authorization.sql}) THEN 1 ELSE 0 END`).bind(`${guard}-auth`,...authorization.bindings)]:[]),
    env.DB.prepare(`INSERT INTO admin_write_assertions(id,ok) SELECT ?,CASE WHEN (
      (NOT EXISTS(SELECT 1 FROM device_boots_v2 WHERE node_id=? AND boot_id=?)) OR
      EXISTS(SELECT 1 FROM device_control_v2 WHERE node_id=? AND boot_id=? AND contact_seq<? AND json_extract(contact_json,'$.uptime_ms')<=?)
@@ -57,6 +59,7 @@ async function contact(request:Request,env:Env,node:string) {
      activation_received_at=CASE WHEN device_control_v2.boot_id=excluded.boot_id THEN device_control_v2.activation_received_at ELSE NULL END`)
      .bind(node,boot,seq,hash,JSON.stringify(o),firmware,now),
    env.DB.prepare('DELETE FROM admin_write_assertions WHERE id=?').bind(guard),
+   ...(authorization?[env.DB.prepare('DELETE FROM admin_write_assertions WHERE id=?').bind(`${guard}-auth`)]:[]),
   ]);
  } catch(error) {
   const winner=await currentControl(env,node);
@@ -70,7 +73,7 @@ async function contact(request:Request,env:Env,node:string) {
  }
  return json(contactAck(node,boot,seq,now));
 }
-async function activate(request:Request,env:Env,node:string) {
+async function activate(request:Request,env:Env,node:string,authorization?:AuthAssertion) {
  const bytes=await readBytes(request,4096),hash=await sha256(bytes);
  const o=object(parseIngestJson(bytes),'activation',['capture_config_id','boot_id','apply_seq','state'],['message']);
  const id=string(o.capture_config_id,'activation.capture_config_id'),boot=string(o.boot_id,'activation.boot_id',UUID),seq=integer(o.apply_seq,'activation.apply_seq',1,0xffffffff);
@@ -90,11 +93,13 @@ async function activate(request:Request,env:Env,node:string) {
  const now=new Date().toISOString(),guard=crypto.randomUUID();
  try {
   await env.DB.batch([
+   ...(authorization?[env.DB.prepare(`INSERT INTO admin_write_assertions(id,ok) SELECT ?,CASE WHEN (${authorization.sql}) THEN 1 ELSE 0 END`).bind(`${guard}-auth`,...authorization.bindings)]:[]),
    env.DB.prepare(`INSERT INTO admin_write_assertions(id,ok) SELECT ?,CASE WHEN EXISTS(SELECT 1 FROM device_control_v2 WHERE node_id=? AND boot_id=? AND apply_seq<?) THEN 1 ELSE 0 END`).bind(guard,node,boot,seq),
    env.DB.prepare(`UPDATE device_control_v2 SET apply_seq=?,applied_config_id=CASE WHEN ?='applied' THEN ? ELSE applied_config_id END,
     activation_config_id=?,activation_state=?,activation_message=?,activation_sha256=?,activation_received_at=? WHERE node_id=? AND boot_id=?`).bind(seq,state,id,id,state,message,hash,now,node,boot),
    env.DB.prepare('INSERT INTO config_activation_events_v2(node_id,boot_id,capture_config_id,apply_seq,state,message,received_at,expires_at_ms) VALUES(?,?,?,?,?,?,?,?)').bind(node,boot,id,seq,state,message,now,Date.now()+30*86400000),
    env.DB.prepare('DELETE FROM admin_write_assertions WHERE id=?').bind(guard),
+   ...(authorization?[env.DB.prepare('DELETE FROM admin_write_assertions WHERE id=?').bind(`${guard}-auth`)]:[]),
   ]);
  } catch(error) {
   const winner=await currentControl(env,node);
@@ -131,8 +136,20 @@ export async function handleDeviceV2(request:Request,env:Env):Promise<Response|n
    return json({batch,body_sha256:row.body_sha256,derived:batch.items.map(i=>({seq:i.seq,...parseAdvertisement(i.payload_hex)}))});
   }
   const node=await device(request,env);
-  if(path==='/api/v2/device/contact') return await contact(request,env,node);
-  if(path==='/api/v2/device/config/ack') return await activate(request,env,node);
+  return await handleAuthenticatedDeviceV2(request,env,node);
+ } catch(error) {
+  if(error instanceof IngestError||error instanceof IngestStoreError) return json({error:{code:error.code,message:error.message,retryable:error.status>=500}},error.status);
+  return json({error:{code:'storage_unavailable',message:'Service temporarily unavailable.',retryable:true}},503);
+ }
+}
+
+/** Internal module entry: caller must authenticate the principal without using
+ * public request headers. HTTP routes always call device() before this helper. */
+export async function handleAuthenticatedDeviceV2(request:Request,env:Env,node:string,authorization?:AuthAssertion):Promise<Response> {
+ const url=new URL(request.url),path=url.pathname;
+ try {
+  if(path==='/api/v2/device/contact') return await contact(request,env,node,authorization);
+  if(path==='/api/v2/device/config/ack') return await activate(request,env,node,authorization);
   if(path==='/api/v2/device/config') {
    const requested=url.searchParams.get('capture_config_id');
    if(requested!==null&&!ID.test(requested)) throw new IngestError(422,'invalid_config_id','Invalid policy ID.');
@@ -159,7 +176,7 @@ export async function handleDeviceV2(request:Request,env:Env):Promise<Response|n
   validateConfigBatchV2(batch,config);
   if(Date.now()>row.accept_until_ms) throw new IngestError(410,'capture_config_expired','Capture policy expired; preserve queued data.');
   const key=batch.stream==='ble_reports'?await archive(env,node,batch.batch_id,hash,bytes):null;
-  return json(await commitBatchV2(env.DB,batch,hash,key,row.raw_retention_hours,row.aggregate_retention_days,row.accept_until_ms,Date.now()));
+  return json(await commitBatchV2(env.DB,batch,hash,key,row.raw_retention_hours,row.aggregate_retention_days,row.accept_until_ms,Date.now(),authorization));
  } catch(error) {
   if(error instanceof IngestError||error instanceof IngestStoreError) return json({error:{code:error.code,message:error.message,retryable:error.status>=500}},error.status);
   return json({error:{code:'storage_unavailable',message:'Service temporarily unavailable.',retryable:true}},503);

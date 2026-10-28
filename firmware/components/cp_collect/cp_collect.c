@@ -1,10 +1,20 @@
 #include "cp_collect.h"
 #include <limits.h>
 #include <string.h>
-bool cp_collect_begin(cp_collect_t *c, uint64_t start, uint32_t window, uint32_t bin, uint32_t seq,
-                      unsigned capacity, bool raw) {
-    if (!c || window < 1000 || window > 300000 || !bin || bin > window ||
-        (window + bin - 1) / bin > CP_COLLECT_BINS || !seq || !capacity ||
+unsigned cp_collect_bin_count(uint32_t window, uint32_t bin) {
+    if (window < 1000 || window > 300000 || !bin || bin > window)
+        return 0;
+    unsigned count = (window + bin - 1) / bin;
+    return count <= CP_COLLECT_BINS ? count : 0;
+}
+size_t cp_collect_bank_bytes(unsigned capacity, unsigned bins) {
+    if (!capacity || capacity > CP_COLLECT_ADDRESSES || !bins || bins > CP_COLLECT_BINS)
+        return 0;
+    return capacity * (sizeof(cp_address_core_t) + bins * sizeof(uint32_t));
+}
+static bool begin(cp_collect_state_t *c, uint64_t start, uint32_t window, uint32_t bin,
+                  uint32_t seq, unsigned capacity, bool raw) {
+    if (!c || !cp_collect_bin_count(window, bin) || !seq || !capacity ||
         capacity > CP_COLLECT_ADDRESSES)
         return false;
     memset(c, 0, sizeof *c);
@@ -14,6 +24,26 @@ bool cp_collect_begin(cp_collect_t *c, uint64_t start, uint32_t window, uint32_t
     c->window_seq = seq;
     c->address_capacity = capacity;
     c->raw_enabled = raw;
+    return true;
+}
+bool cp_collect_begin(cp_collect_t *c, uint64_t start, uint32_t window, uint32_t bin,
+                      uint32_t seq, unsigned capacity, bool raw) {
+    if (!c || !begin(&c->state, start, window, bin, seq, capacity, raw))
+        return false;
+    memset(c->addresses, 0, sizeof c->addresses);
+    memset(c->raw, 0, sizeof c->raw);
+    return true;
+}
+bool cp_collect_compact_begin(cp_collect_compact_t *c, uint64_t start, uint32_t window,
+                              uint32_t bin, uint32_t seq, unsigned capacity, bool raw) {
+    if (!c || !c->addresses || !c->bins || capacity > c->storage_capacity ||
+        c->storage_capacity > CP_COLLECT_ADDRESSES ||
+        c->bin_count != cp_collect_bin_count(window, bin) ||
+        !begin(&c->state, start, window, bin, seq, capacity, raw))
+        return false;
+    memset(c->addresses, 0, capacity * sizeof *c->addresses);
+    memset(c->bins, 0, capacity * c->bin_count * sizeof *c->bins);
+    memset(c->raw, 0, sizeof c->raw);
     return true;
 }
 static void rssi_note(int16_t value, uint32_t *n, int16_t *min, int16_t *max, int64_t *sum) {
@@ -31,20 +61,30 @@ static void rssi_note(int16_t value, uint32_t *n, int16_t *min, int16_t *max, in
     (*n)++;
     *sum += value;
 }
-bool cp_collect_observe(cp_collect_t *c, const cp_report_t *r) {
+static cp_address_core_t *address_at(cp_address_summary_t *legacy, cp_address_core_t *cores,
+                                     unsigned i) {
+    return legacy ? &legacy[i].core : &cores[i];
+}
+static bool observe(cp_collect_state_t *c, cp_address_summary_t *legacy,
+                    cp_address_core_t *cores, uint32_t *bins, unsigned bin_count,
+                    cp_report_t *raw, const cp_report_t *r) {
     if (!c || !r || r->mono_ms < c->start_ms || r->mono_ms - c->start_ms >= c->window_ms ||
         r->payload_length > 31 || r->address_type > 4 ||
         (c->raw_enabled && r->raw != CP_RAW_SELECTED && r->raw != CP_RAW_INTENTIONAL &&
          r->raw != CP_RAW_PRESSURE) ||
         c->reports_seen == UINT32_MAX)
         return false;
-    cp_address_summary_t *a = NULL;
-    for (unsigned i = 0; i < c->address_count; i++)
-        if (c->addresses[i].address_type == r->address_type &&
-            !memcmp(c->addresses[i].address, r->address, 6)) {
-            a = &c->addresses[i];
+    cp_address_core_t *a = NULL;
+    unsigned index = c->address_count;
+    for (unsigned i = 0; i < c->address_count; i++) {
+        cp_address_core_t *candidate = address_at(legacy, cores, i);
+        if (candidate->address_type == r->address_type &&
+            !memcmp(candidate->address, r->address, 6)) {
+            a = candidate;
+            index = i;
             break;
         }
+    }
     /* Parse only in the collector worker, independently of optional raw
      * retention. Prepare before changing any counters so an exhausted or
      * inconsistent evidence state is an explicit rejected report, not a
@@ -68,7 +108,7 @@ bool cp_collect_observe(cp_collect_t *c, const cp_report_t *r) {
         case CP_RAW_SELECTED:
             c->selected++;
             if (c->raw_count < CP_COLLECT_RAW)
-                c->raw[c->raw_count++] = *r;
+                raw[c->raw_count++] = *r;
             else
                 c->raw_drops++;
             break;
@@ -88,7 +128,7 @@ bool cp_collect_observe(cp_collect_t *c, const cp_report_t *r) {
             c->summary_drops++;
             return true;
         }
-        a = &c->addresses[c->address_count++];
+        a = address_at(legacy, cores, c->address_count++);
         a->used = true;
         a->address_type = r->address_type;
         memcpy(a->address, r->address, 6);
@@ -105,11 +145,12 @@ bool cp_collect_observe(cp_collect_t *c, const cp_report_t *r) {
         a->first_ms = offset;
     if (offset > a->last_ms)
         a->last_ms = offset;
-    a->bins[offset / c->bin_ms]++;
+    uint32_t *address_bins = legacy ? legacy[index].bins : bins + index * bin_count;
+    address_bins[offset / c->bin_ms]++;
     rssi_note(r->rssi, &a->samples, &a->rssi_min, &a->rssi_max, &a->rssi_sum);
     return true;
 }
-bool cp_collect_losses(cp_collect_t *c, uint32_t dropped, uint32_t selected, uint32_t intentional,
+static bool losses(cp_collect_state_t *c, uint32_t dropped, uint32_t selected, uint32_t intentional,
                        uint32_t pressure) {
     if (!c || dropped > UINT32_MAX - c->reports_seen ||
         dropped > UINT32_MAX - c->aggregation_drops ||
@@ -123,4 +164,23 @@ bool cp_collect_losses(cp_collect_t *c, uint32_t dropped, uint32_t selected, uin
     c->intentional += intentional;
     c->pressure += pressure;
     return true;
+}
+
+bool cp_collect_observe(cp_collect_t *c, const cp_report_t *r) {
+    return c && observe(&c->state, c->addresses, NULL, NULL, CP_COLLECT_BINS, c->raw, r);
+}
+bool cp_collect_compact_observe(cp_collect_compact_t *c, const cp_report_t *r) {
+    return c && c->addresses && c->bins && c->bin_count && c->bin_count <= CP_COLLECT_BINS &&
+        c->storage_capacity <= CP_COLLECT_ADDRESSES &&
+        c->address_capacity <= c->storage_capacity && c->address_count <= c->address_capacity &&
+        c->bin_count == cp_collect_bin_count(c->window_ms, c->bin_ms) &&
+        observe(&c->state, NULL, c->addresses, c->bins, c->bin_count, c->raw, r);
+}
+bool cp_collect_losses(cp_collect_t *c, uint32_t dropped, uint32_t selected,
+                       uint32_t intentional, uint32_t pressure) {
+    return c && losses(&c->state, dropped, selected, intentional, pressure);
+}
+bool cp_collect_compact_losses(cp_collect_compact_t *c, uint32_t dropped, uint32_t selected,
+                               uint32_t intentional, uint32_t pressure) {
+    return c && losses(&c->state, dropped, selected, intentional, pressure);
 }

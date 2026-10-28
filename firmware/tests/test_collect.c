@@ -4,7 +4,33 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <string.h>
+static void compact_counter_and_storage_boundaries(void) {
+    cp_address_core_t addresses[1];
+    uint32_t bins[1];
+    cp_collect_compact_t c = {.addresses = addresses, .bins = bins,
+        .storage_capacity = 1, .bin_count = 1};
+    assert(cp_collect_compact_begin(&c, 1000, 1000, 1000, 1, 1, false));
+    cp_report_t r = {.mono_ms = 1000, .address = {2,0,0,0,0,1}, .rssi = -50};
+    for (unsigned i = 0; i < 65537; ++i) assert(cp_collect_compact_observe(&c, &r));
+    assert(c.reports_seen == 65537 && addresses[0].reports == 65537 && bins[0] == 65537);
+    addresses[0].reports = UINT32_MAX;
+    addresses[0].vehicle_evidence.parsed_reports = UINT32_MAX;
+    cp_collect_compact_t before = c;
+    cp_address_core_t address_before = addresses[0];
+    assert(!cp_collect_compact_observe(&c, &r));
+    assert(!memcmp(&c, &before, sizeof c) && !memcmp(addresses, &address_before, sizeof address_before));
+    assert(bins[0] == 65537);
+    /* Capacity/bin mismatch is refused without changing the live typed bank. */
+    assert(!cp_collect_compact_begin(&c, 2000, 2000, 1000, 2, 1, false));
+    assert(!cp_collect_compact_begin(&c, 2000, 1000, 1000, 2, 2, false));
+    assert(!memcmp(&c, &before, sizeof c));
+    assert(cp_collect_compact_begin(&c, 2000, 1000, 1000, 2, 1, false));
+    assert(!bins[0] && !addresses[0].used && !c.reports_seen);
+    assert(cp_collect_bank_bytes(64, 6) == 64 * (sizeof(cp_address_core_t) + 6 * sizeof(uint32_t)));
+    assert(!cp_collect_bank_bytes(65, 6) && !cp_collect_bank_bytes(64, 17));
+}
 int main(void) {
+    compact_counter_and_storage_boundaries();
     cp_collect_t *c = malloc(sizeof *c);
     assert(c);
     assert(cp_collect_begin(c, 1000, 30000, 5000, 1, 2, false));

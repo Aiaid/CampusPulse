@@ -12,7 +12,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,10 +28,21 @@ jobs:
         run: node scripts/ingest-runtime-smoke.mjs
       - name: Verify device v2 against local workerd D1 and R2
         run: node scripts/device-v2-runtime-smoke.mjs
+      - name: Verify MQTT gateway protocol, registry RPC and replay bounds
+        run: |
+          node --test relay/emqx-cloud/test/*.test.mjs
+          node_modules/.bin/tsc -p relay/emqx-cloud/tsconfig.json
+      - name: Verify production MQTT settings and firmware ownership on host
+        run: |
+          sh firmware/components/cp_settings/tests/run-host.sh
+          sh firmware/components/cp_network/tests/run-host.sh
+          sh firmware/tests/runtime/run-host.sh
       - name: Install browser
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium webkit
       - name: Verify protected provisioning wizard with synthetic peers
         run: node scripts/provisioning-browser-smoke.mjs
+      - name: Verify MQTT pool and enrollment workflow with synthetic peers
+        run: node scripts/mqtt-enrollment-browser-smoke.mjs
       - name: Verify private device diagnostics and uploaded evidence
         run: node scripts/device-diagnostics-browser-smoke.mjs
       - name: Verify multi-purpose places and existing-device deployment edits
@@ -44,8 +55,9 @@ jobs:
         run: node scripts/config-editing-browser-smoke.mjs
       - name: Prepare local database and disposable operator/admin credentials
         run: |
-          node --input-type=module -e "import {writeFileSync} from 'node:fs'; import {randomBytes} from 'node:crypto'; writeFileSync('.dev.vars',['OPERATOR_TOKEN='+randomBytes(32).toString('hex'),'ADMIN_TOKEN='+randomBytes(32).toString('hex'),'ADMIN_SMOKE_USERNAME=ci-admin','ADMIN_SMOKE_PASSWORD='+randomBytes(24).toString('hex'),'ADMIN_SMOKE_NEW_USERNAME=ci-admin-updated','ADMIN_SMOKE_NEW_PASSWORD='+randomBytes(24).toString('hex')].join('\n')+'\n',{mode:0o600});"
+          node --input-type=module -e "import {writeFileSync} from 'node:fs'; import {randomBytes} from 'node:crypto'; writeFileSync('.dev.vars',['OPERATOR_TOKEN='+randomBytes(32).toString('hex'),'ADMIN_TOKEN='+randomBytes(32).toString('hex'),'RESEARCH_TOKEN='+randomBytes(32).toString('hex'),'MQTT_PROVISIONING_KEY='+randomBytes(32).toString('base64url'),'ADMIN_SMOKE_USERNAME=ci-admin','ADMIN_SMOKE_PASSWORD='+randomBytes(24).toString('hex'),'ADMIN_SMOKE_NEW_USERNAME=ci-admin-updated','ADMIN_SMOKE_NEW_PASSWORD='+randomBytes(24).toString('hex')].join('\n')+'\n',{mode:0o600});"
           npm run db:migrate
+          CAMPUSPULSE_LOCAL_MQTT_FIXTURES=synthetic node scripts/seed-mqtt-browser-fixtures.mjs
       - name: Check browser against local Worker
         env:
           SMOKE_GIS: offline
@@ -114,5 +126,11 @@ jobs:
         run: npx wrangler d1 migrations apply campuspulse --remote --config .wrangler/deploy/wrangler.json
       - name: Deploy Worker API and static frontend together
         run: npx wrangler deploy --config .wrangler/deploy/wrangler.json
+      - name: Prepare MQTT gateway deployment
+        if: vars.CLOUDFLARE_MQTT_ROLLOUT_READY == 'true'
+        run: node scripts/cloudflare-mqtt-config.mjs
+      - name: Deploy MQTT gateway using retained Worker secrets
+        if: vars.CLOUDFLARE_MQTT_ROLLOUT_READY == 'true'
+        run: npx wrangler deploy --config .wrangler/deploy/mqtt-wrangler.json
       - name: Verify published frontend, API and D1
         run: node scripts/deployment-smoke.mjs

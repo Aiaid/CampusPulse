@@ -1,5 +1,26 @@
 # Prior work and reuse
 
+## 2026-10-28 — Performance, bounded JSON and transport comparison
+
+The optional `firmware/components/cp_perf/` observer/math, allocation-failure
+monitoring, bounded codec JSON printing, frozen-JSON scanner, connection-cache
+admission helpers, dirty-stripe renderer changes and native regressions are
+newly authored in this repository. They reuse the existing licensed Passport
+renderer/fonts, collector, codec and journal, plus public pinned ESP-IDF 5.5.3
+FreeRTOS/heap/HTTP/mbedTLS/MQTT APIs. No external profiler implementation or
+neighboring private source was imported. ESP-IDF's existing Apache-2.0 notices
+remain applicable; local SDK configuration changes are not a copied TLS stack.
+
+`firmware/diagnostics/transport-compare/` and `relay/transport-compare/` are
+newly authored synthetic diagnostics. The temporary local Node test server uses
+Aedes 1.2.0, MIT licensed, installed under a private temporary dependency tree.
+Aedes and its transitive notices remain with that development installation; no
+broker dependency or source is linked into the device firmware. Preserve those
+notices if this optional development dependency is later distributed. Synthetic
+RAM receipts do not claim durable production ingestion. Device observations,
+Flash backups, local CA/private keys and secret generated headers remain ignored
+and private. See [measurement scope](performance-evaluation.md).
+
 ## 2026-10-25 — Compact Radar evidence and versioned candidates
 
 The new `firmware/components/cp_vehicle/` and `worker/vehicle-rules.ts` adapt
@@ -675,6 +696,117 @@ password implementation code. New auth screenshots show synthetic local QA only,
 contain no credential values and are not committed; final copies are metadata
 stripped/rechecked before any sharing.
 
+## 2026-10-28 MQTT/serverless relay proof of concept
+
+The 2026-10-28 MQTT relay PoC adds newly authored Node relay/probe code and a
+temporary MQTT diagnostic. The diagnostic reuses the existing saved-Wi-Fi
+bootstrap/read-only NVS pattern and Passport layout, and links the installed
+ESP-IDF 5.5.3 ESP-MQTT/mbedTLS components with their existing SDK licenses. No
+provider credentials or real observations are copied into tracked code. See
+[the MQTT PoC acceptance boundary](aliyun-mqtt-relay-poc.md).
+
+## 2026-10-26 controlled LAN HTTPS diagnostic
+
+The standalone LAN diagnostic and Python standard-library test server are newly
+authored for this repository. The diagnostic reuses the existing `cp_settings`
+read/validation code and fingerprint-gated async transport repair without linking
+production collection, control or journal tasks. The repair retains Espressif's
+Apache-2.0 notices and generates its SDK translation unit only inside the local
+build directory; the installed ESP-IDF 5.5.3 source is not changed. No external
+example implementation, runtime captures, private keys or credentials are added
+to tracked source. See [the experiment record](https-lan-benchmark.md).
+
+The optional concurrent BLE mode also uses the existing `cp_collect` and
+`cp_vehicle` pure aggregation/parsing code and the SDK's NimBLE observer APIs,
+with scan/queue configuration referenced from the current Passport pipeline.
+It does not link the production journal or upload/control tasks. Observations
+remain in temporary RAM; uploaded bodies are newly generated synthetic buffers.
+See [the coexistence record](https-ble-coexistence.md) for the measured scope and
+the separate cleanup-reset limitation.
+
+## 2026-10-28 Passport device debug dashboard
+
+The subsequent BLE ingress decoupling, read-only codec window view,
+policy-sized sealed-address bank and numeric pipeline-state telemetry are newly
+authored within this repository. They reuse the existing collector, encoder,
+journal, upload worker and licensed SDK interfaces; no external implementation
+or neighboring private source was imported. Original valid wire fixtures remain
+byte-identical. Temporary opaque TCP routing uses Node built-ins and the host's
+existing proxy without terminating device-to-cloud TLS; its configuration,
+private captures and build-only routing override remain local and ignored.
+See [ownership, workload and physical results](ble-ingress-decoupling.md).
+
+The bounded `cp_debug` display snapshot, upload timing/ACK accounting helper and
+new status dashboard are newly authored for this repository. They reuse the
+existing Passport board adapter, single-owner `ui_mini` stripe renderer, current
+licensed fonts, normal network/collector/journal snapshots and public Espressif
+station/heap APIs. No external UI/broker code or neighboring private repository
+was imported. The normal setup screens retain their existing behavior.
+
+Host previews execute the actual C renderer with synthetic values; final PNG
+copies were checked with ExifTool and contain only image-format structure.
+Runtime observations, actual SSIDs/credentials, Flash images and device identity
+stay local/private. The selected hardware build explicitly excludes pre-existing
+clock and uploader-yield WIP without resetting it. See the
+[debug display and real memory record](device-debug-ui.md) for measurement units,
+source fingerprints, hardware acceptance and the limited-memory baseline.
+
+## 2026-10-28 Cloudflare public long-connection diagnostic
+
+`relay/cf-longlink/` and `firmware/diagnostics/cf-longlink/` are newly authored
+synthetic transport diagnostics. The device project reuses this repository's
+`cp_settings` parser and the saved-network bootstrap from the MQTT/LAN diagnostic,
+including the read-only NVS descriptor and RAM Wi-Fi configuration. Its build
+uses the existing fingerprint-gated generated ESP-IDF async transport repair;
+the installed SDK is not edited. This is reuse of the current authorized firmware
+baseline, not a new import of neighboring private source or device observations.
+
+The device links Espressif ESP-IDF 5.5.3 and the pinned
+`espressif/esp_websocket_client` 1.6.1 managed component under their Apache-2.0
+notices. Managed source and generated files stay ignored; preserve upstream
+notices for any later source/binary distribution. Worker API usage is based on
+official Cloudflare documentation; no third-party broker implementation was
+copied. Credentials, Flash backups and runtime evidence remain ignored and
+private. See [scope and measurements](cf-longlink-benchmark.md).
+
+## 2026-10-28 address storage and optional MQTT/WSS integration
+
+The compact address banks and `cp_network/mqtt_wss.*` are newly authored changes
+to the current authorized firmware baseline. They reuse this repository's
+collector, frozen journal, runtime settings, strict certificate bundle and
+durable receipt validator. No neighboring application, credentials or captured
+observations were imported. The adapter links the existing ESP-IDF5.5.3
+`esp-mqtt`, TCP/WebSocket and TLS components under their upstream Apache-2.0
+notices; it uses public transport APIs without editing the installed SDK.
+The dynamic-RX adapter conditionally interposes the public read/write functions
+only for its recorded MQTT TLS parent, sharing an IO/encoder mutex. Native
+concurrency tests and actual linked C3 calls verify that boundary. The measured
+build also selects the SDK's non-ISR FreeRTOS Flash-placement option; ISR and
+critical functions retain their normal placement. These are authored glue and
+standard SDK configuration, not copied private driver implementations.
+
+`relay/cf-mqtt/` is a newly authored bounded MQTT3.1.1 RPC gateway, based on
+official Cloudflare Workers/Durable Objects APIs. It imports the repository's
+existing device authentication and forwards to the existing ingestion service;
+no third-party broker implementation was copied. Generated Worker type files
+retain their upstream notices. Private deployment configuration, credentials,
+Flash backups and runtime evidence remain ignored. Implementation/build,
+deployment and physical acceptance must be reported separately.
+
+## 2026-10-28 native MQTT and EMQX verification
+
+The optional native TLS branch and local `relay/emqx/` bridge/provisioning tool
+are newly authored against the current authorized firmware/API baseline. They
+retain the repository's RPC envelope and exact-body/durable-receipt protocol;
+no vendor broker parser, credentials, observations or unrelated application was
+imported. Firmware links the existing Espressif MQTT/TLS components with their
+upstream Apache-2.0 notices. The pinned bridge dependencies are Paho MQTT2.1.0
+(EPL-2.0 OR BSD-3-Clause) and HTTPX0.28.1 (BSD-3-Clause); licenses remain in their
+installed distributions and no third-party source is vendored. The public broker
+CA comes from the provider's official console link; private configs and images
+remain ignored. Source/host/C3-build validation, account setup, broker ACL tests
+and physical hardware acceptance are reported separately.
+
 ## 2026-10-25 application icon
 
 The selected icon is newly AI-generated with the built-in image generation tool
@@ -704,3 +836,43 @@ Design a refined, memorable abstract identity for a campus activity map. One bol
 Visual discipline: one cohesive thick silhouette, a few decisive rounded corners, carefully balanced negative space. Prefer a beautiful simple symbol over literal explanation. Flat vector-like graphic, no texture, no glow, no shadows. Pale icy cyan for the main C, one restrained turquoise endpoint that belongs to the route. Deep midnight navy full-bleed square background. Symbol occupies about 68 percent of canvas width, centered optically. Crisp at 16px.
 No literal buildings, no gates, no towers, no roofs, no heart or ECG zigzag, no antennas, no shields, no pins, no tiny details, no text, no wordmark, no letters other than the abstract C shape, no presentation mockup, no outer border. Deliver exactly one finished square icon.
 ```
+
+## EMQX direct Cloudflare ingress (2026-10-28)
+
+`relay/emqx-cloud/` is newly authored for the user-requested removal of the Mac
+verification bridge. It follows the existing CampusPulse frozen-byte topics,
+SHA256/receipt validation contract and fixed v2 API paths; existing repository
+rights apply to that internal contract reuse. The bounded MQTT3.1.1 publisher,
+per-node durable replay guard and webhook adapter do not import vendor MQTT
+implementation code, private captures, credentials, firmware or images. Node
+crypto, Cloudflare sockets/Workers/DurableObject APIs and the repository's pinned
+esbuild/workerd/Miniflare test dependencies are used. Runtime secrets/configs are
+ignored private artifacts. Local90-test acceptance is separate from the later
+authorized Worker deployment/config-only broker reply test and the actual
+Serverless SQL/connector/rule checks. Bounded physical cloud-only acceptance
+passes303.747s active BLE collection with the owned Mac bridge stopped; see
+`relay/emqx-cloud/README.md` for reset/filtering and durability boundaries.
+
+## Production MQTT enrollment (2026-10-29)
+
+The encrypted registry/pool, named WorkerEntrypoint, bounded MQTT5 readiness
+probe, device settings-v3 migration, protected BLE chunk assembly and frontend
+enrollment flow are authored for CampusPulse. They reuse the project's existing
+admin session/audit transactions, v2 validation/store and exact frozen receipt
+contract. No vendor authentication service, private application source, raw
+observations, NVS images or credential-bearing builds are imported into source.
+The probe uses Cloudflare sockets/Web Crypto and the existing pinned development
+toolchain; IDF5.5.3/protocomm retains its original Apache-2.0 notices.
+
+`firmware/certs/digicert-global-root-g2.crt` is selected public trust data from
+EMQX's official public asset, checked against the DigiCert catalog and DER
+SHA256. DigiCert's public root-distribution statement permits use/distribution
+without a special license; provenance/lifetime are in the adjacent README.
+This is a public CA certificate, with no private key or device credential.
+Production still uses the SDK full CA bundle with strict checks. New runtime
+exports, encryption keys and generated CSVs remain private and ignored.
+
+Source/host/browser/workerd acceptance, production main/API deployment,
+broker import/verification, named gateway cutover and hardware migration are
+recorded separately in `docs/notes/mqtt-production.md`. Synthetic local MQTT
+fixture rows deliberately do not establish real broker verification.

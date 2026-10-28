@@ -14,6 +14,9 @@ typedef struct {
      * the caller owns body and frees it after transport cleanup. */
     size_t capacity;
     uint64_t deadline_ms;
+    uint64_t connected_ms, first_response_ms;
+    uint32_t connect_events;
+    bool connected_seen, response_seen;
     esp_err_t abort_reason;
     bool read_stopped;
 } cp_http_response_t;
@@ -72,8 +75,18 @@ static inline esp_err_t cp_http_response_event(esp_http_client_event_t *event,
     cp_http_response_t *r=event->user_data;
     if (!r || event->event_id==HTTP_EVENT_DISCONNECTED || event->event_id==HTTP_EVENT_ERROR)
         return ESP_OK;
-    if (event->event_id==HTTP_EVENT_ON_CONNECTED)
+    if (event->event_id==HTTP_EVENT_ON_CONNECTED) {
+        /* A retained handle can silently reconnect. Count real events instead
+         * of treating handle reuse as proof that the TCP/TLS socket survived. */
+        if(!r->connect_events)r->connected_ms=now;
+        if(r->connect_events<UINT32_MAX)++r->connect_events;
+        r->connected_seen=true;
         esp_http_client_set_timeout_ms(event->client,1000);
+    }
+    if(!r->response_seen && (event->event_id==HTTP_EVENT_ON_HEADER ||
+                           event->event_id==HTTP_EVENT_ON_DATA)) {
+        r->first_response_ms=now;r->response_seen=true;
+    }
     esp_err_t e=event->event_id==HTTP_EVENT_ON_DATA && event->data_len>0 ?
         cp_http_response_append(r,event->data,(size_t)event->data_len,now,active) :
         cp_http_response_check(r,now,active);

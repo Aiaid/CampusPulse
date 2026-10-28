@@ -20,6 +20,9 @@
 #include "esp_attr.h"
 #include "esp_lcd_panel_ops.h"
 #include <string.h>
+#if defined(CONFIG_CP_PERF_PROFILE) && CONFIG_CP_PERF_PROFILE
+#include "cp_perf.h"
+#endif
 
 #define UI_SWAP_BYTES 1
 
@@ -76,8 +79,15 @@ void ui_render(ui_rect_t region, ui_paint_fn paint, void *user)
         s_lines = (int16_t)((region.y + region.h - y < BAND_LINES)
                             ? (region.y + region.h - y) : BAND_LINES);
         paint(user);
+#if defined(CONFIG_CP_PERF_PROFILE) && CONFIG_CP_PERF_PROFILE
+        esp_err_t submitted = esp_lcd_panel_draw_bitmap(s_panel, region.x, y,
+                                  region.x + region.w, y + s_lines, s_buf[s_cur]);
+        if (submitted == ESP_OK)
+            cp_perf_note(CP_PERF_LCD_TRANSFER, (uint64_t)region.w * s_lines * 2u, 0);
+#else
         esp_lcd_panel_draw_bitmap(s_panel, region.x, y,
                                   region.x + region.w, y + s_lines, s_buf[s_cur]);
+#endif
         s_cur ^= 1;
     }
 }
@@ -110,9 +120,14 @@ static uint32_t utf8_next(const char **pp)
     const uint8_t *p = (const uint8_t *)(*pp);
     uint32_t cp;
     if (p[0] < 0x80)            { cp = p[0];                 *pp += 1; }
-    else if ((p[0] & 0xE0) == 0xC0) { cp = ((p[0] & 0x1F) << 6) |
+    else if (p[0] >= 0xC2 && p[0] <= 0xDF && p[1] >= 0x80 && p[1] <= 0xBF) {
+                                     cp = ((p[0] & 0x1F) << 6) |
                                            (p[1] & 0x3F);      *pp += 2; }
-    else if ((p[0] & 0xF0) == 0xE0) { cp = ((p[0] & 0x0F) << 12) |
+    else if (p[0] >= 0xE0 && p[0] <= 0xEF && p[1] >= 0x80 && p[1] <= 0xBF &&
+             (p[0] != 0xE0 || p[1] >= 0xA0) &&
+             (p[0] != 0xED || p[1] <= 0x9F) &&
+             p[2] >= 0x80 && p[2] <= 0xBF) {
+                                     cp = ((p[0] & 0x0F) << 12) |
                                            ((p[1] & 0x3F) << 6) |
                                            (p[2] & 0x3F);      *pp += 3; }
     else                        { cp = 0xFFFD;               *pp += 1; }
@@ -121,10 +136,20 @@ static uint32_t utf8_next(const char **pp)
 
 // 画一个字腔：只画有墨像素（背景像素跳过，右侧留白可被下一字压进）。
 // 字腔尺寸由 font_zh.h 的 FONT_ZH_CELL 决定（改字号只需重跑 gen_font.ps1）。
+// Host tests count actual bitmap visits, independent of CPU speed. Production
+// expands this to nothing: no counters, RAM, heap, or function call overhead.
+#ifndef UI_BITMAP_VISIT
+#define UI_BITMAP_VISIT() ((void)0)
+#endif
 static void glyph_cell(int x, int y, const uint8_t *bm, uint16_t color)
 {
-    for (int row = 0; row < FONT_ZH_CELL; row++) {
-        for (int col = 0; col < FONT_ZH_CELL; col++) {
+    const int row0 = y < s_ry0 ? s_ry0 - y : 0;
+    const int row1 = y + FONT_ZH_CELL > s_ry0 + s_lines ? s_ry0 + s_lines - y : FONT_ZH_CELL;
+    const int col0 = x < s_rx0 ? s_rx0 - x : 0;
+    const int col1 = x + FONT_ZH_CELL > s_rx0 + s_rw ? s_rx0 + s_rw - x : FONT_ZH_CELL;
+    for (int row = row0; row < row1; row++) {
+        for (int col = col0; col < col1; col++) {
+            UI_BITMAP_VISIT();
             if ((bm[row * FONT_ZH_ROW_BYTES + col / 8] >> (7 - col % 8)) & 1) {
                 put(x + col, y + row, color);
             }
@@ -146,7 +171,11 @@ static void glyph_missing(int x, int y, uint16_t color)
 
 void ui_text(int x, int y, const char *utf8, uint16_t color)
 {
+    // ui_render replays the complete paint callback for every four-row stripe.
+    // Reject other text rows before parsing/looking up any of their glyphs.
+    if (y >= s_ry0 + s_lines || y + FONT_ZH_CELL <= s_ry0) return;
     while (*utf8) {
+        if (x >= s_rx0 + s_rw) break;
         const uint32_t cp = utf8_next(&utf8);
         uint8_t adv = 8;
         const uint8_t *bm = font_zh_glyph(cp, &adv);
@@ -173,13 +202,20 @@ int ui_text_width(const char *utf8)
 
 void ui_digits(int x, int y, const char *s, uint16_t color)
 {
+    if (y >= s_ry0 + s_lines || y + FONT_DIGIT_H <= s_ry0) return;
     while (*s) {
+        if (x >= s_rx0 + s_rw) break;
         const uint8_t *bm;
         uint8_t w;
         if (!font_digit_glyph(*s, &bm, &w)) { s++; continue; }
         const int row_bytes = (w + 7) / 8;
-        for (int row = 0; row < FONT_DIGIT_H; row++) {
-            for (int col = 0; col < w; col++) {
+        const int row0 = y < s_ry0 ? s_ry0 - y : 0;
+        const int row1 = y + FONT_DIGIT_H > s_ry0 + s_lines ? s_ry0 + s_lines - y : FONT_DIGIT_H;
+        const int col0 = x < s_rx0 ? s_rx0 - x : 0;
+        const int col1 = x + w > s_rx0 + s_rw ? s_rx0 + s_rw - x : w;
+        for (int row = row0; row < row1; row++) {
+            for (int col = col0; col < col1; col++) {
+                UI_BITMAP_VISIT();
                 if ((bm[row * row_bytes + col / 8] >> (7 - col % 8)) & 1) {
                     put(x + col, y + row, color);
                 }

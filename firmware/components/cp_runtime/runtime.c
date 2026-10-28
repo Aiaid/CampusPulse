@@ -8,8 +8,19 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "sdkconfig.h"
 #include <stdio.h>
 #include <string.h>
+
+/* ESP-IDF task stack sizes are bytes. C3 BLE-init measurements used 4,984
+ * bytes of the former 12 KiB control stack (minimum free 7,304). MQTT TLS runs
+ * on its own task, leaving 3,208 measured bytes here; remeasure on-device for
+ * other paths/configurations rather than treating this sample as a bound. */
+#if CONFIG_CP_NETWORK_MQTT_WSS
+enum { CP_CONTROL_STACK_BYTES = 8192 };
+#else
+enum { CP_CONTROL_STACK_BYTES = 12288 };
+#endif
 
 typedef enum { CMD_MODE, CMD_CANDIDATE, CMD_RESUME } command_kind_t;
 typedef struct {
@@ -49,12 +60,12 @@ static void boot_uuid(void) {
              b[15]);
 }
 static void reason(const char *text) { snprintf(s_reason, sizeof s_reason, "%s", text); }
-static bool resolve_saved_credential(const char *node,char *out,size_t capacity,uint32_t *generation,void *context) {
+static bool resolve_saved_credential(const char *node,cp_settings_t *out,uint32_t *generation,void *context) {
     (void)context;
-    if(!node || strcmp(node,s_node) || (out&&capacity<CP_SETTINGS_TOKEN_SIZE))return false;
+    if(!node || strcmp(node,s_node))return false;
     portENTER_CRITICAL(&s_settings_lock);
     bool available=s_enrolled&&s_saved_generation>0;
-    if(available){if(out)memcpy(out,s_settings.device_token,CP_SETTINGS_TOKEN_SIZE);if(generation)*generation=s_saved_generation;}
+    if(available){if(out)*out=s_settings;if(generation)*generation=s_saved_generation;}
     portEXIT_CRITICAL(&s_settings_lock);return available;
 }
 static void save_attempt_record(const char *attempt,cp_attempt_state_t state,const cp_network_diagnostic_t *diagnostic) {
@@ -68,6 +79,9 @@ static esp_err_t submit(const cp_settings_t *candidate, const char *attempt, voi
     if (!candidate || !attempt || strlen(attempt) >= 37 || strcmp(candidate->node_id, s_node) ||
         !cp_settings_validate(candidate))
         return ESP_ERR_INVALID_ARG;
+#if CONFIG_CP_NETWORK_MQTT_NATIVE_TLS
+    if(!cp_settings_mqtt_ready(candidate))return ESP_ERR_INVALID_ARG;
+#endif
     bool available = false;
     if (!__atomic_compare_exchange_n(&s_candidate_pending, &available, true, false,
                                       __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
@@ -336,13 +350,20 @@ static void apply_control(void) {
 }
 static void runtime_task(void *arg) {
     (void)arg;
-    if (s_enrolled) {
+    if (s_enrolled
+#if CONFIG_CP_NETWORK_MQTT_NATIVE_TLS
+        && cp_settings_mqtt_ready(&s_settings)
+#endif
+    ) {
         cp_core_set_setup_active(&s_core, false);
         cp_core_set_identity(&s_core, CP_IDENTITY_ENROLLED);
         if (cp_network_start(&s_settings) != ESP_OK)
             reason("network_start_failed");
     } else if (s_core.profile->capabilities & CP_CAP_DISPLAY) {
         enter_setup(CP_PROVISION_BLE);
+#if CONFIG_CP_NETWORK_MQTT_NATIVE_TLS
+        if(s_enrolled)reason("mqtt_setup_required");
+#endif
     } else {
         /* A headless boot cannot present the wireless setup PIN. USB remains
          * available, but only an explicit begin command opens its session. */
@@ -356,7 +377,11 @@ static void runtime_task(void *arg) {
             if (cmd.kind == CMD_CANDIDATE) {
                 test_candidate(&cmd);
                 __atomic_store_n(&s_candidate_pending, false, __ATOMIC_RELEASE);
-            } else if (cmd.kind == CMD_RESUME && s_enrolled) {
+            } else if (cmd.kind == CMD_RESUME && s_enrolled
+#if CONFIG_CP_NETWORK_MQTT_NATIVE_TLS
+                && cp_settings_mqtt_ready(&s_settings)
+#endif
+            ) {
                 if (cp_provision_stop() == ESP_OK) {
                     cp_core_set_setup_active(&s_core, false);
                     cp_core_set_identity(&s_core, CP_IDENTITY_ENROLLED);
@@ -425,7 +450,7 @@ esp_err_t cp_runtime_start(void) {
         return ESP_ERR_INVALID_STATE;
     if (s_task)
         return ESP_OK;
-    return xTaskCreate(runtime_task, "cp_control", 12288, NULL, 4, &s_task) == pdPASS
+    return xTaskCreate(runtime_task, "cp_control", CP_CONTROL_STACK_BYTES, NULL, 4, &s_task) == pdPASS
                ? ESP_OK
                : ESP_ERR_NO_MEM;
 }

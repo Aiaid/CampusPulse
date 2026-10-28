@@ -50,8 +50,8 @@ bool cp_provision_settings_digest(const cp_settings_t *s, uint8_t out[32]) {
     uint8_t version[] = { (uint8_t)(s->version >> 24), (uint8_t)(s->version >> 16), (uint8_t)(s->version >> 8), (uint8_t)s->version };
     int err = mbedtls_sha256_starts(&ctx, 0);
     if (!err) err = mbedtls_sha256_update(&ctx, version, sizeof(version));
-    const char *fields[] = { s->node_id, s->ssid, s->password, s->device_token, s->api_origin, s->eap_username, s->eap_identity, s->eap_password };
-    const size_t caps[] = { sizeof(s->node_id), sizeof(s->ssid), sizeof(s->password), sizeof(s->device_token), sizeof(s->api_origin), sizeof(s->eap_username), sizeof(s->eap_identity), sizeof(s->eap_password) };
+    const char *fields[] = { s->node_id, s->ssid, s->password, s->device_token, s->api_origin, s->eap_username, s->eap_identity, s->eap_password, s->mqtt_uri,s->mqtt_username,s->mqtt_password,s->mqtt_namespace };
+    const size_t caps[] = { sizeof(s->node_id), sizeof(s->ssid), sizeof(s->password), sizeof(s->device_token), sizeof(s->api_origin), sizeof(s->eap_username), sizeof(s->eap_identity), sizeof(s->eap_password), sizeof(s->mqtt_uri),sizeof(s->mqtt_username),sizeof(s->mqtt_password),sizeof(s->mqtt_namespace) };
     for (unsigned i = 0; !err && i < sizeof(fields)/sizeof(fields[0]); i++) {
         size_t n = strnlen(fields[i], caps[i]); if (n == caps[i]) { err = -1; break; }
         uint8_t length[] = { (uint8_t)(n >> 8), (uint8_t)n };

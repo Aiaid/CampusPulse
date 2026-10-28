@@ -17,6 +17,9 @@ CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
+# Normal display telemetry: at most 0.5 FPS, with immediate setup/error/page UI.
+CONFIG_CP_PASSPORT_REFRESH_MS=2000
+
 # --- LVGL ---
 CONFIG_LV_COLOR_DEPTH_16=y
 # 20 ms display refresh period targets up to 50 FPS when rendering and SPI
@@ -83,6 +86,9 @@ CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=16384
 CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
 CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=n
 CONFIG_MBEDTLS_DYNAMIC_FREE_CA_CERT=n
+# TLS 1.2 verifies the chain before releasing its unused peer-certificate copy.
+# The application does not inspect retained chains. Revisit before TLS 1.3.
+CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE=n
 
 # Observer does not pair; disable unused NimBLE security manager.
 CONFIG_BT_NIMBLE_SECURITY_ENABLE=n
@@ -92,3 +98,10 @@ CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=6144
 # Pinned SDK DEBUG logs contain PIN/SRP session material: never compile them.
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_EQUALS_DEFAULT=y
+
+# Production uploads require provisioned per-device MQTT credentials.
+CONFIG_CP_NETWORK_MQTT_WSS=y
+CONFIG_CP_NETWORK_MQTT_NATIVE_TLS=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+# Keep the physically measured C3 non-ISR FreeRTOS code placement.
+CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH=y

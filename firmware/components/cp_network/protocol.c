@@ -82,8 +82,13 @@ static bool date_ms(const char *s, uint64_t *out)
 {
     if (strlen(s)!=24 || s[4]!='-'||s[7]!='-'||s[10]!='T'||s[13]!=':'||s[16]!=':'||s[19]!='.'||s[23]!='Z') return false;
     for (unsigned i=0;i<24;++i) if (i!=4&&i!=7&&i!=10&&i!=13&&i!=16&&i!=19&&i!=23 && (s[i]<'0'||s[i]>'9')) return false;
-    unsigned y,m,d,h,n,z,ms;
-    if (sscanf(s,"%4u-%2u-%2uT%2u:%2u:%2u.%3uZ",&y,&m,&d,&h,&n,&z,&ms)!=7 || y<2020||y>2199||m<1||m>12||h>23||n>59||z>59) return false;
+    unsigned y=0,m=0,d=0,h=0,n=0,z=0,ms=0;
+    /* Fixed decimal fields, without libc scanning/locale initialization. */
+    for(unsigned i=0;i<4;++i)y=y*10u+(unsigned)(s[i]-'0');
+    for(unsigned i=0;i<2;++i){m=m*10u+(unsigned)(s[5+i]-'0');d=d*10u+(unsigned)(s[8+i]-'0');
+        h=h*10u+(unsigned)(s[11+i]-'0');n=n*10u+(unsigned)(s[14+i]-'0');z=z*10u+(unsigned)(s[17+i]-'0');}
+    for(unsigned i=0;i<3;++i)ms=ms*10u+(unsigned)(s[20+i]-'0');
+    if (y<2020||y>2199||m<1||m>12||h>23||n>59||z>59) return false;
     static const unsigned days[]={31,28,31,30,31,30,31,31,30,31,30,31};
     bool leap=(y%4==0 && (y%100!=0||y%400==0));
     if (!d || d>days[m-1]+(m==2 && leap)) return false;
@@ -217,6 +222,72 @@ bool cp_network_parse_ack(const char *json, size_t length, const cp_network_batc
     char timestamp[25]; uint64_t ignored;
     ok=ok && copy_string(o,"received_at",timestamp,sizeof(timestamp)) && date_ms(timestamp,&ignored);
     cJSON_Delete(o); return ok;
+}
+typedef struct { const char *p,*end; } ack_reader_t;
+typedef struct { const char *p; size_t length; } ack_string_t;
+static void ack_space(ack_reader_t *r) {
+    while(r->p<r->end&&(*r->p==' '||*r->p=='\t'||*r->p=='\r'||*r->p=='\n'))++r->p;
+}
+static bool ack_plain_string(ack_reader_t *r,ack_string_t *out) {
+    if(r->p>=r->end||*r->p++!='"')return false;
+    out->p=r->p;
+    while(r->p<r->end&&*r->p!='"') {
+        unsigned char c=(unsigned char)*r->p++;
+        if(c<0x20||c>0x7e||c=='\\')return false;
+    }
+    if(r->p>=r->end)return false;
+    out->length=(size_t)(r->p-out->p);++r->p;return true;
+}
+static bool ack_string_equals(ack_string_t s,const char *text) {
+    return s.length==strlen(text)&&!memcmp(s.p,text,s.length);
+}
+cp_ack_canonical_result_t cp_network_parse_ack_canonical(const char *json,size_t length,
+    const cp_network_batch_t *e,cp_network_ack_t *ack)
+{
+    if(!json||!ack||!length||length>CP_NETWORK_BODY_MAX||memchr(json,0,length)||
+       !cp_network_batch_valid(e))return CP_ACK_CANONICAL_INVALID;
+    ack_reader_t r={json,json+length};ack_space(&r);
+    if(r.p>=r.end||*r.p++!='{')return CP_ACK_NEEDS_GENERAL;
+    static const char *const keys[]={"node_id","boot_id","stream","batch_id","body_sha256",
+        "accepted_count","durability","receipt_id","received_at"};
+    const char *expected[]={e->node_id,e->boot_id,e->stream,e->batch_id,e->body_sha256,
+        NULL,"committed",NULL,NULL};
+    static const size_t capacities[]={16,37,24,65,65,0,10,65,25};
+    char receipt[65]={0},timestamp[25]={0};unsigned seen=0;bool matches=true;
+    for(;;) {
+        ack_space(&r);ack_string_t key;
+        if(!ack_plain_string(&r,&key))return CP_ACK_NEEDS_GENERAL;
+        unsigned field=0;while(field<9&&!ack_string_equals(key,keys[field]))++field;
+        if(field==9||(seen&(1u<<field)))return CP_ACK_CANONICAL_INVALID;
+        seen|=1u<<field;ack_space(&r);
+        if(r.p>=r.end||*r.p++!=':')return CP_ACK_NEEDS_GENERAL;
+        ack_space(&r);
+        if(field==5) {
+            /* Only a short, canonical decimal integer reaches the fast path.
+             * General JSON numbers (including exponents) are parsed only after
+             * the caller has released retained TLS. No strtod here. */
+            const char *start=r.p;unsigned count=0;
+            while(r.p<r.end&&*r.p>='0'&&*r.p<='9') {
+                if(r.p-start>=3)return CP_ACK_NEEDS_GENERAL;
+                count=count*10u+(unsigned)(*r.p++-'0');
+            }
+            if(r.p==start||*start=='0'||count<1||count>128)return CP_ACK_NEEDS_GENERAL;
+            if(r.p<r.end&&*r.p!=','&&*r.p!='}'&&*r.p!=' '&&*r.p!='\t'&&*r.p!='\r'&&*r.p!='\n')
+                return CP_ACK_NEEDS_GENERAL;
+            matches=matches&&count==e->accepted_count;
+        } else {
+            ack_string_t value;if(!ack_plain_string(&r,&value))return CP_ACK_NEEDS_GENERAL;
+            if(!value.length||value.length>=capacities[field])return CP_ACK_CANONICAL_INVALID;
+            if(expected[field])matches=matches&&ack_string_equals(value,expected[field]);
+            else {char *target=field==7?receipt:timestamp;memcpy(target,value.p,value.length);target[value.length]=0;}
+        }
+        ack_space(&r);if(r.p>=r.end)return CP_ACK_NEEDS_GENERAL;
+        if(*r.p=='}'){++r.p;break;}
+        if(*r.p++!=',')return CP_ACK_NEEDS_GENERAL;
+    }
+    ack_space(&r);uint64_t ignored;
+    if(r.p!=r.end||seen!=511u||!matches||!date_ms(timestamp,&ignored))return CP_ACK_CANONICAL_INVALID;
+    strcpy(ack->receipt_id,receipt);return CP_ACK_CANONICAL_MATCH;
 }
 bool cp_network_sha256(const void *bytes, size_t length, char output[65])
 {

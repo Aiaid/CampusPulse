@@ -49,6 +49,7 @@ static cp_settings_t settings(const char *ssid)
 {
     cp_settings_t s={.version=CP_SETTINGS_VERSION};strcpy(s.node_id,"cp_aabbccddeeff");
     snprintf(s.ssid,sizeof s.ssid,"%s",ssid);strcpy(s.password,"synthetic-only-pass");
+    strcpy(s.mqtt_uri,CP_MQTT_PRODUCTION_URI);strcpy(s.mqtt_username,"fixture_pool");strcpy(s.mqtt_password,"synthetic-broker-password");strcpy(s.mqtt_namespace,"fixture_pool");
     memset(s.device_token,'t',40);strcpy(s.api_origin,CP_API_ORIGIN);assert(cp_settings_validate(&s));return s;
 }
 static void publish_policy(uint64_t seq,uint64_t fetched,uint64_t lease)
@@ -85,7 +86,13 @@ SemaphoreHandle_t xSemaphoreCreateMutex(void){return &mutex_storage;}
 int xSemaphoreTake(SemaphoreHandle_t h,TickType_t wait){(void)wait;assert(h==&mutex_storage);return pdTRUE;}
 int xSemaphoreGive(SemaphoreHandle_t h){assert(h==&mutex_storage);return pdTRUE;}
 int xTaskCreate(void(*fn)(void*),const char*name,unsigned stack,void*arg,unsigned priority,TaskHandle_t*out)
-{assert(!strcmp(name,"cp_control")&&stack>=8192&&priority);entry=fn;entry_arg=arg;*out=&entry;return pdPASS;}
+{assert(!strcmp(name,"cp_control")&&priority);
+#if CONFIG_CP_NETWORK_MQTT_WSS
+ assert(stack==8192);
+#else
+ assert(stack==12288);
+#endif
+ entry=fn;entry_arg=arg;*out=&entry;return pdPASS;}
 void vTaskDelay(TickType_t ticks){clock_ms+=ticks;}
 void esp_restart(void){assert(!strcmp(provision.state,"saved")&&!strcmp(provision.reason,"stored_restarting"));record(RESTART);++restart_count;longjmp(yield,2);}
 int esp_reset_reason(void){return 7;}
@@ -317,20 +324,20 @@ static void assert_candidate_order(void)
  for(unsigned i=0;i<4;++i)assert(events[marker+i]==expected[i]);}
 static void assert_saved_credential(bool available)
 {
-    char token[CP_SETTINGS_TOKEN_SIZE];memset(token,0x5a,sizeof token);uint32_t generation=99;
-    assert(credential_callback&&credential_callback(s_node,NULL,0,NULL,credential_context)==available);
-    assert(credential_callback(s_node,token,sizeof token,&generation,credential_context)==available);
-    if(available){assert(!strcmp(token,persisted.device_token)&&generation==s_saved_generation&&generation>0);}
-    else {assert(token[0]==0x5a&&generation==99);}
-    memset(token,0x5a,sizeof token);generation=99;
-    assert(!credential_callback("cp_000000000000",token,sizeof token,&generation,credential_context));
-    assert(!credential_callback(s_node,token,sizeof token-1,&generation,credential_context));
-    assert(!credential_callback(NULL,token,sizeof token,&generation,credential_context));
-    assert(token[0]==0x5a&&generation==99);
+    cp_settings_t saved;memset(&saved,0x5a,sizeof saved);uint32_t generation=99;
+    assert(credential_callback&&credential_callback(s_node,NULL,NULL,credential_context)==available);
+    assert(credential_callback(s_node,&saved,&generation,credential_context)==available);
+    if(available){assert(!strcmp(saved.device_token,persisted.device_token)&&!strcmp(saved.mqtt_password,persisted.mqtt_password)&&generation==s_saved_generation&&generation>0);}
+    else {assert(((unsigned char *)&saved)[0]==0x5a&&generation==99);}
+    memset(&saved,0x5a,sizeof saved);generation=99;
+    assert(!credential_callback("cp_000000000000",&saved,&generation,credential_context));
+    assert(!credential_callback(NULL,&saved,&generation,credential_context));
+    assert(((unsigned char *)&saved)[0]==0x5a&&generation==99);
 }
 static void scenario(const char*name)
 {
-    if(!strcmp(name,"enrolled_boot")){prepare(true);assert(run(1,NULL)==1);assert(net_start_count==1&&!provision_start_count&&!save_count);assert(!strcmp(last_network_settings.ssid,"previous-network"));}
+    if(!strcmp(name,"legacy_mqtt_setup")){prepare(true);memset(s_settings.mqtt_uri,0,sizeof s_settings.mqtt_uri);memset(s_settings.mqtt_username,0,sizeof s_settings.mqtt_username);memset(s_settings.mqtt_password,0,sizeof s_settings.mqtt_password);memset(s_settings.mqtt_namespace,0,sizeof s_settings.mqtt_namespace);persisted=s_settings;assert(run(1,NULL)==1);assert(!net_start_count&&provision_start_count==1&&s_enrolled&&!save_count&&!strcmp(s_reason,"mqtt_setup_required"));assert_saved_credential(true);}
+    else if(!strcmp(name,"enrolled_boot")){prepare(true);assert(run(1,NULL)==1);assert(net_start_count==1&&!provision_start_count&&!save_count);assert(!strcmp(last_network_settings.ssid,"previous-network"));}
     else if(!strcmp(name,"unassigned_boot")){prepare(false);assert(run(1,NULL)==1);assert(!net_start_count&&provision_start_count==1&&provision.mode==CP_PROVISION_BLE);assert(s_core.setup_active&&!s_core.lease_valid);}
     else if(!strcmp(name,"headless_explicit_usb")){prepare_headless_with_settings(false);assert(run(1,NULL)==1);assert(!net_start_count&&!provision_start_count&&!provision.active&&s_core.setup_active&&!strcmp(s_reason,"awaiting_usb_setup"));}
     else if(!strcmp(name,"headless_usb_begin")){prepare_headless_with_settings(false);assert(run(2,usb_begin_tick)==1);assert(provision_start_count==1&&provision.mode==CP_PROVISION_USB&&!net_start_count&&!validate_count&&!save_count);}

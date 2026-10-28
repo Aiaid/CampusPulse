@@ -35,15 +35,19 @@ STUB
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror \
     -fsanitize=address,undefined -fno-omit-frame-pointer \
     -I"${FIRMWARE_ROOT}/tests/ui" -I"${CP_MAIN}" \
+    -I"${FIRMWARE_ROOT}/components/cp_core/include" \
     -I"${FIRMWARE_ROOT}/ai-passport-radar/components/bsp/include" \
-    "${FIRMWARE_ROOT}/tests/test_ui.c" -o "${CP_TEST_BUILD}/test_ui"
+    "${FIRMWARE_ROOT}/tests/test_ui.c" "${CP_MAIN}/font_zh.c" -o "${CP_TEST_BUILD}/test_ui"
 "${CP_TEST_BUILD}/test_ui"
 for CP_DIAGNOSTIC in 0 1; do
+  for CP_MQTT in 0 1; do
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -pedantic \
         -fsanitize=address,undefined -fno-omit-frame-pointer \
         -DCONFIG_CP_LEGACY_RADAR_DIAGNOSTICS="${CP_DIAGNOSTIC}" \
+        -DCONFIG_CP_NETWORK_MQTT_WSS="${CP_MQTT}" \
         -I"${FIRMWARE_ROOT}/tests/app" \
         -I"${FIRMWARE_ROOT}/components/cp_core/include" \
+        -I"${FIRMWARE_ROOT}/components/cp_perf/include" \
         -I"${FIRMWARE_ROOT}/components/cp_board/include" \
         -I"${FIRMWARE_ROOT}/components/cp_esp/include" \
         -I"${FIRMWARE_ROOT}/components/cp_runtime/include" \
@@ -54,8 +58,9 @@ for CP_DIAGNOSTIC in 0 1; do
         -I"${FIRMWARE_ROOT}/components/cp_pipeline/include" \
         "${FIRMWARE_ROOT}/tests/test_app.c" \
         "${FIRMWARE_ROOT}/components/cp_core/cp_core.c" \
-        -o "${CP_TEST_BUILD}/test_app_${CP_DIAGNOSTIC}"
-    "${CP_TEST_BUILD}/test_app_${CP_DIAGNOSTIC}"
+        -o "${CP_TEST_BUILD}/test_app_${CP_DIAGNOSTIC}_${CP_MQTT}"
+    "${CP_TEST_BUILD}/test_app_${CP_DIAGNOSTIC}_${CP_MQTT}"
+  done
 done
 PYTHONDONTWRITEBYTECODE=1 uv run --no-project python -m unittest discover \
     -s "${FIRMWARE_ROOT}/tests" -p 'test_*.py' -v

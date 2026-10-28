@@ -29,11 +29,15 @@ void bootloader_random_enable(void) { assert(!entropy_enabled);entropy_enabled=1
 void bootloader_random_disable(void) { assert(entropy_enabled);entropy_enabled=0; }
 void esp_fill_random(void *p,size_t n) { assert(entropy_enabled);++random_calls;memset(p,0xab,n); }
 static cp_settings_t good(void)
-{ cp_settings_t s={.version=CP_SETTINGS_VERSION};strcpy(s.node_id,"cp_aabbccddeeff");strcpy(s.ssid,"synthetic-test-ap");strcpy(s.password,"test-only-pass");memset(s.device_token,'x',40);strcpy(s.api_origin,CP_API_ORIGIN);return s; }
+{ cp_settings_t s={.version=CP_SETTINGS_VERSION};strcpy(s.node_id,"cp_aabbccddeeff");strcpy(s.ssid,"synthetic-test-ap");strcpy(s.password,"test-only-pass");memset(s.device_token,'x',40);strcpy(s.api_origin,CP_API_ORIGIN);strcpy(s.mqtt_uri,CP_MQTT_PRODUCTION_URI);strcpy(s.mqtt_username,"fixture_pool");strcpy(s.mqtt_password,"synthetic-broker-password");strcpy(s.mqtt_namespace,"fixture_pool");return s; }
 int main(void)
 {
     cp_settings_t s=good(),out;
-    assert(cp_settings_validate(&s));
+    assert(cp_settings_validate(&s)&&cp_settings_mqtt_ready(&s));
+    cp_settings_t invalid=s;strcpy(invalid.mqtt_uri,"mqtts://evil.invalid:8883");assert(!cp_settings_validate(&invalid));
+    invalid=s;strcpy(invalid.mqtt_namespace,"bad/namespace");assert(!cp_settings_validate(&invalid));
+    invalid=s;invalid.mqtt_password[2]='\n';assert(!cp_settings_validate(&invalid));
+    invalid=s;memset(invalid.mqtt_username,'x',sizeof invalid.mqtt_username);assert(!cp_settings_validate(&invalid));
     cp_settings_t bad=s;strcpy(bad.api_origin,"https://evil.invalid");assert(!cp_settings_validate(&bad));
     bad=s;strcpy(bad.password,"short");assert(!cp_settings_validate(&bad));
     bad=s;memset(bad.ssid,'s',sizeof(bad.ssid));assert(!cp_settings_validate(&bad));
@@ -52,6 +56,12 @@ int main(void)
     /* A real-size v1 blob remains loadable and is not rewritten on read. */
     saved.slot[0].version=1;saved.slot_size[0]=376;
     db_t legacy=saved;assert(cp_settings_load(&out)==ESP_OK);assert(out.version==CP_SETTINGS_VERSION&&out.wifi_security==CP_WIFI_PERSONAL&&!strcmp(out.ssid,s.ssid));
+    assert(!cp_settings_mqtt_ready(&out)&&!memcmp(&saved,&legacy,sizeof saved));saved=baseline;
+    /* v2 retains PEAP fields; its final padding byte is not an MQTT URI. */
+    saved.slot[0].version=2;saved.slot_size[0]=768;saved.slot[0].wifi_security=CP_WIFI_ENTERPRISE_PEAP;saved.slot[0].password[0]=0;
+    strcpy(saved.slot[0].eap_username,"synthetic-eap-user");strcpy(saved.slot[0].eap_identity,"synthetic-outer");strcpy(saved.slot[0].eap_password,"synthetic-eap-password");
+    ((unsigned char *)&saved.slot[0])[767]=0xa5;legacy=saved;
+    assert(cp_settings_load(&out)==ESP_OK&&out.version==3&&out.wifi_security==CP_WIFI_ENTERPRISE_PEAP&&!strcmp(out.eap_password,"synthetic-eap-password")&&!cp_settings_mqtt_ready(&out));
     assert(!memcmp(&saved,&legacy,sizeof saved));saved=baseline;
     cp_settings_t candidate=s;strcpy(candidate.ssid,"replacement-test-ap");
     for(int n=1;n<=6;++n) {

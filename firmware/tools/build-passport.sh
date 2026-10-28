@@ -4,11 +4,13 @@ set -euo pipefail
 FIRMWARE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 CP_DIAGNOSTIC=n
 CP_DISPLAY=y
+CP_PROFILE=n
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --diagnostic) CP_DIAGNOSTIC=y ;;
         --headless) CP_DISPLAY=n ;;
-        *) echo "Usage: $0 [--diagnostic] [--headless]" >&2; exit 2 ;;
+        --profile) CP_PROFILE=y ;;
+        *) echo "Usage: $0 [--diagnostic] [--headless] [--profile]" >&2; exit 2 ;;
     esac
     shift
 done
@@ -28,7 +30,16 @@ cat > "${CP_OVERRIDES}" <<EOF
 CONFIG_CP_LEGACY_RADAR_DIAGNOSTICS=${CP_DIAGNOSTIC}
 CONFIG_CP_PASSPORT_DISPLAY=${CP_DISPLAY}
 CONFIG_CP_PASSPORT_BUTTONS=${CP_DISPLAY}
+CONFIG_CP_PERF_PROFILE=${CP_PROFILE}
 EOF
+if [[ "${CP_PROFILE}" == y ]]; then
+    cat >> "${CP_OVERRIDES}" <<'EOF'
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
+CONFIG_FREERTOS_RUN_TIME_COUNTER_TYPE_U64=y
+EOF
+fi
 cd "${FIRMWARE_ROOT}/ai-passport-radar"
 export ESP_IDF_VERSION=5.5.3
 uv run --no-project --python "${CP_PYTHON}" "${IDF_PATH}/tools/idf.py" \

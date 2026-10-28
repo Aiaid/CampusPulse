@@ -1,7 +1,17 @@
 #include "cp_network.h"
 #include "protocol_internal.h"
 #include "control_json.h"
+#include "control_schedule.h"
+#include "alloc_monitor.h"
+#include "clock_state.h"
 #include "http_response.h"
+#include "mqtt_wss.h"
+#include "http_cache.h"
+#include "http_cache_drop.h"
+#include "http_path_probe.h"
+#include "ack_transport.h"
+#include "cp_frozen_json.h"
+#include "upload_metrics.h"
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
@@ -16,11 +26,13 @@
 #include "mbedtls/ssl.h"
 #include "freertos/queue.h"
 #include "lwip/dns.h"
+#include "lwip/sockets.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include <stdio.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
@@ -55,7 +67,16 @@ static int s_dns_result;
 static char s_node[16], s_boot[37], s_capture[16]="unassigned";
 static cp_settings_t s_settings;
 static cp_network_snapshot_t s_snapshot;
+static cp_upload_metrics_t s_upload_metrics;
 static uint64_t s_request_seq, s_contact_seq, s_apply_seq;
+/* Protected by s_http. Control releases heap for one supervisor sampling
+ * period before another HTTP attempt; JSON/radio claims remain eligible. */
+static uint64_t s_upload_not_before;
+static esp_http_client_handle_t s_cached_client;
+static cp_http_cache_t s_http_cache;
+/* s_http serializes this fixed diagnostic state and all HTTP callbacks. */
+static cp_http_path_probe_t s_http_path_probe;
+static bool s_http_disconnected;
 static char *s_pending_contact;
 static char *s_pending_activation;
 static uint64_t s_pending_apply_seq;
@@ -145,9 +166,8 @@ static void drain_events(void) {
             ++s_snapshot.connection_failures;s_snapshot.diagnostic.wifi_reason=event.reason;
             diagnostic_locked(CP_DIAG_WIFI_CONNECT,cp_network_diag_wifi_reason(event.reason),ESP_FAIL,true,false);break;
         case NET_TIME_SYNC:
-            s_synced=true;s_bootstrap_clock=true;s_snapshot.clock_trusted=false;
-            s_snapshot.clock_mono_ms=event.mono_ms;s_snapshot.clock_utc_ms=event.utc_ms;
-            ++s_snapshot.clock_epoch;s_snapshot.clock_uncertainty_ms=UINT32_MAX;s_snapshot.clock_estimated=false;
+            s_synced=true;s_bootstrap_clock=true;
+            cp_network_clock_sntp(&s_snapshot,event.mono_ms,event.utc_ms);
             diagnostic_locked(CP_DIAG_DNS,CP_DIAG_DNS_RESOLVING,ESP_OK,true,false);break;
         }
         unlock();
@@ -188,31 +208,137 @@ static esp_err_t resolve_api(void) {
     return result;
 }
 typedef cp_http_response_t response_t;
+static bool __attribute__((noinline)) http_task_cpu(uint64_t *counter)
+{
+#if CONFIG_CP_PERF_PROFILE && CONFIG_FREERTOS_USE_TRACE_FACILITY && \
+    CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS && CONFIG_FREERTOS_RUN_TIME_COUNTER_TYPE_U64 && \
+    CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER && CONFIG_FREERTOS_UNICORE && !CONFIG_FREERTOS_SMP
+    static portMUX_TYPE cpu_lock=portMUX_INITIALIZER_UNLOCKED;
+    TaskStatus_t task;
+    /* Current task cannot disappear during this call. No name lookup, task
+     * array, stack scan, explicit scheduler suspension or forced yield. The
+     * counter excludes the current uncharged slice and includes charged ISRs;
+     * both endpoints lag, so a delta can also include a pre-start slice tail.
+     * It is scheduler-accounted CPU, not exact TLS CPU or a strict bound.
+     * The pinned unicore API copies a U64 counter without its own lock; a short
+     * critical section prevents preemption between its two 32-bit loads. */
+    portENTER_CRITICAL(&cpu_lock);
+    vTaskGetInfo(NULL,&task,pdFALSE,eRunning);
+    portEXIT_CRITICAL(&cpu_lock);
+    *counter=(uint64_t)task.ulRunTimeCounter;
+    return true;
+#else
+    (void)counter;
+    return false;
+#endif
+}
+static void http_path_sample(esp_http_client_handle_t client,bool final,
+    uint64_t resolved_at,uint32_t perform_ms)
+{
+    int saved_errno=errno;
+    uint64_t before=(uint64_t)esp_timer_get_time();
+    int fd=esp_http_client_get_socket(client);
+    bool known=false,write_ready=false;
+    if(fd>=0) {
+        struct pollfd descriptor={.fd=fd,.events=POLLOUT};
+        ++s_http_path_probe.poll_calls;
+        int result=lwip_poll(&descriptor,1,0);
+        known=result>=0 && !(descriptor.revents&POLLNVAL);
+        write_ready=known && (descriptor.revents&POLLOUT) &&
+            !(descriptor.revents&(POLLERR|POLLHUP));
+    }
+    uint64_t after=(uint64_t)esp_timer_get_time();
+    errno=saved_errno;
+    s_http_path_probe.probe_wall_us=cp_http_path_u32(
+        (uint64_t)s_http_path_probe.probe_wall_us+after-before);
+    cp_http_path_observe(&s_http_path_probe,final,known,write_ready,
+        cp_http_path_u32(after/1000>=resolved_at?after/1000-resolved_at:0),perform_ms);
+    /* Pinned lwIP poll(timeout=0) reads one socket's event flags without
+     * allocating or waiting. Do not use SO_ERROR (it consumes error state),
+     * getpeername (SYN_SENT also succeeds), or private PCB reinterpretation.
+     * POLLOUT is readiness evidence, not an exact TCP state/timestamp. */
+}
 static esp_err_t http_event(esp_http_client_event_t *event)
 {
-    if(event->event_id==HTTP_EVENT_ON_CONNECTED)
+    if(event->event_id==HTTP_EVENT_DISCONNECTED)s_http_disconnected=true;
+    if(event->event_id==HTTP_EVENT_ON_CONNECTED) {
+        response_t *response=event->user_data;
+        if(response && !response->connect_events)
+            s_http_path_probe.cpu_connected_known=http_task_cpu(&s_http_path_probe.cpu_connected_us);
         diagnostic(CP_DIAG_CLOUD_AUTH,CP_DIAG_CLOUD_CHECKING,ESP_OK,true,false);
+    }
+    if(event->event_id==HTTP_EVENT_ON_HEADER && event->user_data)
+        cp_http_path_header(&s_http_path_probe,event->header_key,event->header_value);
     return cp_http_response_event(event,now_ms(),running());
 }
+/* Caller owns s_http. No callback owns cleanup; user_data never outlives its
+ * caller's stack response, and the SDK never retains a freed upload pointer. */
+static void drop_idle_client_locked(cp_http_drop_reason_t reason,uint32_t flags) {
+    if(s_cached_client) {
+        /* Existing HTTP mutex, ordinary task context. Sample before clearing;
+         * content-free observations allocate no diagnostic state or task. */
+        const uint32_t caps=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;
+        uint64_t now=now_ms();
+        size_t free_bytes=heap_caps_get_free_size(caps);
+        size_t largest=heap_caps_get_largest_free_block(caps);
+        flags|=cp_http_drop_flags(&s_http_cache,now,free_bytes,largest);
+        ESP_LOGI("cp_network","http_cache_drop reason=%u flags=%lu confirmed=%u created_age_ms=%lu idle_age_ms=%lu body_alive=%u body_pending=%u free=%u largest=%u",
+            (unsigned)reason,(unsigned long)flags,s_http_cache.confirmed,
+            (unsigned long)cp_http_drop_age(now,s_http_cache.created_ms),
+            (unsigned long)cp_http_drop_age(now,s_http_cache.last_used_ms),
+            (unsigned)s_http_cache.body_alive,(unsigned)s_http_cache.body_pending,
+            (unsigned)free_bytes,(unsigned)largest);
+        esp_http_client_set_user_data(s_cached_client,NULL);
+        esp_http_client_set_post_field(s_cached_client,NULL,0);
+        esp_http_client_cleanup(s_cached_client);
+        s_cached_client=NULL;
+    }
+    memset(&s_http_cache,0,sizeof s_http_cache);
+}
+static void __attribute__((unused)) release_ack_client(void *unused) { (void)unused;drop_idle_client_locked(CP_HTTP_DROP_ACK_FALLBACK,0); }
+static bool idle_budget(size_t reserve) {
+    const uint32_t caps=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;
+    return cp_http_cache_budget(heap_caps_get_free_size(caps),
+        heap_caps_get_largest_free_block(caps),reserve);
+}
+static bool active_budget(void) {
+    const uint32_t caps=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;
+    return cp_http_cache_active_budget(heap_caps_get_free_size(caps),
+        heap_caps_get_largest_free_block(caps));
+}
+static esp_err_t clear_header(esp_http_client_handle_t client,const char *name) {
+    esp_err_t e=esp_http_client_delete_header(client,name);
+    return e==ESP_ERR_NOT_FOUND?ESP_OK:e;
+}
 /* s_http serializes credentials, HTTP, activation, configuration and radio init. */
-static esp_err_t request_locked(const char *path, const char *body, size_t length,
+static esp_err_t __attribute__((unused)) http_request_locked(const char *path, const char *body, size_t length,
     const char *hash, response_t *response, int *status)
 {
     *status=0;
+    memset(&s_http_path_probe,0,sizeof s_http_path_probe);
     const uint64_t started=now_ms();
+    const cp_alloc_monitor_snapshot_t alloc_before=cp_alloc_monitor_snapshot();
     lock(); bool eligible=s_link && s_synced; unlock();
-    if (!running() || !eligible) return ESP_ERR_INVALID_STATE;
+    bool ingest=!strcmp(path,"/api/v2/ingest");
+    if(s_cached_client && (!ingest || s_http_cache.body_pending ||
+       !cp_http_cache_alive(&s_http_cache,started) || !active_budget()))
+        drop_idle_client_locked(CP_HTTP_DROP_REQUEST,ingest?0:CP_HTTP_DROP_NONINGEST);
+    if (!running() || !eligible) {drop_idle_client_locked(CP_HTTP_DROP_UNAVAILABLE,
+        (running()?0:CP_HTTP_DROP_STOPPED)|(!eligible?CP_HTTP_DROP_LINK_UNSYNCED:0));return ESP_ERR_INVALID_STATE;}
+    bool reused=s_cached_client!=NULL;
     const uint32_t caps=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;
     if(!cp_http_working_set_available(heap_caps_get_free_size(caps),
                                       heap_caps_get_largest_free_block(caps))) {
         allocation_failed(NET_PHASE_HTTP_BUDGET);
         return ESP_ERR_NO_MEM;
     }
-    esp_err_t resolved=resolve_api();
+    esp_err_t resolved=reused?ESP_OK:resolve_api();
+    uint64_t resolved_at=now_ms();
     if(resolved!=ESP_OK)return resolved;
     lock();
     s_snapshot.diagnostic.http_status=0;s_snapshot.diagnostic.tls_code=0;s_snapshot.diagnostic.tls_flags=0;
-    diagnostic_locked(CP_DIAG_TLS,CP_DIAG_TLS_CONNECTING,ESP_OK,true,false);
+    diagnostic_locked(reused?CP_DIAG_CLOUD_AUTH:CP_DIAG_TLS,
+        reused?CP_DIAG_CLOUD_CHECKING:CP_DIAG_TLS_CONNECTING,ESP_OK,true,false);
     unlock();
     response->deadline_ms=now_ms()+12000;
     char url[128], auth[CP_SETTINGS_TOKEN_SIZE+8];
@@ -226,38 +352,81 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
         .event_handler=http_event, .user_data=response,
         .buffer_size=1024, .buffer_size_tx=1024,
     };
-    esp_http_client_handle_t client=esp_http_client_init(&config);
+    esp_http_client_handle_t client=s_cached_client;
+    if(!client) {
+        client=esp_http_client_init(&config);
+        if(client){s_cached_client=client;s_http_cache.created_ms=now_ms();s_http_cache.body_alive=ingest;}
+    }
     if (!client) { memset(auth,0,sizeof(auth)); allocation_failed(NET_PHASE_CLIENT_INIT); return ESP_ERR_NO_MEM; }
+    s_http_disconnected=false;
     lock();s_snapshot.http_in_flight=true;unlock();
-    esp_err_t e=esp_http_client_set_header(client,"Authorization",auth);
+    esp_err_t e=esp_http_client_set_user_data(client,response);
+    if(e==ESP_OK)e=esp_http_client_set_url(client,url);
+    if(e==ESP_OK)e=esp_http_client_set_timeout_ms(client,reused?1000:12000);
+    if(reused){response->connected_seen=true;response->connected_ms=now_ms();}
+    if(e==ESP_OK)e=esp_http_client_set_header(client,"Authorization",auth);
     memset(auth,0,sizeof(auth));
     if (e==ESP_OK) e=esp_http_client_set_header(client,"Accept","application/json");
-    if (e==ESP_OK && body) e=esp_http_client_set_method(client,HTTP_METHOD_POST);
+    if (e==ESP_OK) e=esp_http_client_set_method(client,body?HTTP_METHOD_POST:HTTP_METHOD_GET);
     if (e==ESP_OK && body) e=esp_http_client_set_header(client,"Content-Type","application/json");
     if (e==ESP_OK && hash) e=esp_http_client_set_header(client,"X-Body-SHA256",hash);
-    if (e==ESP_OK && body) e=esp_http_client_set_post_field(client,body,(int)length);
+    if (e==ESP_OK && !hash) e=clear_header(client,"X-Body-SHA256");
+    if (e==ESP_OK && !body) e=clear_header(client,"Content-Type");
+    if (e==ESP_OK) {
+        e=esp_http_client_set_post_field(client,body,body?(int)length:0);
+        if(!body&&e==ESP_ERR_NOT_FOUND)e=ESP_OK;
+    }
     if (e==ESP_OK) {
         const uint64_t deadline=response->deadline_ms;
+        s_http_path_probe.cpu_start_known=http_task_cpu(&s_http_path_probe.cpu_start_us);
         do {
+            bool probe_due=cp_http_path_early_due(&s_http_path_probe,reused);
+            uint64_t perform_started=probe_due?now_ms():0;
             e=esp_http_client_perform(client);
+            if(probe_due)http_path_sample(client,false,resolved_at,
+                cp_http_path_u32(now_ms()-perform_started));
             if (response->abort_reason!=ESP_OK) { e=response->abort_reason; break; }
             if (e!=ESP_ERR_HTTP_EAGAIN) break;
             if (!running()) { e=ESP_ERR_INVALID_STATE; break; }
             if (now_ms()>=deadline) { e=ESP_ERR_TIMEOUT; break; }
             vTaskDelay(pdMS_TO_TICKS(20));
         } while (true);
+        s_http_path_probe.cpu_end_known=http_task_cpu(&s_http_path_probe.cpu_end_us);
+        http_path_sample(client,true,resolved_at,0);
     }
     *status=esp_http_client_get_status_code(client);
     cp_http_response_check(response,now_ms(),running());
     int tls_code=0,tls_flags=0;
     esp_err_t tls_error=esp_http_client_get_and_clear_last_tls_error(client,&tls_code,&tls_flags);
     int socket_errno=esp_http_client_get_errno(client);
-    esp_http_client_cleanup(client);
+    uint64_t transport_ended=now_ms();
+    /* Retain only the active-attempt floor with the immutable body still alive.
+     * The caller's canonical ACK reader allocates nothing; a general fallback
+     * must destroy this client before constructing any cJSON tree. */
+    size_t candidate_free=heap_caps_get_free_size(caps);
+    size_t candidate_largest=heap_caps_get_largest_free_block(caps);
+    bool cache_budget=ingest&&cp_http_cache_active_budget(candidate_free,candidate_largest);
+    bool provisional=ingest&&e==ESP_OK&&*status==200&&!s_http_disconnected&&
+        esp_http_client_is_complete_data_received(client)&&
+        cache_budget;
+    if(ingest)ESP_LOGI("cp_network","http_cache_candidate reused=%u complete=%u disconnected=%u budget=%u retain=%u free=%u largest=%u body_bytes=%u",
+        (unsigned)reused,(unsigned)esp_http_client_is_complete_data_received(client),
+        (unsigned)s_http_disconnected,(unsigned)cache_budget,(unsigned)provisional,
+        (unsigned)candidate_free,(unsigned)candidate_largest,(unsigned)length);
+    esp_http_client_set_user_data(client,NULL);
+    esp_http_client_set_post_field(client,NULL,0);
+    if(!provisional)drop_idle_client_locked(CP_HTTP_DROP_TRANSPORT_END,
+        (!ingest?CP_HTTP_DROP_NONINGEST:0)|(e!=ESP_OK?CP_HTTP_DROP_HTTP_ERROR:0)|
+        (*status!=200?CP_HTTP_DROP_HTTP_STATUS:0)|
+        (s_http_disconnected?CP_HTTP_DROP_DISCONNECTED:0)|
+        (!esp_http_client_is_complete_data_received(client)?CP_HTTP_DROP_INCOMPLETE:0));
+    uint64_t cleanup_ended=now_ms();
+    const cp_alloc_monitor_snapshot_t alloc_after=cp_alloc_monitor_snapshot();
     /* Keep driver evidence queued during the bounded HTTP operation. */
     drain_events();
     if (response->abort_reason!=ESP_OK) e=response->abort_reason;
     lock();
-    s_snapshot.http_in_flight=false;
+    if(!ingest)s_snapshot.http_in_flight=false;
     s_snapshot.last_http_status=*status; s_snapshot.last_error=e;
     s_snapshot.diagnostic.http_status=*status>0&&*status<=599?*status:0;
     s_snapshot.diagnostic.tls_code=tls_code;s_snapshot.diagnostic.tls_flags=(uint32_t)tls_flags;
@@ -293,7 +462,95 @@ static esp_err_t request_locked(const char *path, const char *body, size_t lengt
     ESP_LOGI("cp_network","http request_kind=%u error=%ld http=%d response_bytes=%lu response_capacity=%lu stack_free=%lu",
         request_kind,(long)e,*status,(unsigned long)response->used,(unsigned long)response->capacity,
         (unsigned long)uxTaskGetStackHighWaterMark(NULL));
+    ESP_LOGI("cp_network","http_timing request_kind=%u reused=%u cached_handle=%u new_connections=%lu dns_ms=%llu connected=%u connect_tls_ms=%llu response=%u first_response_ms=%llu transfer_ms=%llu cleanup_ms=%llu",
+        request_kind,(unsigned)(reused&&!response->connect_events),(unsigned)reused,
+        (unsigned long)response->connect_events,(unsigned long long)(resolved_at-started),(unsigned)response->connected_seen,
+        (unsigned long long)(response->connected_seen&&response->connected_ms>=resolved_at?response->connected_ms-resolved_at:0),
+        (unsigned)response->response_seen,
+        (unsigned long long)(response->response_seen&&response->connected_seen&&response->first_response_ms>=response->connected_ms?response->first_response_ms-response->connected_ms:0),
+        (unsigned long long)(response->response_seen&&transport_ended>=response->first_response_ms?transport_ended-response->first_response_ms:0),
+        (unsigned long long)(cleanup_ended-transport_ended));
+    /* This SDK has no TCP_INFO getsockopt, RTT/RTO or retransmit counters.
+     * Keep unavailable evidence explicit; never emit invented zero metrics.
+     * A writable sample after a long perform() call is only an upper bound.
+     * ready_gap includes that call and scheduling, not a promised 20 ms period. */
+    bool tls_tail_known=s_http_path_probe.ready_known && response->connected_seen &&
+        response->connected_ms>=resolved_at+s_http_path_probe.ready_upper_ms;
+    ESP_LOGI("cp_network","http_path request_kind=%u early_samples=%u poll_calls=%u poll_wall_us=%lu tcp_write_ready_known=%u tcp_write_ready_upper_ms=%lu ready_gap_ms=%lu max_sampled_perform_ms=%lu tls_tail_lower_known=%u tls_tail_lower_ms=%llu end_ready_known=%u end_write_ready=%u colo_known=%u colo=%.3s",
+        request_kind,(unsigned)s_http_path_probe.early_probes,(unsigned)s_http_path_probe.poll_calls,
+        (unsigned long)s_http_path_probe.probe_wall_us,(unsigned)s_http_path_probe.ready_known,
+        (unsigned long)s_http_path_probe.ready_upper_ms,(unsigned long)s_http_path_probe.ready_gap_ms,
+        (unsigned long)s_http_path_probe.max_perform_ms,(unsigned)tls_tail_known,
+        (unsigned long long)(tls_tail_known?response->connected_ms-resolved_at-s_http_path_probe.ready_upper_ms:0),
+        (unsigned)s_http_path_probe.end_known,(unsigned)s_http_path_probe.end_write_ready,
+        (unsigned)s_http_path_probe.colo_known,s_http_path_probe.colo_known?s_http_path_probe.colo:"---");
+    bool cpu_connect_known=s_http_path_probe.cpu_start_known && s_http_path_probe.cpu_connected_known &&
+        s_http_path_probe.cpu_connected_us>=s_http_path_probe.cpu_start_us;
+    bool cpu_request_known=s_http_path_probe.cpu_start_known && s_http_path_probe.cpu_end_known &&
+        s_http_path_probe.cpu_end_us>=s_http_path_probe.cpu_start_us;
+    ESP_LOGI("cp_network","http_path_limits request_kind=%u tcp_state_known=0 tcp_info_known=0 rtt_known=0 rto_known=0 retrans_current_known=0 retrans_total_known=0 tls12_only_build=%u cipher_known=0 connect_accounted_cpu_known=%u connect_accounted_cpu_us=%llu request_accounted_cpu_known=%u request_accounted_cpu_us=%llu cpu_current_slice_excluded=1 cpu_isr_charged=1",
+        request_kind,
+#if CONFIG_MBEDTLS_SSL_PROTO_TLS1_2 && !CONFIG_MBEDTLS_SSL_PROTO_TLS1_3
+        1u,
+#else
+        0u,
+#endif
+        (unsigned)cpu_connect_known,(unsigned long long)(cpu_connect_known?s_http_path_probe.cpu_connected_us-s_http_path_probe.cpu_start_us:0),
+        (unsigned)cpu_request_known,(unsigned long long)(cpu_request_known?s_http_path_probe.cpu_end_us-s_http_path_probe.cpu_start_us:0));
+    bool alloc_details=alloc_after.details_available &&
+        alloc_after.recorded_failure_count==alloc_after.failure_count &&
+        alloc_after.failure_count!=UINT32_MAX;
+    ESP_LOGI("cp_network","http_alloc request_kind=%u failures_before=%lu failures_after=%lu details=%u last_bytes=%lu last_caps=%lu",
+        request_kind,(unsigned long)alloc_before.failure_count,(unsigned long)alloc_after.failure_count,
+        (unsigned)alloc_details,(unsigned long)(alloc_details?alloc_after.last_requested_bytes:0),
+        (unsigned long)(alloc_details?alloc_after.last_caps:0));
     return e;
+}
+/* Both transports keep the same control and exact frozen-ingest validators. */
+static esp_err_t request_locked(const char *path,const char *body,size_t length,
+    const char *hash,response_t *response,int *status)
+{
+#if CONFIG_CP_NETWORK_MQTT_WSS
+    (void)hash;*status=0;
+    lock();bool eligible=s_link&&s_synced;unlock();
+    if(!running()||!eligible){cp_mqtt_wss_idle(false);return ESP_ERR_INVALID_STATE;}
+    const char *op=!strcmp(path,"/api/v2/device/contact")?"contact":
+        !strcmp(path,"/api/v2/device/config")?"config":
+        !strcmp(path,"/api/v2/device/config/ack")?"activation":
+        !strcmp(path,"/api/v2/ingest")?"ingest":NULL;
+    if(!op)return ESP_ERR_INVALID_ARG;
+    bool established=cp_mqtt_wss_established();
+    lock();s_snapshot.http_in_flight=true;
+    diagnostic_locked(established?CP_DIAG_CLOUD_AUTH:CP_DIAG_TLS,
+        established?CP_DIAG_CLOUD_CHECKING:CP_DIAG_TLS_CONNECTING,ESP_OK,true,false);unlock();
+    const cp_alloc_monitor_snapshot_t mqtt_alloc_before=cp_alloc_monitor_snapshot();
+    esp_err_t error=cp_mqtt_wss_request(&s_settings,s_node,s_boot,op,body,length,response,status,running);
+    const cp_alloc_monitor_snapshot_t mqtt_alloc_after=cp_alloc_monitor_snapshot();
+    const bool mqtt_alloc_details=mqtt_alloc_after.details_available&&
+        mqtt_alloc_after.recorded_failure_count==mqtt_alloc_after.failure_count&&
+        mqtt_alloc_after.failure_count!=UINT32_MAX;
+    ESP_LOGI("cp_network","mqtt_alloc failures_before=%lu failures_after=%lu details=%u last_bytes=%lu last_caps=%lu",
+        (unsigned long)mqtt_alloc_before.failure_count,(unsigned long)mqtt_alloc_after.failure_count,
+        (unsigned)mqtt_alloc_details,
+        (unsigned long)(mqtt_alloc_details?mqtt_alloc_after.last_requested_bytes:0),
+        (unsigned long)(mqtt_alloc_details?mqtt_alloc_after.last_caps:0));
+    drain_events();
+    lock();s_snapshot.last_http_status=*status;s_snapshot.last_error=error;
+    s_snapshot.diagnostic.http_status=*status;
+    if(strcmp(op,"ingest"))s_snapshot.http_in_flight=false;
+    if(error==ESP_OK&&*status>=200&&*status<300)s_snapshot.clock_trusted=true;
+    if(*status==401||*status==403){s_snapshot.auth=CP_AUTH_REJECTED;s_snapshot.policy_valid=false;
+        diagnostic_locked(CP_DIAG_CLOUD_AUTH,CP_DIAG_CLOUD_AUTH_FAILED,ESP_ERR_NOT_ALLOWED,false,true);}
+    else if(error!=ESP_OK){
+        if(error==ESP_ERR_NO_MEM&&s_snapshot.resource_exhaustions<UINT32_MAX)++s_snapshot.resource_exhaustions;
+        diagnostic_locked(CP_DIAG_CLOUD_AUTH,error==ESP_ERR_NO_MEM?CP_DIAG_RESOURCE_EXHAUSTED:
+            error==ESP_ERR_TIMEOUT?CP_DIAG_CLOUD_TIMEOUT:CP_DIAG_HTTP_FAILED,error,true,
+            error==ESP_ERR_NO_MEM&&s_candidate_mode);
+    }
+    unlock();return error;
+#else
+    return http_request_locked(path,body,length,hash,response,status);
+#endif
 }
 static char *contact_body(uint64_t seq)
 {
@@ -341,6 +598,7 @@ static void fetch_policy(void)
         char desired_id[65];
         cp_network_candidate_id(r.body,r.used,s_node,desired_id);
         lock();
+        if (valid) valid=cp_network_clock_server(&s_snapshot,started,ended,server_utc);
         s_config_verified=valid;
         s_snapshot.policy_response_sequence=sequence;
         s_snapshot.policy_rejected=!valid;
@@ -348,11 +606,6 @@ static void fetch_policy(void)
         strcpy(s_snapshot.desired_config_id,desired_id);
         if (valid) {
             s_snapshot.auth=CP_AUTH_VALID;
-            s_snapshot.clock_mono_ms=started+(ended-started)/2;
-            s_snapshot.clock_utc_ms=server_utc;
-            ++s_snapshot.clock_epoch;
-            s_snapshot.clock_uncertainty_ms=(uint32_t)((ended-started+1)/2+1);
-            s_snapshot.clock_estimated=true;
         }
         s_snapshot.policy_present=present;
         s_snapshot.policy_valid=valid && present && !expired;
@@ -375,6 +628,9 @@ static void send_activation(void)
     response_t r={0};
     int status=0;
     esp_err_t e=request_locked("/api/v2/device/config/ack",s_pending_activation,strlen(s_pending_activation),NULL,&r,&status);
+#if CONFIG_CP_NETWORK_MQTT_WSS
+    if(e!=ESP_OK){free(r.body);return;}
+#endif
     cJSON *sent=cJSON_Parse(s_pending_activation);
     if(!sent) { allocation_failed(NET_PHASE_ACTIVATION_PARSE);free(r.body);return; }
     const cJSON *config=cJSON_GetObjectItemCaseSensitive(sent,"capture_config_id"), *state=cJSON_GetObjectItemCaseSensitive(sent,"state"), *message=cJSON_GetObjectItemCaseSensitive(sent,"message");
@@ -396,6 +652,22 @@ static void service(void *unused)
     uint32_t reported_event_drops=__atomic_load_n(&s_event_drops,__ATOMIC_RELAXED);
     while(running()) {
         drain_events();uint64_t now=now_ms();
+        bool activation_pending=false;
+        /* Bounded idle retention cannot block recovery while no upload follows.
+         * Never clean up from driver callbacks or an unsynchronized observer. */
+        if(xSemaphoreTake(s_http,0)==pdTRUE) {
+            lock();bool usable=s_link&&s_synced;unlock();
+            const uint32_t caps=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;
+            if(s_cached_client&&(!usable||!cp_http_cache_alive(&s_http_cache,now)||
+               !cp_http_cache_current_budget(&s_http_cache,heap_caps_get_free_size(caps),
+                   heap_caps_get_largest_free_block(caps))))
+                drop_idle_client_locked(CP_HTTP_DROP_SERVICE,usable?0:CP_HTTP_DROP_LINK_UNSYNCED);
+#if CONFIG_CP_NETWORK_MQTT_WSS
+            cp_mqtt_wss_idle(usable);
+#endif
+            activation_pending=s_pending_activation || s_activation_intent.queued;
+            xSemaphoreGive(s_http);
+        }
         uint32_t drops=__atomic_load_n(&s_event_drops,__ATOMIC_RELAXED);
         if(drops!=reported_event_drops) {
             ESP_LOGW("cp_network","event queue drops=%lu",(unsigned long)drops);
@@ -429,15 +701,37 @@ static void service(void *unused)
             }
             if(!synced&&stage_age>=26000)diagnostic(CP_DIAG_CLOCK,CP_DIAG_CLOCK_TIMEOUT,ESP_ERR_TIMEOUT,true,s_candidate_mode);
             if(synced) {
-                xSemaphoreTake(s_http,portMAX_DELAY);
-                if(now>=contact_at&&running()) {
-                    registered=contact();
-                    contact_at=now_ms()+(registered?30000:cloud_retry);
-                    if(!registered&&cloud_retry<8000)cloud_retry*=2;else if(registered)cloud_retry=1000;
+                cp_control_operation_t operation=cp_control_next(now,registered,s_candidate_mode,
+                    activation_pending,
+                    contact_at,control_at,activation_at);
+                if(operation!=CP_CONTROL_NONE) {
+                    xSemaphoreTake(s_http,portMAX_DELAY);
+#if CONFIG_CP_NETWORK_MQTT_WSS
+                    /* A retained/unknown SDK stop must not overlap fresh control
+                     * JSON allocation. Fixed activation intent staging is safe. */
+                    if(!cp_mqtt_wss_memory_safe())operation=CP_CONTROL_NONE;
+#endif
+                    if(operation==CP_CONTROL_CONTACT&&running()) {
+                        drop_idle_client_locked(CP_HTTP_DROP_CONTACT,0);
+                        registered=contact();
+                        contact_at=now_ms()+(registered?30000:cloud_retry);
+                        if(!registered&&cloud_retry<8000)cloud_retry*=2;else if(registered)cloud_retry=1000;
+                    } else if(operation==CP_CONTROL_POLICY&&running()) {
+                        drop_idle_client_locked(CP_HTTP_DROP_CONFIG,0);
+                        fetch_policy();control_at=now_ms()+30000;
+                    } else if(operation==CP_CONTROL_ACTIVATION&&running()&&
+                              (s_pending_activation || s_activation_intent.queued)) {
+                        drop_idle_client_locked(CP_HTTP_DROP_ACTIVATION,0);
+                        send_activation();activation_at=now_ms()+10000;
+                    } else operation=CP_CONTROL_NONE;
+                    if(operation!=CP_CONTROL_NONE)
+                        s_upload_not_before=now_ms()+CP_CONTROL_HANDOFF_MS;
+                    xSemaphoreGive(s_http);
+                    /* Upload observes the same fence after taking the mutex,
+                     * including when it was already waiting on metadata IO. */
+                    if(operation!=CP_CONTROL_NONE)
+                        vTaskDelay(pdMS_TO_TICKS(CP_CONTROL_HANDOFF_MS));
                 }
-                if(registered && !s_candidate_mode && now>=control_at&&running()){fetch_policy();control_at=now_ms()+30000;}
-                if(registered && !s_candidate_mode && now>=activation_at&&running()){send_activation();activation_at=now_ms()+10000;}
-                xSemaphoreGive(s_http);
             }
         }
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -448,6 +742,8 @@ esp_err_t cp_network_init(const char *node, const char *boot)
 {
     if (!cp_network_identity_valid(node,boot)) return ESP_ERR_INVALID_ARG;
     if (s_lock) return !strcmp(node,s_node)&&!strcmp(boot,s_boot)?ESP_OK:ESP_ERR_INVALID_STATE;
+    esp_err_t monitor=cp_alloc_monitor_init();
+    if(monitor!=ESP_OK)return monitor;
     s_lock=xSemaphoreCreateMutex(); s_http=xSemaphoreCreateMutex(); s_stopped=xSemaphoreCreateBinary();
     s_events=xQueueCreate(16,sizeof(net_event_t));
     if (!s_lock||!s_http||!s_stopped||!s_events) {
@@ -465,6 +761,9 @@ esp_err_t cp_network_init(const char *node, const char *boot)
 esp_err_t cp_network_start(const cp_settings_t *settings)
 {
     if (!s_lock || !cp_settings_validate(settings) || strcmp(settings->node_id,s_node)) return ESP_ERR_INVALID_ARG;
+#if CONFIG_CP_NETWORK_MQTT_NATIVE_TLS
+    if(!cp_settings_mqtt_ready(settings))return ESP_ERR_INVALID_STATE;
+#endif
     if (s_task || s_wifi_initialized) return ESP_ERR_INVALID_STATE;
     s_settings=*settings;s_diag_started=s_stage_started=now_ms();xQueueReset(s_events);
     lock();cp_network_diag_reset(&s_snapshot.diagnostic);
@@ -534,6 +833,11 @@ esp_err_t cp_network_stop(void)
         s_task=NULL;
     }
     xSemaphoreTake(s_http,portMAX_DELAY);
+    drop_idle_client_locked(CP_HTTP_DROP_STOP,0);
+#if CONFIG_CP_NETWORK_MQTT_WSS
+    esp_err_t mqtt_stopped=cp_mqtt_wss_stop();
+    if(mqtt_stopped!=ESP_OK){xSemaphoreGive(s_http);return mqtt_stopped;}
+#endif
     if (s_sntp_started) { esp_netif_sntp_deinit(); s_sntp_started=false; }
     if (s_wifi_handler) { esp_event_handler_instance_unregister(WIFI_EVENT,ESP_EVENT_ANY_ID,s_wifi_handler); s_wifi_handler=NULL; }
     if (s_ip_handler) { esp_event_handler_instance_unregister(IP_EVENT,ESP_EVENT_ANY_ID,s_ip_handler); s_ip_handler=NULL; }
@@ -567,6 +871,51 @@ void cp_network_snapshot(cp_network_snapshot_t *out)
     if (!s_lock) { memset(out,0,sizeof(*out)); return; }
     lock(); *out=s_snapshot; unlock();
 }
+void cp_network_debug_snapshot(cp_debug_snapshot_t *out)
+{
+    if (!out) return;
+    out->wifi_connected=false;
+    out->wifi_rssi_known=false;
+    out->wifi_phy_known=false;
+    out->wifi_mbps_known=false;
+    out->wifi_mbps=0;
+    memset(out->wifi_ssid,0,sizeof out->wifi_ssid);
+    memset(out->wifi_phy,0,sizeof out->wifi_phy);
+    out->wifi_rssi_dbm=0;
+    memset(&out->upload,0,sizeof out->upload);
+    if (!s_lock) return;
+    lock();
+    cp_upload_metrics_snapshot(&s_upload_metrics,now_ms(),&out->upload);
+    unlock();
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap)!=ESP_OK) return;
+    out->wifi_connected=true;
+    memcpy(out->wifi_ssid,ap.ssid,32);
+    out->wifi_ssid[32]=0;
+    out->wifi_rssi_known=true;
+    out->wifi_rssi_dbm=ap.rssi;
+    wifi_phy_mode_t phy;
+    const char *name=NULL;
+    if (esp_wifi_sta_get_negotiated_phymode(&phy)==ESP_OK) {
+        switch (phy) {
+        case WIFI_PHY_MODE_LR: name="LR"; break;
+        case WIFI_PHY_MODE_11B: name="11b"; break;
+        case WIFI_PHY_MODE_11G: name="11g"; break;
+        case WIFI_PHY_MODE_11A: name="11a"; break;
+        case WIFI_PHY_MODE_HT20: name="11n HT20"; break;
+        case WIFI_PHY_MODE_HT40: name="11n HT40"; break;
+        case WIFI_PHY_MODE_HE20: name="11ax HE20"; break;
+        case WIFI_PHY_MODE_VHT20: name="11ac VHT20"; break;
+        default: break;
+        }
+    }
+    if (name) {
+        out->wifi_phy_known=true;
+        snprintf(out->wifi_phy,sizeof out->wifi_phy,"%s",name);
+    }
+    /* PHY/bandwidth are not negotiated Mbps. In particular AP max capability
+     * and RSSI cannot establish a current transmission rate. */
+}
 bool cp_network_get_policy(cp_network_policy_t *out)
 {
     if (!out || !s_lock) return false;
@@ -582,10 +931,56 @@ void cp_network_end_radio_transition(void)
 }
 bool cp_network_begin_memory_work(uint32_t timeout_ms)
 {
-    return s_http && timeout_ms<=15000 && xSemaphoreTake(s_http,pdMS_TO_TICKS(timeout_ms))==pdTRUE;
+    if(!s_http||timeout_ms>15000||xSemaphoreTake(s_http,pdMS_TO_TICKS(timeout_ms))!=pdTRUE)
+        return false;
+#if CONFIG_CP_NETWORK_MQTT_WSS
+    if(!cp_mqtt_wss_encode_ready(timeout_ms)){xSemaphoreGive(s_http);return false;}
+#endif
+    drop_idle_client_locked(CP_HTTP_DROP_MEMORY_WORK,0);
+    return true;
+}
+bool cp_network_begin_upload_memory_work(uint32_t timeout_ms,size_t allocation_bytes)
+{
+    if(!s_http||timeout_ms>15000||allocation_bytes>CP_NETWORK_BODY_MAX+1u||
+       xSemaphoreTake(s_http,pdMS_TO_TICKS(timeout_ms))!=pdTRUE)return false;
+#if CONFIG_CP_NETWORK_MQTT_WSS
+    if(!cp_mqtt_wss_allocation_ready(allocation_bytes,timeout_ms)){xSemaphoreGive(s_http);return false;}
+#endif
+    if(s_cached_client&&(s_http_cache.body_alive||s_http_cache.body_pending||
+       !cp_http_cache_alive(&s_http_cache,now_ms())||!idle_budget(0)))
+        drop_idle_client_locked(CP_HTTP_DROP_UPLOAD_MEMORY,0);
+    return true;
+}
+bool cp_network_upload_memory_ready(bool allocation_succeeded)
+{
+    /* Caller already owns the memory gate, and malloc has completed. */
+#if CONFIG_CP_NETWORK_MQTT_WSS
+    return cp_mqtt_wss_upload_ready(allocation_succeeded);
+#else
+    if(s_cached_client&&(!allocation_succeeded||!active_budget()))drop_idle_client_locked(
+        CP_HTTP_DROP_UPLOAD_READY,allocation_succeeded?0:CP_HTTP_DROP_ALLOC_FAILED);
+    if(s_cached_client&&allocation_succeeded)s_http_cache.body_alive=true;
+    return allocation_succeeded&&active_budget();
+#endif
+}
+void cp_network_finalize_upload_body(void)
+{
+    if(!s_http)return;
+    xSemaphoreTake(s_http,portMAX_DELAY);
+    const uint32_t caps=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;
+    size_t free_bytes=heap_caps_get_free_size(caps),largest=heap_caps_get_largest_free_block(caps);
+    bool had_client=s_cached_client!=NULL;
+    if(s_cached_client&&!cp_http_cache_body_freed(&s_http_cache,now_ms(),free_bytes,largest))
+        drop_idle_client_locked(CP_HTTP_DROP_UPLOAD_FINALIZE,0);
+    if(had_client)ESP_LOGI("cp_network","http_cache_idle retained=%u burst_confirmed=%u free_before=%u largest_before=%u",
+        (unsigned)(s_cached_client!=NULL),s_http_cache.confirmed,(unsigned)free_bytes,(unsigned)largest);
+    xSemaphoreGive(s_http);
 }
 void cp_network_end_memory_work(void)
 {
+#if CONFIG_CP_NETWORK_MQTT_WSS
+    cp_mqtt_wss_end_memory_work();
+#endif
     xSemaphoreGive(s_http);
 }
 void cp_network_set_capture_state(const char *state)
@@ -663,17 +1058,65 @@ cp_net_upload_result_t cp_network_upload_frozen(const void *body, size_t length,
     char hash[65];
     if (!cp_network_sha256(body,length,hash) || strcmp(hash,expected->body_sha256)) return CP_NET_UPLOAD_REJECTED;
     response_t r={0};
-    xSemaphoreTake(s_http,portMAX_DELAY);
+    for (;;) {
+        xSemaphoreTake(s_http,portMAX_DELAY);
+        if(!running() || now_ms()>=s_upload_not_before) break;
+        xSemaphoreGive(s_http);
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    lock();cp_upload_metrics_begin(&s_upload_metrics,(uint32_t)length,now_ms());unlock();
     esp_err_t e=request_locked("/api/v2/ingest",body,length,hash,&r,&ack->http_status);
     cp_net_upload_result_t result=CP_NET_UPLOAD_RETRY;
     if (e==ESP_OK && ack->http_status==200) {
-        result=cp_network_parse_ack(r.body,r.used,expected,ack)?CP_NET_UPLOAD_ACKED:CP_NET_UPLOAD_BAD_ACK;
+        cp_ack_canonical_result_t parsed;
+#if CONFIG_CP_NETWORK_MQTT_WSS
+        parsed=cp_network_parse_ack_canonical(r.body,r.used,expected,ack);
+        bool matched=parsed==CP_ACK_CANONICAL_MATCH;
+        /* Exceptional noncanonical replies may require an arbitrary cJSON
+         * tree. Confirm SDK teardown before that allocation; a failed stop
+         * retains resources and fails the ACK closed. Normal canonical ACKs
+         * keep the established session across every journal body. */
+        if(parsed==CP_ACK_NEEDS_GENERAL&&cp_mqtt_wss_stop()==ESP_OK)
+            matched=cp_network_parse_ack(r.body,r.used,expected,ack);
+        result=matched?CP_NET_UPLOAD_ACKED:CP_NET_UPLOAD_BAD_ACK;
+#else
+        result=cp_network_parse_ack_transport(r.body,r.used,expected,ack,
+            release_ack_client,NULL,&parsed)?CP_NET_UPLOAD_ACKED:CP_NET_UPLOAD_BAD_ACK;
+#endif
+        ESP_LOGI("cp_network","http_ack_parser canonical=%u result=%u",(unsigned)parsed,(unsigned)result);
     } else if (ack->http_status==401 || ack->http_status==403) result=CP_NET_UPLOAD_AUTH;
     else if (ack->http_status==410) result=CP_NET_UPLOAD_POLICY;
     else if (ack->http_status>=400 && ack->http_status<500 && ack->http_status!=408 && ack->http_status!=429) result=CP_NET_UPLOAD_REJECTED;
+    free(r.body);r.body=NULL;
+    lock();bool eligible=s_link&&s_synced;unlock();
+    if(s_cached_client) {
+        if(result==CP_NET_UPLOAD_ACKED&&running()&&eligible&&!s_http_disconnected&&active_budget()) {
+            ++s_http_cache.confirmed;s_http_cache.last_used_ms=now_ms();
+            s_http_cache.body_pending=s_http_cache.body_alive=true;
+            if(!cp_http_cache_alive(&s_http_cache,s_http_cache.last_used_ms))drop_idle_client_locked(CP_HTTP_DROP_ACK_LIMIT,0);
+        } else drop_idle_client_locked(CP_HTTP_DROP_ACK_RESULT,
+            (result!=CP_NET_UPLOAD_ACKED?CP_HTTP_DROP_ACK_NOT_ACCEPTED:0)|
+            (running()?0:CP_HTTP_DROP_STOPPED)|(!eligible?CP_HTTP_DROP_LINK_UNSYNCED:0)|
+            (s_http_disconnected?CP_HTTP_DROP_DISCONNECTED:0));
+    }
+    ESP_LOGI("cp_network","http_cache_result acked=%u retained=%u burst_confirmed=%u internal_free=%u internal_largest=%u",
+        (unsigned)(result==CP_NET_UPLOAD_ACKED),(unsigned)(s_cached_client!=NULL),s_http_cache.confirmed,
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
     lock();
+    s_snapshot.http_in_flight=false;
+    cp_debug_upload_result_t debug_result=CP_DEBUG_UPLOAD_RETRY;
+    switch (result) {
+    case CP_NET_UPLOAD_ACKED: debug_result=CP_DEBUG_UPLOAD_ACKED; break;
+    case CP_NET_UPLOAD_RETRY: break;
+    case CP_NET_UPLOAD_REJECTED: debug_result=CP_DEBUG_UPLOAD_REJECTED; break;
+    case CP_NET_UPLOAD_AUTH: debug_result=CP_DEBUG_UPLOAD_AUTH; break;
+    case CP_NET_UPLOAD_POLICY: debug_result=CP_DEBUG_UPLOAD_POLICY; break;
+    case CP_NET_UPLOAD_BAD_ACK: debug_result=CP_DEBUG_UPLOAD_BAD_ACK; break;
+    }
+    cp_upload_metrics_finish(&s_upload_metrics,debug_result,ack->http_status,e,now_ms());
     if (result!=CP_NET_UPLOAD_ACKED) ++s_snapshot.upload_failures;
     if (result==CP_NET_UPLOAD_BAD_ACK) ++s_snapshot.ack_failures;
     unlock();
-    xSemaphoreGive(s_http); free(r.body); return result;
+    xSemaphoreGive(s_http); return result;
 }
