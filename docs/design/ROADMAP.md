@@ -26,9 +26,13 @@ collection and durable upload. Final local software verification passed on
       keep cloud/fleet cutover gated until actual broker and device acceptance.
       Software/default native transport and protected chunked provisioning pass
       local tests/SDK/C3 builds; the main API/UI and additive D1 migration are
-      deployed. Sixteen independent device identities are generated pending
-      actual EMQX import/verification. Direct dynamic gateway/six-field rule and
-      physical settings-v3 migration remain rollout gates. See
+      deployed. All sixteen independent device identities and the dedicated
+      reply account pass actual broker permission checks; official API probes
+      mark the pool ready, and one existing C3 has its own assignment. The direct
+      dynamic gateway and six-field rule are deployed. Physical settings-v3
+      migration exposed the USB controller's obsolete scalar-only JSON guard;
+      fix and cover the complete USB→provision path before hardware acceptance.
+      See
       [production operations](../notes/mqtt-production.md).
 
 - [ ] Deploy domestic durable custody after the passing EMQX Hangzhou native

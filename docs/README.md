@@ -19,7 +19,7 @@ validation records are not evidence for this implementation.
 
 | Document | Purpose | Status |
 | --- | --- | --- |
-| [Production MQTT enrollment](notes/mqtt-production.md) | Verified independent account pool, automatic registration, encrypted registry, runtime device settings, BLE chunks and direct EMQX→CF operations | Main/frontend and D1 migration deployed; local app/SDK/browser/C3 build checks pass; broker verification, gateway/rule cutover and current hardware migration tracked explicitly |
+| [Production MQTT enrollment](notes/mqtt-production.md) | Verified independent account pool, automatic registration, encrypted registry, runtime device settings, BLE chunks and direct EMQX→CF operations | Main/frontend, D1 and dynamic gateway/rule deployed; all16 identities broker/API verified; current C3 USB migration and device receipts remain separate gates |
 | [Public MQTT CA certificate](../firmware/certs/README.md) | Checked public root, DER fingerprint, lifetime and redistribution provenance | Public CA only; strict runtime SDK bundle retained; no private keys or credentials |
 | [README screenshots](notes/readme-screenshots.md) | Actual-browser desktop/mobile images, synthetic fixture captions, official GIS attribution and metadata-clean capture recipe | Bilingual README presentation assets; not field or hardware evidence |
 | [Hackathon delivery / 现场采集与回放](notes/hackathon-delivery.md) | Unified live/history timeline, afternoon acquisition, time-cursor semantics, retention limits and delivery checklist | Current timeline revision; prior local snapshot retained below, new validation and field/hardware/deployment evidence tracked separately |

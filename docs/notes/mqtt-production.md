@@ -143,9 +143,20 @@ one-shot MQTT/TLS connection; the device's connection remains persistent.
 
 - The new main Worker/frontend and additive D1 migration0007 are deployed. Existing
   administrator/R2/D1 settings and the previously accepted upload path are kept.
-- Broker batch import, verification, generalized six-field rule/gateway cutover
-  and current hardware migration are explicit rollout gates. Keep this status
-  updated with actual evidence; a source build is not completion of those gates.
+- All16 device identities pass actual broker TLS/login, allowed own-topic
+  operations and denied cross-topic/forged-reply operations. The dedicated reply
+  account passes its separate publish-only checks. The official production API
+  verified all16 pool records; assigning one to the existing C3 leaves15 ready
+  and1 assigned. The original node and backup HTTP credential are retained.
+- The generalized six-field rule is saved and survives reload, with the original
+  HTTP action available. SQL simulation preserves the original UTF-8 bytes in
+  Base64 and adds a broker-owned integer timestamp. The dynamic production
+  gateway with named service binding is deployed. Device receipt acceptance
+  remains a separate gate.
+- Physical USB migration exposed an outer controller guard that still rejected
+  nested MQTT objects before reaching the provision parser. The first candidate
+  was rejected as `invalid_json` and not saved; correct that narrow boundary and
+  cover the actual USB→provision path before repeating hardware acceptance.
 - CI checks app tests, gateway protocol/real workerd RPC, firmware host ownership,
   browser enrollment and legacy ingestion. The main Worker deploys before its
   named-entrypoint gateway. `CLOUDFLARE_MQTT_ROLLOUT_READY=true` enables automatic
