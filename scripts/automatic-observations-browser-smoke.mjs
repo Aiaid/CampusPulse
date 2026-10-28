@@ -131,10 +131,21 @@ try {
   await expect(replay).toContainText('自动分析尚未归档到此历史时间轴');
   await expect(replay.locator('.field-data-automatic')).toHaveCount(0);
   await expect(replay).not.toContainText('约 40 秒候梯参考');
-  const pinned = await axis.inputValue();
-  await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();
+  // The native range sanitizes value to min + N * step. A refreshed history
+  // moves min, so compare the exact application cursor rather than its rounded
+  // slider representation, and wait until the actual refresh has completed.
+  const cursorTime = replay.locator('.field-data-cursor time');
+  const pinned = await cursorTime.getAttribute('datetime');
+  assert.ok(pinned && Number.isFinite(Date.parse(pinned)));
+  const refresh = page.getByRole('button', { name: '刷新现场数据', exact: true });
+  await Promise.all([
+    page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/places/library/history' && response.ok()),
+    refresh.click(),
+  ]);
+  await expect(refresh).toBeEnabled();
   await expect(replay).toContainText('自动分析尚未归档到此历史时间轴');
-  assert.equal(await axis.inputValue(), pinned);
+  await expect(cursorTime).toHaveAttribute('datetime', pinned);
+  await expect(page.locator('.field-timeline-selected time')).toHaveAttribute('datetime', pinned);
   await page.getByRole('button', { name: '返回实时', exact: true }).click();
   await expect(live).toContainText('1 个电动车相关候选标识');
   checks.push('replay preserves selected time and never inserts live automatic inference');
