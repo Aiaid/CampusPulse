@@ -152,15 +152,22 @@ one-shot MQTT/TLS connection; the device's connection remains persistent.
   HTTP action available. SQL simulation preserves the original UTF-8 bytes in
   Base64 and adds a broker-owned integer timestamp. The dynamic production
   gateway with named service binding is deployed. Device receipt acceptance
-  remains a separate gate.
+  is verified separately below.
 - Physical USB migration exposed an outer controller guard that still rejected
   nested MQTT objects before reaching the provision parser. The first candidate
-  was rejected as `invalid_json` and not saved; correct that narrow boundary and
-  cover the actual USB→provision path before repeating hardware acceptance.
+  was rejected as `invalid_json` and not saved. Commit `b5e5e4e` fixes that narrow
+  boundary, retaining duplicate-key, array/depth and scalar-type guards. ASAN/
+  UBSAN now runs the real USB controller→provision parser and confirms all four
+  MQTT fields reach candidate submission unchanged; malformed nested input and
+  broker/schema-invalid values remain rejected. The corrected physical write
+  and network-validated settings-v3 save are accepted below.
 - CI checks app tests, gateway protocol/real workerd RPC, firmware host ownership,
   browser enrollment and legacy ingestion. The main Worker deploys before its
   named-entrypoint gateway. `CLOUDFLARE_MQTT_ROLLOUT_READY=true` enables automatic
   gateway deployment only after initial broker/rule bootstrap is complete.
+  That repository variable is now true after actual bootstrap/device acceptance.
+  The old `DEVICE_MAP` secret is removed; only the webhook key and scoped reply
+  username/password remain in the gateway. No device upload token is stored there.
 - The master key and gateway secrets are injected privately, never through
   committed configuration or CLI values. Preserve existing secrets during
   deployment; never replace the master key casually, because existing ciphertext
@@ -174,9 +181,56 @@ service-binding tests are separate. `seed-mqtt-browser-fixtures.mjs` is an
 explicitly enabled **local-only synthetic** fixture helper; it never contacts a
 broker or supports a remote mode. Its ready rows are not real broker verification.
 
-Current accepted C3 production source builds to1583248B before any later source
-revision; the selected build SHA and actual protected app-only write/physical
-run must be recorded separately. Preserve Passport's3MiB application partition,
-`cardid` at0x356000 and Flash journal; never whole-chip erase or flash a padded
-merged image. Other physical boards/driver profiles still require their own
-verification. Existing registry labels alone do not verify board hardware.
+## Actual C3 release and recovery acceptance
+
+Selected firmware source: `b5e5e4e0b02f17c662e5896f35fe9c18f50f014f`,
+image version `mqtt-b5e5e4e0b02f`, app1574224B, SHA256
+`7d0cb0ccf2e14a94ad8add968c8ebcfbe3d7f5004db6a34944d799cd4469c1a7`.
+The real ESP32-C3/8MiB board has no PSRAM. Separate bootloader, partition and app
+images are produced; only the app at0x10000 is written. A fresh full8MiB backup
+and digest comparison precede each write, and full Flash matches the expected
+app-only change before boot, preserving NVS, `cardid`0x356000 and the journal.
+The first USB-boundary failure and its superseded image are retained privately.
+
+The official admin UI/WebSerial confirmed the existing factory identity and
+assigned its independent MQTT identity after user reauthentication. The final
+physical write uses the same USB protocol through a local CLI, reusing the saved
+HTTP credential and original Wi-Fi. It is not claimed as a browser write of the
+new image. The device validates the cloud path before atomically saving
+settings-v3. Actual production D1 and the admin page report this exact image
+version, the same observed boot and applied configuration. No node recreation or
+HTTP credential rotation occurs.
+
+Two separately recorded observations pass303.735s active BLE collection and
+121.630s same-boot recovery; there is an observation gap between phases. The
+final boot counter is11148 received reports. All114 observed RPCs reuse the
+MQTT connection:112 return200, one returns the preserved old-boot422, and one
+new upload times out after20019ms. Successful warm RPC median1958.5ms,
+nearest-rank p95 2341ms and maximum4496ms include the gateway, API and reply leg;
+these are not broker-only timings or guaranteed latency bounds.
+
+The transient timeout raises pending1→6; automatic same-boot retry drains it to1.
+The recovery phase adds no further upload failures. Final free heap52748B,
+largest block32768B; observed RPC/pipeline minimum free heap48448B and largest
+block32768B are sampled values, not a full cold-handshake low-water measurement.
+Allocation-failure count remains0. Callback/input, window, summary, raw, storage,
+seal-overflow and ACK-failure counters remain0; seal wait peaks5371ms and
+persistence266ms. The collector is running without memory/pressure pause at the
+end, and the device remains collecting after the observer exits.
+
+A following read-only D1 snapshot at2026-10-29 07:20 China time confirms85
+current-boot batches:17 windows,51 address-summary batches/272 summaries and17
+status samples, with applied configuration and matching observed boot/version.
+That snapshot is later than the bounded observations. It reports one upload
+failure and zero new unpersisted-window reports, window/summary/storage/ACK
+losses. These durable CF rows and the device's validated receipts are separate
+from broker PUBACKs.
+
+Limits remain explicit: the unchanged16-address policy reports4564 address-table
+overflow reports in that snapshot. The preceding overnight boot also recorded
+201060 address overflows,463 unpersisted-window reports,1 dropped window and16
+dropped summaries. Preserve that older evidence; the new bounded result does
+not erase it or prove radio completeness, lossless operation or recovery under
+long disconnections. The original historical422 batch is retained unchanged.
+Other physical boards/driver profiles still need their own verified firmware
+upgrade and acceptance; existing registry labels do not verify board hardware.

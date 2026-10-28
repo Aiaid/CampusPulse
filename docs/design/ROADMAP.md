@@ -16,25 +16,6 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
-- [ ] Promote the accepted Hangzhou MQTT/TLS→EMQX→CF path into the production
-      device lifecycle: unique runtime credentials, registration/claim and
-      provisioning, verified broker readiness, dynamic node authorization,
-      default firmware transport, frontend operator flow and deployment/CI.
-      Keep public CA certificates/provenance in source and every private key,
-      password, token, pool export and capture outside Git. Preserve old frozen
-      batches and protected device data. Commit/push verified source on main;
-      keep cloud/fleet cutover gated until actual broker and device acceptance.
-      Software/default native transport and protected chunked provisioning pass
-      local tests/SDK/C3 builds; the main API/UI and additive D1 migration are
-      deployed. All sixteen independent device identities and the dedicated
-      reply account pass actual broker permission checks; official API probes
-      mark the pool ready, and one existing C3 has its own assignment. The direct
-      dynamic gateway and six-field rule are deployed. Physical settings-v3
-      migration exposed the USB controller's obsolete scalar-only JSON guard;
-      fix and cover the complete USB→provision path before hardware acceptance.
-      See
-      [production operations](../notes/mqtt-production.md).
-
 - [ ] Deploy domestic durable custody after the passing EMQX Hangzhou native
       MQTT/TLS connectivity trial archived below. Keep account/price
       authorization separate from research. Design domestic durable custody and
@@ -304,6 +285,23 @@ collection and durable upload. Final local software verification passed on
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] 2026-10-29: Promote independent runtime MQTT/TLS enrollment and the
+      dynamic Hangzhou EMQX→CF gateway to production. All16 device accounts plus
+      the reply-only server pass real broker ACL checks; official API verifies
+      the pool and assigns one existing C3, leaving15 ready. Main/frontend/D1,
+      six-field timestamped rule and dynamic named service binding are deployed;
+      remove the old fixed token map and enable the gated automatic deployment.
+      Preserve public CA provenance in Git and all private material outside it.
+      Protected app-only `mqtt-b5e5e4e0b02f` migration saves settings-v3 through
+      physical USB; fix the real USB nested-MQTT boundary and test the actual
+      controller→provision path. Physical acceptance:303.735s active collection
+      plus a separate121.630s same-boot recovery observation,114 reused RPCs,
+      112 successes, one preserved old-boot422 and one20.019s timeout recovering
+      queue6→1. No new software window/storage/summary loss or failed allocation;
+      final heap52748B/largest32768B. The16-address policy still overflows and
+      long disconnections/other boards remain separate acceptance. See
+      [production evidence](../notes/mqtt-production.md).
 
 - [x] 2026-10-28: Replace the Mac verification bridge with native MQTT/TLS→
       Hangzhou EMQX→HTTPS rule→isolated CF Worker→existing ingestion Service
