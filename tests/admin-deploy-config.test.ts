@@ -33,7 +33,15 @@ describe('trusted administrator deployment origin', () => {
     expect(result.config.vars).toEqual({ ADMIN_WEBAUTHN_ORIGIN: 'https://admin.example.test', ADMIN_WEBAUTHN_RP_ID: 'admin.example.test' });
     expect(result.config.compatibility_flags).toContain('nodejs_compat');
     expect(result.config.r2_buckets).toEqual([{ binding: 'RAW_BUCKET', bucket_name: 'synthetic-private-auth-fixture' }]);
-    expect(JSON.stringify(result.config)).not.toContain('ADMIN_TOKEN');
+    // Secret names must be declared so Wrangler loads private local variables;
+    // their actual values must never become public vars/configuration.
+    expect(result.config.secrets.required).toContain('ADMIN_TOKEN');
+    expect(result.config.vars).not.toHaveProperty('ADMIN_TOKEN');
+    expect(result.config.vars).not.toHaveProperty('MQTT_PROVISIONING_KEY');
+    for (const value of ['synthetic-unused-config-test-admin','synthetic-unused-config-test-operator',
+      'synthetic-unused-config-test-research','synthetic-unused-config-test-mqtt-key']) {
+      expect(JSON.stringify(result.config)).not.toContain(value);
+    }
   });
   it('can derive the RP from an explicitly configured deployment origin', () => {
     const result = generate({ DEPLOYMENT_URL: 'https://pulse.fixture.test' });
