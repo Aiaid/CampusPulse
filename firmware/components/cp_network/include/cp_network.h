@@ -8,7 +8,13 @@
 #include <stdint.h>
 #define CP_PROTOCOL "campuspulse/2"
 #define CP_NETWORK_ADAPTER "cp-nimble-v2"
+#ifdef ESP_PLATFORM
+#include "esp_app_desc.h"
+#define CP_NETWORK_FIRMWARE (esp_app_get_description()->version)
+#else
+/* Deterministic host fixtures do not link the embedded application descriptor. */
 #define CP_NETWORK_FIRMWARE "campuspulse-passport-v2"
+#endif
 #define CP_NETWORK_BODY_MAX 8192u
 #define CP_NETWORK_ITEMS_MAX 16u
 #define CP_NETWORK_LEASE_MS 120000u
