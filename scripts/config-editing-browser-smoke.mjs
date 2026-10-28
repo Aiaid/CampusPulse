@@ -3,6 +3,7 @@ import { randomInt } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { chromium } from '@playwright/test';
 import { createServer } from 'vite';
+import { MQTT_BROKER_URI } from '../src/admin/provisioning/mqtt.js';
 // Browser fixture only: no deployed API, hardware, credentials or screenshots.
 const server = await createServer({ server: { host: '127.0.0.1', port: randomInt(22000, 60000), strictPort: true }, logLevel: 'error' });
 await server.listen();
@@ -26,6 +27,7 @@ async function routeCloud(route) {
   else if (path === '/session') result = { authenticated: true, role: 'admin', account: { username: 'synthetic', display_name: 'Synthetic' } };
   else if (path === '/overview') result = { devices_total: 1, devices_enabled: 1, devices_recent: 1, config_pending: 0, server_time: new Date().toISOString() };
   else if (path === '/settings') result = { settings: { default_raw_retention_hours: 24, default_aggregate_retention_days: 30 } };
+  else if (path === '/mqtt/pool' && method === 'GET') result = { broker_uri: MQTT_BROKER_URI, ready_count: 0, entries: [] };
   else if (path === '/places') result = { places: [{ id: 'library', name: 'Synthetic library', kind: 'activity', observation_kinds: ['activity'] }, { id: 'gate', name: 'Synthetic gate', kind: 'activity', observation_kinds: ['activity', 'parking', 'elevator'] }] };
   else if (path === '/devices') result = { devices: [device()], next_cursor: null };
   else if (path === `/devices/${node}/batches`) result = { batches: [], next_cursor: null };
