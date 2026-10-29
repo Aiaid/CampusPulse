@@ -49,8 +49,10 @@ static cp_collect_compact_t s_window;
 /* Keep long-lived cores out of the runtime heap. With 64 addresses and six
  * bins, an 11 KiB combined allocation fragmented the C3 heap despite enough
  * total free memory for TLS. Static typed cores leave only policy-sized bins
- * to allocate (3 KiB at 64 x 6; 768 B at 16 x 6). Device validation, not these
- * sizes alone, establishes whether the remaining largest block is sufficient. */
+ * to allocate (3 KiB at 64 x 6 or 128 x 3; 768 B at 16 x 6). The 128-address
+ * ceiling reserves 16 KiB of static cores, including at smaller policy sizes.
+ * Device validation, not these sizes alone, establishes whether the remaining
+ * largest block and complete upload working set are sufficient. */
 static cp_address_core_t s_collect_cores[2][CP_COLLECT_ADDRESSES];
 static uint32_t *s_collect_storage;
 /* Single producer (collector), single persistence owner (uploader or stop).

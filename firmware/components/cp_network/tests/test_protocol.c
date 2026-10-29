@@ -30,9 +30,9 @@ static void mutate_reject(const char *obj,const char *key,cJSON *value)
 }
 static void summary_policy_matrix(void)
 {
-    const unsigned windows[]={1000,10000,30000,60000,80000,300000};
-    const unsigned bins[]={1000,5000,5000,5000,5000,300000};
-    const unsigned capacities[]={16,32,64};
+    const unsigned windows[]={1000,10000,30000,60000,80000,300000,60000,120000};
+    const unsigned bins[]={1000,5000,5000,5000,5000,300000,20000,40000};
+    const unsigned capacities[]={16,32,64,128};
     for (unsigned w=0;w<sizeof(windows)/sizeof(windows[0]);++w)
         for (unsigned a=0;a<sizeof(capacities)/sizeof(capacities[0]);++a) {
             cJSON *o=cJSON_Parse(policy_json);assert(o);
@@ -40,11 +40,16 @@ static void summary_policy_matrix(void)
             cJSON_ReplaceItemInObject(summary,"window_ms",cJSON_CreateNumber(windows[w]));
             cJSON_ReplaceItemInObject(summary,"bin_ms",cJSON_CreateNumber(bins[w]));
             cJSON_ReplaceItemInObject(summary,"max_addresses",cJSON_CreateNumber(capacities[a]));
+            if (capacities[a] == 128) {
+                cJSON *upload=cJSON_GetObjectItem(cJSON_GetObjectItem(o,"config"),"upload_policy");
+                cJSON_ReplaceItemInObject(upload,"max_body_bytes",cJSON_CreateNumber(4096));
+            }
             char *json=cJSON_PrintUnformatted(o);assert(json);
             cp_network_policy_t p;bool present,expired;
             assert(cp_network_parse_policy(json,strlen(json),"cp_aabbccddeeff",&p,&present,&expired));
             assert(present&&!expired&&p.summary_window_ms==windows[w]&&p.summary_bin_ms==bins[w]);
             assert(p.max_addresses==capacities[a]&&p.core.max_addresses==capacities[a]);
+            assert(p.max_body_bytes==(capacities[a]==128?4096u:8192u));
             assert(p.scan_interval_ms==100&&p.scan_window_ms==100&&!p.filter_duplicates&&!p.raw_enabled);
             free(json);cJSON_Delete(o);
         }
@@ -61,7 +66,8 @@ int main(void)
     mutate_reject("scan","interval_ms",cJSON_CreateNumber(5.5));
     mutate_reject("scan","window_ms",cJSON_CreateNumber(101));
     mutate_reject("raw_capture","mode",cJSON_CreateString("all"));
-    mutate_reject("summary","max_addresses",cJSON_CreateNumber(65));
+    mutate_reject("summary","max_addresses",cJSON_CreateNumber(129));
+    mutate_reject("summary","max_addresses",cJSON_CreateNumber(256));
     summary_policy_matrix();
     mutate_reject("summary","window_ms",cJSON_CreateNumber(999));
     mutate_reject("summary","window_ms",cJSON_CreateNumber(300001));

@@ -27,10 +27,42 @@ static void compact_counter_and_storage_boundaries(void) {
     assert(cp_collect_compact_begin(&c, 2000, 1000, 1000, 2, 1, false));
     assert(!bins[0] && !addresses[0].used && !c.reports_seen);
     assert(cp_collect_bank_bytes(64, 6) == 64 * (sizeof(cp_address_core_t) + 6 * sizeof(uint32_t)));
-    assert(!cp_collect_bank_bytes(65, 6) && !cp_collect_bank_bytes(64, 17));
+    assert(cp_collect_bank_bytes(128, 3) == 128 * (sizeof(cp_address_core_t) + 3 * sizeof(uint32_t)));
+    assert(!cp_collect_bank_bytes(129, 6) && !cp_collect_bank_bytes(64, 17));
+}
+static void full_128_address_capacity(void) {
+    /* Exact allocations expose a one-row or one-bin overrun under ASan. */
+    cp_address_core_t *addresses = calloc(128, sizeof *addresses);
+    uint32_t *bins = calloc(128 * 3, sizeof *bins);
+    assert(addresses && bins);
+    cp_collect_compact_t c = {.addresses = addresses, .bins = bins,
+        .storage_capacity = 128, .bin_count = 3};
+    assert(cp_collect_compact_begin(&c, 1000, 60000, 20000, 1, 128, false));
+    for (unsigned b = 0; b < 3; ++b)
+        for (unsigned a = 0; a < 128; ++a) {
+            cp_report_t r = {.mono_ms = 1001 + b * 20000 + a,
+                .address = {2,0,0,0,0,(uint8_t)a}, .rssi = -50};
+            assert(cp_collect_compact_observe(&c, &r));
+        }
+    assert(c.address_count == 128 && c.reports_seen == 384 && !c.address_overflow);
+    for (unsigned a = 0; a < 128; ++a) {
+        assert(addresses[a].reports == 3 && addresses[a].vehicle_evidence.parsed_reports == 3);
+        for (unsigned b = 0; b < 3; ++b) assert(bins[a * 3 + b] == 1);
+    }
+    cp_report_t extra = {.mono_ms = 60999, .address = {2,0,0,0,0,128}, .rssi = -50};
+    assert(cp_collect_compact_observe(&c, &extra));
+    assert(c.address_count == 128 && c.reports_seen == 385 && c.address_overflow && c.summary_drops == 1);
+    cp_collect_compact_t before = c;
+    assert(!cp_collect_compact_begin(&c, 61000, 60000, 20000, 2, 129, false));
+    assert(!memcmp(&c, &before, sizeof c) && addresses[127].reports == 3 && bins[383] == 1);
+    assert(cp_collect_compact_begin(&c, 61000, 120000, 40000, 2, 128, false));
+    assert(!addresses[127].used && !bins[383] && !c.reports_seen);
+    free(bins);
+    free(addresses);
 }
 int main(void) {
     compact_counter_and_storage_boundaries();
+    full_128_address_capacity();
     cp_collect_t *c = malloc(sizeof *c);
     assert(c);
     assert(cp_collect_begin(c, 1000, 30000, 5000, 1, 2, false));

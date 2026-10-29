@@ -31,7 +31,7 @@ for (const file of files) {
   const streamWindow = file.startsWith('tls-blocked-drain-') || file.startsWith('lease-exact-') ||
     file.startsWith('tls-blocked-raw-');
   const stopFinal = file.startsWith('stop-kept-final-');
-  const refresh = /^refresh-n(16|32|64)-w(10000|30000|60000)-b(5000)-/.exec(file);
+  const refresh = /^refresh-n(16|32|64|128)-w(10000|30000|60000|120000)-b(5000|20000|40000)-/.exec(file);
   const binMs = refresh ? Number(refresh[3]) : shortWindow ? 1000 : stopFinal ? 1500 : streamWindow ? 15000 : 5000;
   Object.assign(config, { node_id: batch.node_id, placement_id: batch.placement_id,
     capture_config_id: batch.capture_config_id, dataset: batch.dataset,
@@ -41,6 +41,10 @@ for (const file of files) {
       max_addresses: refresh ? Number(refresh[1]) : file.startsWith('vehicle-full64-') ? 64 : 4 } });
   validateConfigBatchV2(batch, validateCaptureConfigV2(config));
   if (refresh) {
+    if (Number(refresh[1]) === 128) {
+      assert.equal(Number(refresh[2]) / binMs, 3);
+      assert.ok(Buffer.byteLength(readFileSync(resolve(temporary, 'fixtures', file), 'utf8')) <= 4096);
+    }
     const key = `${refresh[1]}/${refresh[2]}`;
     const cohort = refreshWindows.get(key) ?? { addresses: new Set(), windows: 0, statuses: 0 };
     refreshWindows.set(key, cohort);
@@ -78,7 +82,7 @@ for (const file of files) {
   }
 }
 assert.equal(fullWindowAddresses.size, 64, 'All raw-OFF addresses survive bounded codec batching.');
-assert.equal(refreshWindows.size, 9, 'All 16/32/64-address by 10/30/60-second policies are exercised.');
+assert.equal(refreshWindows.size, 11, 'The original nine policies plus 128-address 60s/20s and 120s/40s trials are exercised.');
 for (const [key, cohort] of refreshWindows) {
   assert.equal(cohort.addresses.size, Number(key.split('/')[0]));
   assert.equal(cohort.windows, 1);

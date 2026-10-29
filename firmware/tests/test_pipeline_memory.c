@@ -43,7 +43,9 @@ static unsigned startup_host_creates, startup_collector_creates;
 static unsigned host_stops, host_deinits;
 static cp_network_snapshot_t network;
 static jmp_buf task_yield;
-static unsigned char flash_bytes[24 * CP_JOURNAL_SLOT_BYTES];
+/* Leave room for a complete 128-address window split into 4 KiB bodies.
+ * Production Flash layout and journal admission limits are unchanged. */
+static unsigned char flash_bytes[64 * CP_JOURNAL_SLOT_BYTES];
 static unsigned char upload_copy[CP_JOURNAL_MAX_BODY];
 static size_t upload_length;
 static int store_mutex, worker_signal, worker_task, host_signal, host_task_handle;
@@ -1285,14 +1287,15 @@ static void test_seal_bank_policy_resize_and_exact_boundaries(void) {
     release_seal_bank();
     s_accept = false;
     apply_startup_test = capture_queue_enabled = collector_start_succeeds = true;
-    const unsigned capacities[] = {16, 64, 16};
+    const unsigned capacities[] = {16, 64, 128, 16};
+    unsigned expected_committed = 0;
     for (unsigned k = 0; k < sizeof capacities / sizeof capacities[0]; ++k) {
         cp_network_policy_t next = s_policy;
         next.max_addresses = capacities[k];
         next.raw_enabled = false;
         assert(apply_with_gate(&next) == ESP_OK);
         assert(s_sealed.address_capacity == capacities[k] && seal_live == 1);
-        assert(seal_bytes == (capacities[k] == 64 ? 3072 : 768));
+        assert(seal_bytes == 2 * capacities[k] * 6 * sizeof(uint32_t));
         assert(s_window.addresses == s_collect_cores[0] &&
                s_sealed.addresses == s_collect_cores[1]);
         assert(s_window.bins == s_collect_storage &&
@@ -1314,9 +1317,10 @@ static void test_seal_bank_policy_resize_and_exact_boundaries(void) {
         assert(cp_pipeline_stop() == ESP_OK && !seal_live && !s_sealed.addresses);
         assert(!persistence_pending() && !s_health.seal_overflows && !s_health.windows_dropped);
         /* Reconfiguration retains the already frozen old-policy bytes. Reset
-         * only the synthetic Flash between trials so all 64 summaries fit. */
+         * only the synthetic Flash between trials so the next full window fits. */
         unsigned committed = s_health.summaries_committed;
-        assert(committed == (k == 0 ? 16 : k == 1 ? 80 : 96));
+        expected_committed += capacities[k];
+        assert(committed == expected_committed);
         if (k + 1 < sizeof capacities / sizeof capacities[0]) {
             memset(flash_bytes, 0xff, sizeof flash_bytes);
             cp_flash_t flash = {NULL, sizeof flash_bytes, test_flash_read, test_flash_write,
@@ -1380,7 +1384,7 @@ static void test_compact_policy_matrix_and_bank_swap(void) {
                 assert(reserve_seal_bank(capacity, bins));
                 memory_owned = false;
                 assert(seal_bytes == 2 * capacity * bins * sizeof(uint32_t));
-                assert(sizeof s_collect_cores == 8192);
+                assert(sizeof s_collect_cores == 16384);
                 assert(cp_collect_compact_begin(&s_window, 1000, bins * 5000, 5000,
                                                 1, capacity, raw));
                 cp_address_core_t *active = s_window.addresses;
@@ -1426,6 +1430,53 @@ static void test_compact_policy_matrix_and_bank_swap(void) {
                 assert_released();
             }
 }
+static void test_128_address_trial_policies(void) {
+    const unsigned windows[] = {60000, 120000};
+    for (unsigned trial = 0; trial < sizeof windows / sizeof windows[0]; ++trial) {
+        reset();
+        const unsigned window = windows[trial], bin_ms = window / 3;
+        s_policy.max_addresses = 128;
+        s_policy.summary_window_ms = window;
+        s_policy.summary_bin_ms = bin_ms;
+        s_policy.max_body_bytes = 4096;
+        s_policy.raw_enabled = false;
+        memory_owned = true;
+        assert(reserve_seal_bank(128, 3));
+        memory_owned = false;
+        assert(sizeof s_collect_cores == 16384 && seal_bytes == 3072);
+        assert(cp_collect_compact_begin(&s_window, 1000, window, bin_ms, 1, 128, false));
+        unsigned allocated = seal_allocations;
+        for (unsigned b = 0; b < 3; ++b)
+            for (unsigned a = 0; a < 128; ++a) {
+                cp_report_t report = {.mono_ms = 1001 + b * bin_ms + a,
+                    .report_seq = b * 128 + a + 1, .address = {2,0,0,0,0,(uint8_t)a},
+                    .rssi = -50, .raw = CP_RAW_OFF};
+                assert(cp_collect_compact_observe(&s_window, &report));
+            }
+        close_window(window);
+        assert(next_window());
+        assert(s_sealed.window.address_count == 128 && s_sealed.window.reports_seen == 384);
+        assert(s_sealed.window.cores[127].reports == 3 && s_sealed.window.bins[383] == 1);
+        assert(s_sealed.window.cores != s_window.addresses && s_sealed.window.bins != s_window.bins);
+        assert(seal_allocations == allocated);
+        assert(persist_pending(0));
+        assert(s_health.windows_committed == 1 && s_health.summaries_committed == 128);
+        assert(!s_health.windows_dropped && !s_health.raw_drops && !s_health.summary_drops &&
+            !s_health.seal_overflows && !s_health.callback_queue_drops);
+        unsigned batches = 0;
+        for (unsigned slot = 0; slot < s_journal.count; ++slot)
+            if (s_journal.slots[slot].state == CP_SLOT_PENDING) {
+                ++batches;
+                assert(s_journal.slots[slot].length <= 4096);
+            }
+        char prefix[64];
+        snprintf(prefix, sizeof prefix, "refresh-n128-w%u-b%u", window, bin_ms);
+        write_fixtures(prefix);
+        printf("128-address trial: %u ms / %u ms bins, 4096B bodies, %u persisted batches\n",
+            window, bin_ms, batches);
+        assert_released();
+    }
+}
 static void test_full_journal_start_waits_for_resume_before_radio(void) {
     reset();
     s_accept=false;
@@ -1460,6 +1511,7 @@ int main(int argc, char **argv) {
         sizeof s_collect_cores, 2 * 16 * 6 * sizeof(uint32_t),
         2 * 64 * 6 * sizeof(uint32_t), 2 * 64 * 16 * sizeof(uint32_t), sizeof(cp_codec_window_view_t));
     test_compact_policy_matrix_and_bank_swap();
+    test_128_address_trial_policies();
     test_full_journal_start_waits_for_resume_before_radio();
     test_seal_bank_oom_preserves_policy_and_can_retry();
     test_seal_bank_policy_resize_and_exact_boundaries();

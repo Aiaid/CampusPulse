@@ -111,7 +111,7 @@ static void saturated_window(unsigned limit) {
     c.config_id = c.placement_id = long_id;
     cp_collect_t w;
     assert(cp_collect_begin(&w, 1000, 30000, 2000, 1, 64, false));
-    for (unsigned i = 0; i < CP_COLLECT_ADDRESSES; ++i) {
+    for (unsigned i = 0; i < 64; ++i) {
         cp_report_t r = {.mono_ms = 1001, .report_seq = i + 1,
             .address = {2, 0, 0, 0, 0, (uint8_t)i}, .address_type = 3, .rssi = -100};
         assert(cp_collect_observe(&w, &r));
@@ -140,33 +140,32 @@ static void saturated_window(unsigned limit) {
            limit, peak_bytes, largest_request);
     assert(!live_bytes && !live_count);
 }
-static void compact_window(unsigned bin_count) {
+static void compact_window(unsigned capacity, unsigned bin_count, unsigned limit) {
     reset();
-    unsigned limit = 8192;
     uint32_t sequence = 0;
     cp_codec_t c = context(&limit, &sequence);
-    cp_address_core_t *cores = calloc(CP_COLLECT_ADDRESSES, sizeof *cores);
-    uint32_t *bins = calloc(CP_COLLECT_ADDRESSES * bin_count, sizeof *bins);
+    cp_address_core_t *cores = calloc(capacity, sizeof *cores);
+    uint32_t *bins = calloc(capacity * bin_count, sizeof *bins);
     assert(cores && bins);
     cp_collect_compact_t w = {.addresses = cores, .bins = bins,
-        .storage_capacity = CP_COLLECT_ADDRESSES, .bin_count = bin_count};
-    assert(cp_collect_compact_begin(&w, 1000, bin_count * 5000u, 5000, 1, 64, false));
-    for (unsigned i = 0; i < CP_COLLECT_ADDRESSES; ++i) {
+        .storage_capacity = capacity, .bin_count = bin_count};
+    assert(cp_collect_compact_begin(&w, 1000, bin_count * 5000u, 5000, 1, capacity, false));
+    for (unsigned i = 0; i < capacity; ++i) {
         cp_report_t r = {.mono_ms = 1001, .report_seq = i + 1,
             .address = {2, 0, 0, 0, 0, (uint8_t)i}, .address_type = 3, .rssi = -100};
         assert(cp_collect_compact_observe(&w, &r));
     }
     cp_codec_window_view_t view = cp_codec_window_from_compact(&w);
     assert(cp_codec_encode_window_view(&c, &view, w.window_ms));
-    assert(c.summaries_committed == 64 && c.windows_committed == 1 && !c.failed_items);
-    assert(items_seen == 65 && bodies < 12);
+    assert(c.summaries_committed == capacity && c.windows_committed == 1 && !c.failed_items);
+    assert(items_seen == capacity + 1 && bodies < capacity / 2);
     if (require_single_body) {
         assert(largest_request <= (size_t)limit + 5u);
-        assert(peak_bytes < 14u * 1024u);
+        assert(peak_bytes < (limit == 4096 ? 10000u : 14u * 1024u));
     }
     assert(!live_bytes && !live_count);
-    printf("Compact codec: 64 addresses / %u bins, requested host JSON peak %zu B\n",
-           bin_count, peak_bytes);
+    printf("Compact codec: %u addresses / %u bins / %u byte body, requested host JSON peak %zu B\n",
+           capacity, bin_count, limit, peak_bytes);
     free(bins);
     free(cores);
 }
@@ -179,9 +178,11 @@ int main(void) {
     exact_body_and_limit();
     saturated_window(4096);
     saturated_window(8192);
-    compact_window(1);
-    compact_window(6);
-    compact_window(16);
+    compact_window(64, 1, 8192);
+    compact_window(64, 6, 8192);
+    compact_window(64, 16, 8192);
+    compact_window(128, 3, 4096);
+    compact_window(128, 16, 4096);
     cJSON_InitHooks(NULL);
     puts("Codec exact bytes, dynamic-key ownership, body boundary and live allocation budgets: PASS");
     return 0;

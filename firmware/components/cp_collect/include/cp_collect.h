@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "cp_vehicle.h"
-#define CP_COLLECT_ADDRESSES 64u
+#define CP_COLLECT_ADDRESSES 128u
 #define CP_COLLECT_BINS 16u
 #define CP_COLLECT_RAW 4u
 typedef enum {

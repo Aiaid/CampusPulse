@@ -60,7 +60,7 @@ export function validateCaptureConfigV2(value: unknown): CaptureConfigV2 {
   const window_ms = integer(s.window_ms, 'config.summary.window_ms', 1000, 300000);
   const bin_ms = integer(s.bin_ms, 'config.summary.bin_ms', 1000, window_ms);
   if (window_ms % bin_ms || window_ms / bin_ms > 60) invalid('config.summary.bin_ms');
-  const max_addresses = integer(s.max_addresses, 'config.summary.max_addresses', 1, 64);
+  const max_addresses = integer(s.max_addresses, 'config.summary.max_addresses', 1, 128);
   const c = object(o.control, 'config.control', ['lease_ms']);
   const lease_ms = integer(c.lease_ms, 'config.control.lease_ms', 30000, 600000);
   return { ...legacy, protocol: 'campuspulse/2', capture_profile: 'address_metrics', identity_scheme: 'mac', allowed_streams,

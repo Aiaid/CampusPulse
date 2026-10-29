@@ -682,22 +682,22 @@ static void invalid_window_views(void) {
     assert(cp_codec_encode_window_view(&c, &no_records, 30000));
     assert(c.windows_committed == 1 && !c.raw_dropped);
 }
-static void compact_window_views(void) {
-    const unsigned bin_counts[] = {1, 6, 16};
+static void compact_window_views(unsigned capacity) {
+    const unsigned bin_counts[] = {1, 3, 6, 16};
     for (unsigned b = 0; b < sizeof bin_counts / sizeof bin_counts[0]; ++b) {
         unsigned bin_count = bin_counts[b];
         /* Exact heap allocations make ASan catch even a one-bin overread. */
-        cp_address_core_t *cores = calloc(CP_COLLECT_ADDRESSES, sizeof *cores);
-        uint32_t *bins = calloc(CP_COLLECT_ADDRESSES * bin_count, sizeof *bins);
+        cp_address_core_t *cores = calloc(capacity, sizeof *cores);
+        uint32_t *bins = calloc(capacity * bin_count, sizeof *bins);
         assert(cores && bins);
         for (unsigned variant = 0; variant < 7; ++variant) {
             cp_collect_t legacy;
             unsigned window_ms = bin_count * 5000u;
-            assert(cp_collect_begin(&legacy, 1000, window_ms, 5000, 9, 64, true));
+            assert(cp_collect_begin(&legacy, 1000, window_ms, 5000, 9, capacity, true));
             cp_collect_compact_t compact = {.addresses = cores, .bins = bins,
-                .storage_capacity = CP_COLLECT_ADDRESSES, .bin_count = bin_count};
-            assert(cp_collect_compact_begin(&compact, 1000, window_ms, 5000, 9, 64, true));
-            for (unsigned i = 0; i < CP_COLLECT_ADDRESSES; ++i) {
+                .storage_capacity = capacity, .bin_count = bin_count};
+            assert(cp_collect_compact_begin(&compact, 1000, window_ms, 5000, 9, capacity, true));
+            for (unsigned i = 0; i < capacity; ++i) {
                 /* Put observations in every bin, including the final one. */
                 for (unsigned k = 0; k < bin_count; ++k) {
                     cp_report_t report = {.mono_ms = 1001 + k * 5000u + i,
@@ -719,7 +719,7 @@ static void compact_window_views(void) {
             }
             assert(!memcmp(&legacy.state, &compact.state, sizeof legacy.state));
             assert(!memcmp(legacy.raw, compact.raw, sizeof legacy.raw));
-            for (unsigned i = 0; i < CP_COLLECT_ADDRESSES; ++i) {
+            for (unsigned i = 0; i < capacity; ++i) {
                 assert(!memcmp(&cores[i], &legacy.addresses[i].core, sizeof *cores));
                 assert(!memcmp(bins + i * bin_count, legacy.addresses[i].bins,
                                bin_count * sizeof *bins));
@@ -729,8 +729,8 @@ static void compact_window_views(void) {
                    view.bin_count == bin_count && view.raw == compact.raw);
             const cp_collect_compact_t saved = compact;
             const cp_codec_window_view_t saved_view = view;
-            uint64_t cores_hash = record_hash(cores, CP_COLLECT_ADDRESSES * sizeof *cores);
-            uint64_t bins_hash = record_hash(bins, CP_COLLECT_ADDRESSES * bin_count * sizeof *bins);
+            uint64_t cores_hash = record_hash(cores, capacity * sizeof *cores);
+            uint64_t bins_hash = record_hash(bins, capacity * bin_count * sizeof *bins);
             uint32_t legacy_seq = 10, compact_seq = 10;
             cp_codec_t writer = context(&legacy_seq), reader = context(&compact_seq);
             writer.sink = reader.sink = view_sink;
@@ -753,13 +753,13 @@ static void compact_window_views(void) {
             assert_codec_losses_equal(&writer, &reader);
             assert(!memcmp(&compact, &saved, sizeof compact));
             assert(!memcmp(&view, &saved_view, sizeof view));
-            assert(record_hash(cores, CP_COLLECT_ADDRESSES * sizeof *cores) == cores_hash);
-            assert(record_hash(bins, CP_COLLECT_ADDRESSES * bin_count * sizeof *bins) == bins_hash);
+            assert(record_hash(cores, capacity * sizeof *cores) == cores_hash);
+            assert(record_hash(bins, capacity * bin_count * sizeof *bins) == bins_hash);
             assert(!live_allocations);
         }
         /* Malformed storage descriptions fail before raw or allocation work. */
         cp_collect_compact_t compact = {.start_ms = 1000, .window_ms = bin_count * 5000u,
-            .bin_ms = 5000, .address_capacity = 64, .address_count = 64,
+            .bin_ms = 5000, .address_capacity = capacity, .address_count = capacity,
             .addresses = cores, .bins = bins, .bin_count = bin_count};
         for (unsigned variant = 0; variant < 6; ++variant) {
             cp_codec_window_view_t view = cp_codec_window_from_compact(&compact);
@@ -803,11 +803,12 @@ int main(void) {
     memory_pause_status();
     window_views();
     invalid_window_views();
-    compact_window_views();
+    compact_window_views(64);
+    compact_window_views(128);
     cJSON_InitHooks(NULL);
     printf("Codec OOM checks: %zu window/raw/summary allocation sites, %zu status sites; valid "
            "sinks, exact loss accounting, zero leaks, aged clocks, read-only legacy/compact "
-           "64-address views at 1/6/16 bins: PASS\n",
+           "64/128-address views at 1/3/6/16 bins: PASS\n",
            batches, health);
     return 0;
 }

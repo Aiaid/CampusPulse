@@ -144,7 +144,7 @@ bool cp_network_parse_policy(const char *json, size_t length, const char *node,
      * accepting a policy here does not bypass runtime heap/lease admission. */
     if (out->summary_window_ms%out->summary_bin_ms ||
         out->summary_window_ms/out->summary_bin_ms>16 ||
-        !number(summary,"max_addresses",1,64,&value)) goto done;
+        !number(summary,"max_addresses",1,128,&value)) goto done;
     out->max_addresses=(uint32_t)value;
     if (!KEYS(cc,"lease_ms") || !number(cc,"lease_ms",1,CP_NETWORK_LEASE_MS,&value)) goto done;
     if (value<out->lease_ms) out->lease_ms=value;

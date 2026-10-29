@@ -43,7 +43,7 @@ static const cp_board_profile_t s_profile = {
                     | CP_CAP_INPUT
 #endif
     ,
-    .max_addresses = 384,
+    .max_addresses = 128,
     .ingress_queue_bytes = 8192,
     /* A compiled ceiling, not an authorization grant or measured capacity. */
     .max_collection_lease_ms = 300000,
