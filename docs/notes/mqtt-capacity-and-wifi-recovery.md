@@ -133,7 +133,8 @@ subsequent observer fences logs by a freshly read device uptime.
 
 The user explicitly requests128. `5640243` raises the collector/parser, board
 ceiling, server validation, OpenAPI and configuration editor together to128;
-129/256 remain rejected.32-bit counters and all memory guards are retained.
+The selected C3 build rejects129/256; larger S3/PSRAM capacities are separate
+board work.32-bit counters and all memory guards are retained.
 The first candidate is128/120s/40s/raw-off/4096B:16KiB static cores,3072B dynamic
 three-bin counters and780B fixed structures,20236B before allocator metadata.
 It adds8192B to64×6, rather than11264B for128×6. The128×3/4096 host JSON peak is
@@ -216,6 +217,15 @@ full120s windows,99–128 addresses (mean113.8), no table overflow, zero reporte
 software/upload/ACK losses, and44 pending slots. That later snapshot is outside
 the serial cohort. Physical placement labels are retained, not re-verified by
 this bench test. The device remains collecting on the user's new network.
+
+A later read-only join at2026-10-29T14:55:03+08:00 confirms3 windows with128 admitted
+addresses and all128 matching address-summary items persisted. One has no table
+overflow; two later crowded windows do. A still-newer128-address window is only
+partly uploaded at the instant of that query, so it is not counted as complete.
+This later evidence does not extend the earlier serial-cohort claims: exceeding
+128 still omits per-address detail and records table overflow, while overall
+report counts remain available. The current C3 experiment does not remove a
+finite address bound or establish a256-address physical result.
 
 The measured size mode is now the Passport fresh-build default. Existing build
 directories must select size mode or use a fresh SDKCONFIG; defaults alone do
