@@ -19,7 +19,7 @@ afterEach(()=>{vi.restoreAllMocks();state.db.close();});
 describe('device v2 policies and control',()=>{
  it('keeps v1 config semantics explicit and validates bounded v2 capabilities',()=>{
   expect(validateCaptureConfigV2(config)).toEqual(config);
-  for(const mutate of [(c:any)=>c.protocol='campuspulse/1',(c:any)=>c.summary.max_addresses=129,(c:any)=>c.summary.bin_ms=7000,(c:any)=>c.raw_capture={mode:'all'},(c:any)=>c.allowed_streams.push('ble_reports'),(c:any)=>c.identity_scheme='none']){const c=structuredClone(config);mutate(c);expect(()=>validateCaptureConfigV2(c)).toThrow();}
+  for(const mutate of [(c:any)=>c.protocol='campuspulse/1',(c:any)=>c.summary.max_addresses=513,(c:any)=>c.summary.bin_ms=7000,(c:any)=>c.raw_capture={mode:'all'},(c:any)=>c.allowed_streams.push('ble_reports'),(c:any)=>c.identity_scheme='none']){const c=structuredClone(config);mutate(c);expect(()=>validateCaptureConfigV2(c)).toThrow();}
  });
  it('retrieves only assigned v2 policies and authenticates unassigned contact',async()=>{
   expect((await data(await device('/config'))).config.protocol).toBe('campuspulse/2');

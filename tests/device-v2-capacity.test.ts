@@ -19,20 +19,28 @@ function policy(capacity: number, window = 60000): CaptureConfigV2 {
   return config;
 }
 
-describe('bounded 128-address v2 policy', () => {
-  it('accepts 128 and both three-bin trials while rejecting larger or fractional capacities', () => {
-    for (const window of [60000, 120000]) {
-      const config = policy(128, window);
+describe('bounded 512-address v2 protocol policy', () => {
+  it('accepts board-specific capacities and both three-bin trials without raising batch or raw limits', () => {
+    for (const [capacity, window] of [[128, 60000], [512, 60000], [512, 120000]]) {
+      const config = policy(capacity, window);
       expect(validateCaptureConfigV2(config)).toEqual(config);
     }
-    for (const capacity of [0, 128.5, 129, 256]) {
+    for (const capacity of [0, 128.5, 512.5, 513]) {
       expect(() => validateCaptureConfigV2(policy(capacity))).toThrow();
     }
-    expect(createOpenApiDocument()).toHaveProperty(
-      'components.schemas.CaptureConfigV2.properties.summary.properties.max_addresses.maximum', 128);
+    const oversizedBatch = policy(512); oversizedBatch.upload_policy.max_items = 129;
+    expect(() => validateCaptureConfigV2(oversizedBatch)).toThrow();
+    const oversizedRaw = policy(512);
+    oversizedRaw.allowed_streams.push('ble_reports');
+    oversizedRaw.raw_capture = { mode: 'sampled', sample_every_n: 1, selection: 'seq_mod_n_eq_0', max_reports_per_window: 17 };
+    expect(() => validateCaptureConfigV2(oversizedRaw)).toThrow();
+    const document = createOpenApiDocument();
+    expect(document).toHaveProperty('components.schemas.CaptureConfigV2.properties.summary.properties.max_addresses.maximum', 512);
+    expect(document).toHaveProperty('components.schemas.AddressSummariesBatchV2.properties.items.maxItems', 128);
+    expect(document).toHaveProperty('components.schemas.DeviceConfigResponseV2.properties.server_limits.properties.max_items.const', 128);
   });
 
-  it.each([64, 128])('commits exactly %i distinct summaries across bounded bodies and rejects the next address', async capacity => {
+  it.each([64, 128, 512])('commits exactly %i distinct summaries across bounded bodies and rejects the next address', async capacity => {
     const config = validateCaptureConfigV2(policy(capacity));
     state.db.prepare('INSERT INTO capture_configs(id,node_id,placement_id,dataset,config_json,accept_until_ms) VALUES(?,?,?,?,?,?)')
       .run(config.capture_config_id, config.node_id, config.placement_id, config.dataset,
@@ -46,7 +54,7 @@ describe('bounded 128-address v2 policy', () => {
       last_offset_ms: 40001, bins: [2, 2, 2], time: { ...item.time, mono_ms: 61000 } });
     const request = (first: number, count: number) => ({ ...template, batch_id: crypto.randomUUID(),
       items: Array.from({ length: count }, (_, index) => ({ ...structuredClone(item), seq: first + index,
-        address: `02:00:00:00:00:${(first + index).toString(16).padStart(2, '0')}` })) });
+        address: `02:00:00:00:${Math.floor((first + index) / 256).toString(16).padStart(2, '0')}:${((first + index) % 256).toString(16).padStart(2, '0')}` })) });
     async function upload(batch: unknown) {
       const body = JSON.stringify(batch), bytes = new TextEncoder().encode(body);
       expect(bytes.length).toBeLessThanOrEqual(4096);
@@ -74,5 +82,32 @@ describe('bounded 128-address v2 policy', () => {
       .toMatchObject({ count: capacity, addresses: capacity });
     expect(state.db.prepare('SELECT COUNT(*) count FROM ingestion_batches_v2').get())
       .toMatchObject({ count: capacity / 4 });
+    expect(state.db.prepare('SELECT accepted_count,budget FROM ingestion_window_budgets_v2').get())
+      .toMatchObject({ accepted_count: capacity, budget: capacity });
+    expect(state.db.prepare('SELECT MAX(accepted_count) max_items FROM ingestion_batches_v2').get())
+      .toMatchObject({ max_items: 4 });
+
+    // Public window counts use the policy capacity independently of each
+    // private summary batch. Reject an extra visible address before writing.
+    const window = { ...template, batch_id: crypto.randomUUID(), stream: 'ble_windows',
+      items: fixture('ble-windows.request').items };
+    Object.assign(window.items[0], { duration_ms: 60000, scan_enabled_ms: 60000,
+      time: structuredClone(item.time), reports_seen: capacity * item.reports,
+      reports_aggregated: capacity * item.reports, adv_reports: capacity * item.reports,
+      visible_identifiers: capacity, unique_table_capacity: capacity,
+      indices: [],
+      raw_capture: { mode: 'off', selected_reports: 0, intentional_skips: 0, pressure_skips: 0, drops: 0 } });
+    const windowResponse = await upload(window);
+    const windowAck = await windowResponse.json();
+    expect(windowResponse.status, JSON.stringify(windowAck)).toBe(200);
+    expect(windowAck).toMatchObject({ accepted_count: 1, durability: 'committed' });
+    const rejectedWindow = structuredClone(window);
+    rejectedWindow.batch_id = crypto.randomUUID();
+    rejectedWindow.items[0].seq = 2;
+    rejectedWindow.items[0].visible_identifiers = capacity + 1;
+    expect((await upload(rejectedWindow)).status).toBe(422);
+    expect(await (await upload(window)).json()).toEqual(windowAck);
+    expect(state.db.prepare("SELECT COUNT(*) count FROM ingestion_items_v2 WHERE stream='ble_windows'").get())
+      .toMatchObject({ count: 1 });
   });
 });

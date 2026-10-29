@@ -19,6 +19,10 @@ export function choice<T extends string>(value: unknown, path: string, values: r
   return typeof value === 'string' && values.includes(value as T) ? value as T : invalid(path);
 }
 export const V2_STREAMS = ['ble_windows', 'address_summaries', 'node_status', 'ble_reports'] as const;
+// Protocol ceiling only: firmware admits policies against its own board's
+// storage capacity (Passport C3: 128; PSRAM-backed T-Energy S3: 512).
+// Per-request item/body limits remain independent of this window budget.
+export const V2_MAX_ADDRESSES = 512;
 export type V2Stream = typeof V2_STREAMS[number];
 export interface CaptureConfigV2 extends Omit<CaptureConfig, 'capture_profile' | 'allowed_streams' | 'raw_capture' | 'identity_scheme'> {
   protocol: 'campuspulse/2';
@@ -60,7 +64,7 @@ export function validateCaptureConfigV2(value: unknown): CaptureConfigV2 {
   const window_ms = integer(s.window_ms, 'config.summary.window_ms', 1000, 300000);
   const bin_ms = integer(s.bin_ms, 'config.summary.bin_ms', 1000, window_ms);
   if (window_ms % bin_ms || window_ms / bin_ms > 60) invalid('config.summary.bin_ms');
-  const max_addresses = integer(s.max_addresses, 'config.summary.max_addresses', 1, 128);
+  const max_addresses = integer(s.max_addresses, 'config.summary.max_addresses', 1, V2_MAX_ADDRESSES);
   const c = object(o.control, 'config.control', ['lease_ms']);
   const lease_ms = integer(c.lease_ms, 'config.control.lease_ms', 30000, 600000);
   return { ...legacy, protocol: 'campuspulse/2', capture_profile: 'address_metrics', identity_scheme: 'mac', allowed_streams,

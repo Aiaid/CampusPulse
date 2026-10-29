@@ -220,6 +220,30 @@ describe('immutable provenance and editable versioned policy', () => {
     expect((await data(await admin('/audit'))).entries.some((entry: any) => entry.action === 'config.publish')).toBe(false);
   });
 
+  it('publishes a 512-address protocol policy without changing legacy policies or receipt retries', async () => {
+    await login();
+    const legacyBody = fixture('ble-windows.request');
+    const legacyAck = await data(await upload(legacyBody));
+    const config = fixture('capture-config-v2.fixture');
+    config.capture_config_id = 'tenergy-capacity-512';
+    config.accept_until = new Date(Date.now() + 86400000).toISOString();
+    config.summary = { max_addresses: 512, window_ms: 120000, bin_ms: 10000 };
+    config.upload_policy.max_items = 64;
+    config.upload_policy.max_body_bytes = 8192;
+    const created = (await data(await admin('/configs', 'POST', { config }), 201)).draft;
+    await data(await admin(`/configs/${created.id}/validate`, 'POST', { revision: created.revision }));
+    const published = await data(await admin(`/configs/${created.id}/publish`, 'POST', { revision: created.revision }));
+    expect(published.config.config.summary.max_addresses).toBe(512);
+    const selected = await data(await request('/api/v2/device/config', { headers: { Authorization: `Bearer ${DEVICE_TOKEN}` } }));
+    expect(selected.config.summary.max_addresses).toBe(512);
+    expect(selected.config.summary).toEqual(config.summary);
+    expect(selected.config.upload_policy).toEqual(config.upload_policy);
+    expect(selected.server_limits.max_items).toBe(128);
+    const historical = await data(await request(`/api/v1/device/config?capture_config_id=${state.config.capture_config_id}`, { headers: { Authorization: `Bearer ${DEVICE_TOKEN}` } }));
+    expect(historical.config).toEqual(state.config);
+    expect(await data(await upload(legacyBody))).toEqual(legacyAck);
+  });
+
   it('edits drafts with optimistic revisions, publishes once, and selects desired policy explicitly', async () => {
     await login();
     const created = (await draft()).draft;
