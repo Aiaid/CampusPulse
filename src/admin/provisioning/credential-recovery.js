@@ -2,9 +2,8 @@ import { NODE_PATTERN, TOKEN_PATTERN } from './enrollment.js';
 import { adminErrorReference } from '../error-reference.js';
 
 const trustedIdentity = (identity, node, transport) =>
-  identity?.node_id === node && identity.transport === transport &&
-  ((transport === 'usb' && identity.security === 'physical-usb') ||
-    (transport === 'ble' && identity.security === 'security2'));
+  identity?.node_id === node && transport === 'usb' &&
+  identity.transport === 'usb' && identity.security === 'physical-usb';
 const validCredential = reply => typeof reply?.credential === 'string' && TOKEN_PATTERN.test(reply.credential);
 
 // Only an explicit physical-device recovery action may call this helper. Keep

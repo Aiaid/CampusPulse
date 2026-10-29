@@ -59,11 +59,13 @@ describe('physical-device missing-credential recovery', () => {
     expect(args.sensitiveAction).toHaveBeenCalledTimes(1);
   });
 
-  it('accepts authenticated BLE Security 2', async () => {
+  it('rejects legacy authenticated BLE Security 2 before any device read or credential issue', async () => {
     const args = setup(); args.identity = { ...args.identity, transport: 'ble', security: 'security2' };
     args.client.transport = 'ble'; args.client.request.mockResolvedValue({ ...args.identity });
-    await expect(prepareNetworkCredential(args)).resolves.toMatchObject({ mode: 'provided', credential });
-    expect(args.api).toHaveBeenCalledTimes(1);
+    await expect(prepareNetworkCredential(args)).rejects.toMatchObject({ credentialIssuanceUncertain: false });
+    expect(args.client.request).not.toHaveBeenCalled();
+    expect(args.api).not.toHaveBeenCalled();
+    expect(args.sensitiveAction).not.toHaveBeenCalled();
   });
 
   it('reuses a credential saved since the initial identity read', async () => {

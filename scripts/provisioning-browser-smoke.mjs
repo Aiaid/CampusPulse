@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
-import { chromium, webkit, expect } from '@playwright/test';
+import { existsSync } from 'node:fs';
+import { chromium, expect } from '@playwright/test';
 import { createServer } from 'vite';
-import { createPeer, TEST_NODE, TEST_PROOF, TEST_TOKEN, TEST_NONCE } from '../tests/provisioning/device-peer.mjs';
+import { TEST_NODE, TEST_TOKEN, TEST_NONCE } from '../tests/provisioning/constants.mjs';
 import { MQTT_BROKER_URI } from '../src/admin/provisioning/mqtt.js';
 import { provisionConfig } from '../src/admin/provisioning/enrollment.js';
-// Real Chromium/WebKit UI and WebCrypto/Web Streams, synthetic cloud/GATT/USB.
+// Real Chromium UI and Web Streams, synthetic cloud/USB.
 // No production requests, hardware operation, screenshots or credential output.
-const server = await createServer({ server: { host: '127.0.0.1', port: 18879, strictPort: true }, logLevel: 'error' });
+const server = await createServer({ server: { host: '127.0.0.1', port: 18879, strictPort: true, hmr: false, watch: null }, logLevel: 'error' });
 await server.listen();
 const base = `http://127.0.0.1:${server.httpServer.address().port}`;
 const binary = process.env.CHROMIUM_PATH || (existsSync(chromium.executablePath()) ? chromium.executablePath() : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
@@ -70,18 +70,10 @@ async function setup(context, state) {
 async function openWizard(context) {
   const page = await context.newPage(); await page.goto(`${base}/admin`);
   await page.getByRole('button', { name: '设备管理', exact: true }).click();
-  await page.getByRole('button', { name: '连接并部署设备', exact: true }).click(); return page;
+  await page.getByRole('button', { name: '连接并部署设备', exact: true }).click();
+  await assertUsbOnlyWizard(page); return page;
 }
-async function installBle(context, state) {
-  const peer = createPeer(request => { state.candidate = request; state.contact = true; state.ack = true; });
-  await context.exposeBinding('syntheticGatt', (_, kind, bytes) => peer(kind, bytes));
-  await context.addInitScript(() => {
-    let connected = false; const replies = new Map(), device = new EventTarget(); window.syntheticGesture = false; window.syntheticBleRequests = 0; device.id = 'opaque-browser-id';
-    device.gatt = { get connected() { return connected; }, disconnect() { connected = false; device.dispatchEvent(new Event('gattserverdisconnected')); }, async connect() { connected = true; return { getPrimaryService: async () => ({ getCharacteristic: async uuid => ({ writeValueWithResponse: async bytes => { replies.set(uuid, await window.syntheticGatt(uuid, Array.from(bytes))); }, readValue: async () => new DataView(Uint8Array.from(replies.get(uuid)).buffer) }) }) }; } };
-    Object.defineProperty(navigator, 'bluetooth', { value: { requestDevice() { window.syntheticBleRequests++; window.syntheticGesture = navigator.userActivation.isActive; return Promise.resolve(device); } } });
-  });
-}
-async function installUsb(context, state, disableBle = true) {
+async function installUsb(context, state) {
   await context.exposeBinding('syntheticUsb', (_, bytes) => {
     const text = new TextDecoder().decode(Uint8Array.from(bytes)); assert(text.startsWith('\x1eCPSETUP/1 '));
     const id = text.slice(11, 47), request = JSON.parse(text.slice(48)); state.operations.push(request.op); let result;
@@ -100,14 +92,29 @@ async function installUsb(context, state, disableBle = true) {
     else throw Error('Unexpected synthetic USB operation');
     return Array.from(new TextEncoder().encode('unrelated boot log\n' + `\x1eCPSETUP/1 ${id} ${JSON.stringify(result)}\n`));
   });
-  await context.addInitScript(({ disableBle }) => {
-    if (disableBle) Object.defineProperty(navigator, 'bluetooth', { value: undefined });
+  await context.addInitScript(() => {
+    window.syntheticBleRequests = 0;
+    Object.defineProperty(navigator, 'bluetooth', { value: { requestDevice() { window.syntheticBleRequests++; throw Error('Wireless setup must never be used'); } } });
     window.syntheticUsbGesture = false;
     const makePort = () => ({ async open() { let controller; this.readable = new ReadableStream({ start(c) { controller = c; } }); this.writable = new WritableStream({ async write(data) { const reply = Uint8Array.from(await window.syntheticUsb(Array.from(data))); if (reply.length) { controller.enqueue(reply.subarray(0, 8)); controller.enqueue(reply.subarray(8)); } } }); }, async close() {} });
     Object.defineProperty(navigator, 'serial', { value: { requestPort() { window.syntheticUsbGesture = navigator.userActivation.isActive; return Promise.resolve(makePort()); } } });
-  }, { disableBle });
+  });
 }
-async function unsupported(context) { await context.addInitScript(() => { Object.defineProperty(navigator, 'bluetooth', { value: undefined }); Object.defineProperty(navigator, 'serial', { value: undefined }); }); }
+async function unsupported(context) {
+  await context.addInitScript(() => {
+    window.syntheticBleRequests = 0;
+    Object.defineProperty(navigator, 'bluetooth', { value: { requestDevice() { window.syntheticBleRequests++; throw Error('Wireless setup must never be used'); } } });
+    Object.defineProperty(navigator, 'serial', { value: undefined });
+  });
+}
+async function assertUsbOnlyWizard(page) {
+  assert.equal(await page.getByLabel('设备屏幕上的配网码', { exact: true }).count(), 0);
+  assert.equal(await page.getByLabel('设备屏幕上的工厂节点 ID', { exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: /选择蓝牙设备|加密发送给设备|显示本地配网交接内容/ }).count(), 0);
+  assert.equal(await page.getByLabel('复制到设备本地页面的交接内容', { exact: true }).count(), 0);
+  assert(!/Web Bluetooth|Bluetooth|SoftAP|热点|192\.168\.4\.1|\bPIN\b|蓝牙/.test(await page.locator('.cp-provision').innerText()));
+  assert.equal(await page.evaluate(() => window.syntheticBleRequests), 0);
+}
 async function firstRegistration(page) {
   await page.getByLabel('设备名称', { exact: true }).fill('Synthetic new node');
   await page.getByRole('button', { name: '首次登记并取得设备凭证' }).click();
@@ -132,18 +139,19 @@ async function assertNetworkSecretsLocal(page, state, secrets) {
   assert.equal(state.registrations, 0); assert.equal(state.rotations, 0); assert.equal(state.placements, 0); assert.equal(state.configs, 0);
 }
 try {
-  // New BLE node: actual WebCrypto, wrong PIN cleared, automatic cloud lookup.
-  const newState = fixture(), bleContext = await browser.newContext(); await setup(bleContext, newState); await installBle(bleContext, newState);
-  const ble = await openWizard(bleContext); await ble.getByLabel('设备屏幕上的配网码', { exact: true }).fill('99999999'); await ble.getByRole('button', { name: '选择蓝牙设备并验证' }).click(); await ble.getByRole('alert').waitFor(); assert.equal(await ble.getByLabel('设备屏幕上的配网码', { exact: true }).inputValue(), '');
-  await ble.getByLabel('设备屏幕上的配网码', { exact: true }).fill(TEST_PROOF); await ble.getByRole('button', { name: '选择蓝牙设备并验证' }).click(); await ble.getByText('（已验证身份）', { exact: false }).waitFor(); assert.equal(await ble.evaluate(() => window.syntheticGesture), true);
-  await firstRegistration(ble); await ble.getByLabel('部署地点', { exact: true }).selectOption('synthetic-place'); await ble.getByRole('button', { name: '保存配置' }).click();
-  await ble.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-ssid'); await ble.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-password'); await ble.getByRole('button', { name: '加密发送给设备' }).click(); await ble.getByRole('button', { name: '完成并返回设备目录' }).waitFor({ timeout: 15000 });
+  // New USB node: read the physical identity before cloud enrollment. Browser
+  // Bluetooth capability must not expose or activate a wireless setup branch.
+  const newState = fixture(), newContext = await browser.newContext(); await setup(newContext, newState); await installUsb(newContext, newState);
+  const newNode = await openWizard(newContext); await newNode.getByRole('button', { name: '选择 USB 设备并开始配网' }).click();
+  await newNode.getByText('（USB 工厂身份已读取）', { exact: false }).waitFor(); assert.equal(await newNode.evaluate(() => window.syntheticUsbGesture), true);
+  await firstRegistration(newNode); await newNode.getByLabel('部署地点', { exact: true }).selectOption('synthetic-place'); await saveSettings(newNode);
+  await newNode.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-ssid'); await newNode.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-password'); await newNode.getByRole('button', { name: '通过 USB 发送给设备' }).click(); await newNode.getByText('设备正在验证', { exact: true }).waitFor();
   assert.deepEqual(newState.candidate.mqtt, TEST_MQTT); assert.equal(newState.candidate.device_token, TEST_TOKEN); assert.equal(newState.registrations, 1); assert.equal(newState.rotations, 0); assert(!JSON.stringify(newState.bodies).includes('synthetic-password')); assert(!JSON.stringify(newState.bodies).includes(TEST_TOKEN));
-  const bleRequests = await ble.evaluate(() => window.syntheticBleRequests); await ble.getByRole('button', { name: '重新配置网络', exact: true }).click();
-  await ble.getByText('请在设备上开始新配网，输入新显示的配网码后连接同一台设备。', { exact: true }).waitFor();
-  assert.equal(await ble.getByLabel('设备屏幕上的配网码', { exact: true }).inputValue(), ''); assert.equal(await ble.evaluate(() => window.syntheticBleRequests), bleRequests);
-  assert.equal(await ble.getByLabel('Wi-Fi SSID', { exact: true }).isEnabled(), true); assert.equal(await ble.getByRole('button', { name: '加密发送给设备', exact: true }).isDisabled(), true);
-  await bleContext.close();
+  // Cloud contact alone cannot finish the attempt; require a fresh applied ACK
+  // or the exact local attempt's save confirmation.
+  newState.contact = true; await newNode.getByRole('button', { name: '检查云端状态', exact: true }).click(); assert.equal(await newNode.getByRole('button', { name: '完成并返回设备目录', exact: true }).count(), 0);
+  newState.ack = true; await newNode.getByRole('button', { name: '检查云端状态', exact: true }).click(); await newNode.getByRole('button', { name: '完成并返回设备目录', exact: true }).waitFor();
+  await assertUsbOnlyWizard(newNode); await newContext.close();
   // Prepared settings remain ordinary editable fields. Each changed save moves
   // desired configuration forward while retaining every immutable old config;
   // saving unchanged values performs no placement/draft/publish writes.
@@ -257,7 +265,9 @@ try {
   const notSentState = fixture(true); notSentState.savedCredential = false; notSentState.dropInfoAfterRotation = true;
   const notSent = await existingUsbNetwork(notSentState);
   await notSent.page.getByLabel('Wi-Fi SSID', { exact: true }).fill('synthetic-preflight-ssid'); await notSent.page.getByLabel('Wi-Fi 密码', { exact: true }).fill('synthetic-preflight-secret');
-  await notSent.page.getByRole('button', { name: '重新授权并连接 Wi-Fi', exact: true }).click(); await notSent.page.getByRole('alert').waitFor({ timeout: 15000 });
+  await notSent.page.getByRole('button', { name: '重新授权并连接 Wi-Fi', exact: true }).click();
+  try { await notSent.page.getByRole('alert').waitFor({ timeout: 15000 }); }
+  catch (error) { error.message += ` (rotations=${notSentState.rotations}, configure=${notSentState.configureCalls}, USB operations=${notSentState.operations.join(',')}, wizard=${await notSent.page.locator('.cp-provision').count()})`; throw error; }
   assert.equal(notSentState.rotations, 1); assert.equal(notSentState.configureCalls, 0);
   await notSent.page.getByRole('button', { name: '通过 USB 发送给设备', exact: true }).click(); await notSent.page.getByText('设备正在验证', { exact: true }).waitFor();
   assert.equal(notSentState.rotations, 1); assert.equal(notSentState.configureCalls, 1); assert.equal(notSentState.candidate.device_token, TEST_TOKEN); await notSent.context.close();
@@ -395,55 +405,19 @@ try {
   const diagnosis = await openWizard(diagnosisContext); await diagnosis.getByRole('button', { name: '连接 USB 只读诊断' }).click(); await diagnosis.getByText('未发送配置命令', { exact: false }).waitFor(); assert(diagnosisState.operations.every(op => op === 'status')); assert.equal(diagnosisState.registrations, 0); await diagnosisContext.close();
   // Lost registration response remains recoverable with the saved token; no
   // duplicate identity POST and no silent rotation, even after an explicit GET.
-  const lostState = fixture(), lostContext = await browser.newContext(); lostState.dropRegistration = true; await setup(lostContext, lostState); await unsupported(lostContext); const lost = await openWizard(lostContext);
-  await lost.getByLabel('设备屏幕上的工厂节点 ID', { exact: true }).fill(TEST_NODE); await lost.getByLabel('设备名称', { exact: true }).fill('Synthetic lost response'); await lost.getByRole('button', { name: '首次登记并取得设备凭证' }).click(); await lost.getByRole('alert').waitFor(); assert.equal(await lost.getByRole('button', { name: '首次登记并取得设备凭证' }).isDisabled(), true);
+  const lostState = fixture(), lostContext = await browser.newContext(); lostState.dropRegistration = true; await setup(lostContext, lostState); await installUsb(lostContext, lostState); const lost = await openWizard(lostContext);
+  await lost.getByRole('button', { name: '选择 USB 设备并开始配网' }).click(); await lost.getByLabel('设备名称', { exact: true }).fill('Synthetic lost response'); await lost.getByRole('button', { name: '首次登记并取得设备凭证' }).click(); await lost.getByRole('alert').waitFor(); assert.equal(await lost.getByRole('button', { name: '首次登记并取得设备凭证' }).isDisabled(), true);
   await lost.getByRole('button', { name: '重新检查登记状态' }).click(); await lost.getByText('已登记设备 · Synthetic existing node').waitFor(); await lost.getByText('使用已保存的设备凭证或更换凭证', { exact: true }).click(); await lost.getByLabel('已有的独立设备凭证', { exact: true }).fill(TEST_TOKEN); await lost.getByRole('button', { name: '使用已有设备凭证', exact: true }).click(); await lost.getByText('设备凭证已准备，仅保留于当前向导。').waitFor(); assert.equal(lostState.registrations, 1); assert.equal(lostState.rotations, 0); await lostContext.close();
   // Race after explicit new-node lookup produces a visible 409 explanation and
   // transitions to existing-node reconfiguration instead of hiding the conflict.
-  const conflict = fixture(), conflictContext = await browser.newContext(); conflict.conflictRegistration = true; await setup(conflictContext, conflict); await unsupported(conflictContext); const race = await openWizard(conflictContext);
-  await race.getByLabel('设备屏幕上的工厂节点 ID', { exact: true }).fill(TEST_NODE); await race.getByLabel('设备名称', { exact: true }).fill('Synthetic race'); await race.getByRole('button', { name: '首次登记并取得设备凭证' }).click(); await race.getByRole('alert').filter({ hasText: '409' }).waitFor(); await race.getByText('已登记设备 · Synthetic existing node').waitFor(); assert.equal(conflict.registrations, 1); assert.equal(conflict.rotations, 0); await conflictContext.close();
-  // AP reuse is explicitly selected because the cloud page has no direct
-  // capability channel to the device-local page. A legacy page can reject it.
-  const apSavedState = fixture(true), apSavedContext = await browser.newContext(); await setup(apSavedContext, apSavedState); await unsupported(apSavedContext); const apSaved = await openWizard(apSavedContext);
-  await apSaved.getByLabel('设备屏幕上的工厂节点 ID', { exact: true }).fill(TEST_NODE); await apSaved.getByText('已登记设备 · Synthetic existing node').waitFor();
-  const apReuse = apSaved.getByRole('radio', { name: /保留设备内现有凭证/ }); assert.equal(await apReuse.isChecked(), false); await apReuse.check();
-  await apSaved.getByRole('button', { name: '保存配置' }).click(); await apSaved.getByRole('button', { name: '显示本地配网交接内容' }).click();
-  const reuseHandoff = JSON.parse(await apSaved.getByLabel('复制到设备本地页面的交接内容', { exact: true }).inputValue()); assert.equal(reuseHandoff.reuse_saved_credential, true); assert.equal(reuseHandoff.device_token, undefined); assert.equal(apSavedState.registrations, 0); assert.equal(apSavedState.rotations, 0);
-  // Producing a handoff is not an observed device write. Settings remain
-  // editable, and changing them removes the stale handoff until saved again.
-  assert.equal(await apSaved.getByLabel('部署地点', { exact: true }).isEnabled(), true); await apSaved.getByLabel('数据用途', { exact: true }).selectOption('field');
-  assert.equal(await apSaved.getByLabel('复制到设备本地页面的交接内容', { exact: true }).count(), 0); await saveSettings(apSaved);
-  await apSaved.getByRole('button', { name: '显示本地配网交接内容', exact: true }).click(); assert.equal(apSavedState.config.dataset, 'field'); await apSavedContext.close();
-  // Unsupported browser + exact embedded page in WebKit; local page validation
-  // is distinct from transport or physical network acceptance.
-  const apState = fixture(), apContext = await browser.newContext(); await setup(apContext, apState); await unsupported(apContext); const ap = await openWizard(apContext); await ap.getByText('此浏览器没有可用的 Web Bluetooth', { exact: false }).waitFor();
-  await ap.getByLabel('设备屏幕上的工厂节点 ID', { exact: true }).fill(TEST_NODE); await firstRegistration(ap); await ap.getByRole('button', { name: '保存配置' }).click(); await ap.getByRole('button', { name: '显示本地配网交接内容' }).click(); const handoff = JSON.parse(await ap.getByLabel('复制到设备本地页面的交接内容', { exact: true }).inputValue()); assert.deepEqual(handoff.mqtt, TEST_MQTT); assert.equal(handoff.device_token, TEST_TOKEN); await apContext.close();
-  const header = readFileSync(new URL('../firmware/components/cp_provision/setup_page.h', import.meta.url), 'utf8'); const part = name => header.split(`static const char ${name}[] =`)[1].split(';\n')[0].match(/"(?:[^"\\]|\\.)*"/g).map(s => JSON.parse(s)).join(''); const html = part('CP_SETUP_HEAD') + TEST_NODE + part('CP_SETUP_MID') + 'b'.repeat(32) + part('CP_SETUP_END');
-  let safari = 'WebKit not installed';
-  if (existsSync(webkit.executablePath())) {
-    const wk = await webkit.launch({ headless: true }); const ctx = await wk.newContext(); ctx.setDefaultTimeout(15000);
-    const localBodies = [];
-    await ctx.route('http://192.168.4.1/**', route => {
-      if (route.request().method() === 'POST') { assert.equal(new URL(route.request().url()).pathname, '/configure'); localBodies.push(route.request().postDataJSON()); return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ v: 1, ok: true, state: 'received' }) }); }
-      return route.fulfill({ contentType: 'text/html', body: html });
-    });
-    const p = await ctx.newPage(); await p.goto('http://192.168.4.1'); await p.getByLabel('8-digit setup PIN shown on device', { exact: true }).fill(TEST_PROOF); await p.getByLabel('Cloud enrollment handoff from the administrator page', { exact: true }).fill(JSON.stringify(handoff)); await p.getByLabel('Target Wi-Fi SSID', { exact: true }).fill('test'); await p.getByLabel('Target Wi-Fi password', { exact: true }).fill('test-password'); await p.getByRole('button', { name: 'Submit to this device' }).click(); await p.getByText('Received by device; network validation is still pending.', { exact: false }).waitFor(); await p.reload(); await p.getByLabel('8-digit setup PIN shown on device', { exact: true }).fill(TEST_PROOF); await p.getByLabel('Cloud enrollment handoff from the administrator page', { exact: true }).fill(JSON.stringify(reuseHandoff)); await p.getByLabel('Target Wi-Fi SSID', { exact: true }).fill('test'); await p.getByLabel('Target Wi-Fi password', { exact: true }).fill('test-password'); await p.getByRole('button', { name: 'Submit to this device' }).click(); await p.getByText('Received by device; network validation is still pending.', { exact: false }).waitFor();
-    for (const { auth, outer } of [{ auth: 'open', outer: '' }, { auth: 'enterprise', outer: '' }, { auth: 'enterprise', outer: 'synthetic-local-outer' }]) {
-      await p.reload(); await p.getByLabel('8-digit setup PIN shown on device', { exact: true }).fill(TEST_PROOF); await p.getByLabel('Cloud enrollment handoff from the administrator page', { exact: true }).fill(JSON.stringify(reuseHandoff)); await p.getByLabel('Target Wi-Fi SSID', { exact: true }).fill('synthetic-local-ssid');
-      await p.getByRole('combobox', { name: 'Wi-Fi authentication', exact: true }).selectOption(auth); assert.equal(await p.getByLabel('Target Wi-Fi password', { exact: true }).isVisible(), false);
-      const before = localBodies.length;
-      if (auth === 'enterprise') {
-        await p.getByRole('button', { name: 'Submit to this device' }).click(); assert.equal(localBodies.length, before);
-        await p.getByLabel('Enterprise username', { exact: true }).fill('synthetic-local-user'); await p.getByRole('button', { name: 'Submit to this device' }).click(); assert.equal(localBodies.length, before);
-        await p.getByLabel('Enterprise password', { exact: true }).fill('synthetic-local-secret'); if (outer) await p.getByLabel('Outer identity (optional)', { exact: true }).fill(outer);
-      }
-      await p.getByRole('button', { name: 'Submit to this device' }).click(); await p.getByText('Received by device; network validation is still pending.', { exact: false }).waitFor();
-      assert.equal(localBodies.length, before + 1); const candidate = localBodies.at(-1); assert.equal(candidate.wifi_security, auth); assert.equal(candidate.password, ''); assert.equal(candidate.reuse_saved_credential, true); assert.equal(candidate.device_token, undefined);
-      if (auth === 'enterprise') { assert.equal(candidate.eap_username, 'synthetic-local-user'); assert.equal(candidate.eap_password, 'synthetic-local-secret'); assert.equal(candidate.eap_identity, outer || undefined); assert.equal(await p.getByLabel('Enterprise password', { exact: true }).inputValue(), ''); }
-      else for (const field of ['eap_username', 'eap_identity', 'eap_password']) assert.equal(candidate[field], undefined);
-      const localStorage = await p.evaluate(() => JSON.stringify({ local: { ...window.localStorage }, session: { ...sessionStorage } })); for (const secret of [TEST_TOKEN, 'synthetic-local-ssid', 'synthetic-local-user', 'synthetic-local-secret', 'synthetic-local-outer']) assert(!localStorage.includes(secret));
-    }
-    await wk.close(); safari = 'WebKit embedded page token/reuse, open and enterprise optional-identity branches passed';
-  }
-  console.log(`Provisioning browser mock passed: editable prepared/expired settings, repeated save/no-op with immutable config history, clean/dirty external refresh, missing-credential explicit network reauthorization, fresh saved-credential reuse, identity/capability/readiness gates, single issuance across unsent and failed local retries, uncertain issuance lock, uncertain/testing write lock, stale-attempt failure rejection, applied-to-fresh USB attempt, BLE fresh-PIN restart, editable AP handoff, new/existing lookup, visible 409, lost registration recovery, saved-credential reuse, preserved config, safe stage diagnostics, corrected Wi-Fi nonce retry, explicit open/enterprise modes, legacy capability gate, local-only network secrets, fresh applied ACK, read-only USB, Security2 wrong PIN; ${safari}. No physical USB/BLE/network acceptance.`);
+  const conflict = fixture(), conflictContext = await browser.newContext(); conflict.conflictRegistration = true; await setup(conflictContext, conflict); await installUsb(conflictContext, conflict); const race = await openWizard(conflictContext);
+  await race.getByRole('button', { name: '选择 USB 设备并开始配网' }).click(); await race.getByLabel('设备名称', { exact: true }).fill('Synthetic race'); await race.getByRole('button', { name: '首次登记并取得设备凭证' }).click(); await race.getByRole('alert').filter({ hasText: '409' }).waitFor(); await race.getByText('已登记设备 · Synthetic existing node').waitFor(); assert.equal(conflict.registrations, 1); assert.equal(conflict.rotations, 0); await conflictContext.close();
+  // A browser without Web Serial has a clear USB requirement and cannot fall
+  // back to Bluetooth, PIN entry or a device hotspot, even with Bluetooth API.
+  const unsupportedState = fixture(), unsupportedContext = await browser.newContext(); await setup(unsupportedContext, unsupportedState); await unsupported(unsupportedContext);
+  const unsupportedPage = await openWizard(unsupportedContext); await unsupportedPage.getByText('此浏览器没有可用的 Web Serial。', { exact: false }).waitFor();
+  assert.equal(await unsupportedPage.getByRole('button', { name: '选择 USB 设备并开始配网', exact: true }).isDisabled(), true);
+  assert.equal(await unsupportedPage.getByRole('button', { name: '首次登记并取得设备凭证', exact: true }).count(), 0);
+  assert.equal(unsupportedState.registrations, 0); assert.equal(unsupportedState.rotations, 0); assert.equal(unsupportedState.configureCalls, 0); await assertUsbOnlyWizard(unsupportedPage); await unsupportedContext.close();
+  console.log('Provisioning browser mock passed: USB-only UI with Bluetooth API present, unsupported-browser USB requirement, new/existing lookup, enrollment MQTT credentials, editable prepared/expired settings, repeated save/no-op with immutable config history, clean/dirty external refresh, missing-credential explicit network reauthorization, fresh saved-credential reuse, identity/capability/readiness gates, single issuance across unsent and failed local retries, uncertain issuance lock, uncertain/testing write lock, stale-attempt failure rejection, applied-to-fresh USB attempt, visible 409, lost registration recovery, saved-credential reuse, preserved config, safe stage diagnostics, corrected Wi-Fi nonce retry, explicit open/enterprise modes, legacy capability gate, local-only network secrets, fresh applied ACK, read-only USB. No physical USB/network acceptance.');
 } finally { await browser.close(); await server.close(); }

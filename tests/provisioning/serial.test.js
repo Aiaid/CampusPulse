@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { SerialFrames, serialFrame, SERIAL_PREFIX, openSerialClient, connectSerialProvisioning, connectSerialDiagnostics, selectProvisioningPort, serialSupport } from '../../src/admin/provisioning/serial.js';
-import { TEST_NODE, TEST_NONCE, TEST_TOKEN } from './device-peer.mjs';
+import { TEST_NODE, TEST_NONCE, TEST_TOKEN } from './constants.mjs';
 const encoder = new TextEncoder(), id = '11111111-2222-4333-8444-555555555555', other = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const info = { v: 1, ok: true, node_id: TEST_NODE, board: 'Synthetic headless board', transport: 'usb', security: 'physical-usb', nonce: TEST_NONCE };
 function fakePort(respond) {

@@ -18,7 +18,7 @@ const CODES = {
   save_failed: ['设备保存设置失败', '保留当前向导与凭证，记录安全诊断；不要清空设备或重复轮换凭证。'],
   validation_timeout: ['设备验证超时', '根据最后完成阶段排查网络；仅收到设备明确失败后再修正设置重试。'],
   setup_expired: ['配网会话已过期', '重新进入配网并连接同一台设备；本向导保留已有云端凭证。'],
-  setup_locked: ['配网会话已锁定', '在设备上显式开始新的配网会话，再输入新的配网码。'],
+  setup_locked: ['配网会话已锁定', '通过 USB 重新连接同一台设备并开始新配网会话；本向导保留已有云端凭证。'],
 };
 Object.assign(CODES, {
   idle: ['空闲', ''], queued: ['已排队', ''], wifi_connecting: ['正在连接 Wi-Fi', ''], dhcp_wait: ['等待网络地址', ''], clock_sync: ['正在同步时间', ''], dns_resolving: ['正在解析域名', ''], tls_connecting: ['正在建立加密连接', ''], cloud_checking: ['正在检查云端身份', ''], network_validated: ['网络验证通过', ''], saving: ['正在保存设置', ''], saved: ['设置已保存', ''],
