@@ -33,26 +33,32 @@ export interface LastReportedSensorWindow extends Omit<PublicSensorWindow, 'obse
 
 /** Receipt-ordered fallback, never a timed observation or an inference input. */
 export async function readLastReportedSensor(env: Env, place: string, now = Date.now()): Promise<LastReportedSensorWindow | null> {
+  // Bound each placement independently before the global winner. The partial
+  // receipt index contains only field BLE windows, never private summaries.
   const row = await env.DB.prepare(`SELECT w.node_id,w.boot_id,w.placement_id,w.capture_config_id,w.item_json,w.utc_ms,w.received_at
-    FROM all_sensor_windows w
-    JOIN placements p ON p.id = w.placement_id AND p.node_id = w.node_id
-    JOIN capture_configs config ON config.id = w.capture_config_id AND config.node_id = w.node_id
-      AND config.placement_id = w.placement_id AND config.dataset = w.dataset
+    FROM placements p
     LEFT JOIN placement_closures c ON c.placement_id = p.id AND c.node_id = p.node_id
-    WHERE p.place_id = ? AND w.dataset = 'field' AND w.expires_at_ms > ?
-    AND p.valid_from_ms <= ?
-    AND w.received_at >= strftime('%Y-%m-%dT%H:%M:%fZ',p.valid_from_ms / 1000.0,'unixepoch')
-    AND (COALESCE(c.valid_until_ms,p.valid_until_ms) IS NULL
-      OR w.received_at < strftime('%Y-%m-%dT%H:%M:%fZ',COALESCE(c.valid_until_ms,p.valid_until_ms) / 1000.0,'unixepoch'))
-    AND w.received_at <= ?
-    AND (w.utc_ms IS NULL OR json_extract(w.item_json,'$.time.uncertainty_ms') IS NULL
-      OR json_extract(w.item_json,'$.time.uncertainty_ms') > 30000
-      OR EXISTS (SELECT 1 FROM json_each(w.item_json,'$.quality_flags') flag WHERE flag.value = 'utc_jump'))
-    AND (w.utc_ms IS NULL OR w.utc_ms <= 8640000000000000)
-    AND NOT EXISTS (SELECT 1 FROM json_each(w.item_json,'$.quality_flags') flag
-      WHERE flag.value NOT IN ('partial_window','unique_table_overflow','aggregation_drops','raw_drops','raw_pressure_pause','utc_jump'))
+    CROSS JOIN ingestion_items_v2 w ON w.rowid IN (
+      SELECT candidate.rowid FROM ingestion_items_v2 candidate INDEXED BY ingestion_items_v2_public_receipt
+      JOIN capture_configs config ON config.id = candidate.capture_config_id AND config.node_id = candidate.node_id
+        AND config.placement_id = candidate.placement_id AND config.dataset = candidate.dataset
+      WHERE candidate.placement_id = p.id AND candidate.node_id = p.node_id
+      AND candidate.stream = 'ble_windows' AND candidate.dataset = 'field' AND candidate.expires_at_ms > ?
+      AND candidate.received_at >= strftime('%Y-%m-%dT%H:%M:%fZ',p.valid_from_ms / 1000.0,'unixepoch')
+      AND (COALESCE(c.valid_until_ms,p.valid_until_ms) IS NULL
+        OR candidate.received_at < strftime('%Y-%m-%dT%H:%M:%fZ',COALESCE(c.valid_until_ms,p.valid_until_ms) / 1000.0,'unixepoch'))
+      AND candidate.received_at <= ?
+      AND (candidate.utc_ms IS NULL OR json_extract(candidate.item_json,'$.time.uncertainty_ms') IS NULL
+        OR json_extract(candidate.item_json,'$.time.uncertainty_ms') > 30000
+        OR EXISTS (SELECT 1 FROM json_each(candidate.item_json,'$.quality_flags') flag WHERE flag.value = 'utc_jump'))
+      AND (candidate.utc_ms IS NULL OR candidate.utc_ms <= 8640000000000000)
+      AND NOT EXISTS (SELECT 1 FROM json_each(candidate.item_json,'$.quality_flags') flag
+        WHERE flag.value NOT IN ('partial_window','unique_table_overflow','aggregation_drops','raw_drops','raw_pressure_pause','utc_jump'))
+      ORDER BY candidate.received_at DESC,candidate.seq DESC,candidate.node_id,candidate.boot_id,candidate.capture_config_id LIMIT 1
+    )
+    WHERE p.place_id = ? AND p.valid_from_ms <= ?
     ORDER BY w.received_at DESC,w.seq DESC,w.node_id,w.boot_id,w.capture_config_id LIMIT 1`)
-    .bind(place, now, now, new Date(now).toISOString())
+    .bind(now, new Date(now).toISOString(), place, now)
     .first<{ node_id: string; boot_id: string; placement_id: string; capture_config_id: string; item_json: string; utc_ms: number | null; received_at: string }>();
   if (!row) return null;
   const item = JSON.parse(row.item_json) as BleWindow;
@@ -68,16 +74,26 @@ export async function readLastReportedSensor(env: Env, place: string, now = Date
   };
 }
 export async function readPublicWindows(env: Env, place: string, from: number, now = Date.now()): Promise<PublicSensorWindow[]> {
+  // A global LIMIT alone lets SQLite visit every retained item before sorting.
+  // Each indexed placement contributes at most 201 eligible rows; their global
+  // top 201 is exactly the global top 201 of the full eligible set.
   const rows = await env.DB.prepare(`SELECT w.node_id,w.boot_id,w.placement_id,w.capture_config_id,w.item_json,w.utc_ms
-    FROM all_sensor_windows w JOIN placements p ON p.id = w.placement_id AND p.node_id = w.node_id
+    FROM placements p
     LEFT JOIN placement_closures c ON c.placement_id = p.id AND c.node_id = p.node_id
-    WHERE p.place_id = ? AND w.dataset = 'field' AND w.utc_ms >= ? AND w.utc_ms <= ? AND w.expires_at_ms > ?
-    AND json_extract(w.item_json, '$.time.uncertainty_ms') BETWEEN 0 AND 30000
-    AND NOT EXISTS (SELECT 1 FROM json_each(w.item_json, '$.quality_flags') flag
-      WHERE flag.value NOT IN ('partial_window','unique_table_overflow','aggregation_drops','raw_drops','raw_pressure_pause'))
-    AND w.utc_ms - w.duration_ms - json_extract(w.item_json, '$.time.uncertainty_ms') >= p.valid_from_ms
-    AND w.utc_ms + json_extract(w.item_json, '$.time.uncertainty_ms') <= COALESCE(c.valid_until_ms,p.valid_until_ms,9223372036854775807)
-    ORDER BY w.utc_ms DESC,w.node_id,w.seq DESC LIMIT 201`).bind(place, from, now, now)
+    CROSS JOIN ingestion_items_v2 w ON w.rowid IN (
+      SELECT candidate.rowid FROM ingestion_items_v2 candidate INDEXED BY ingestion_items_v2_public_time
+      WHERE candidate.placement_id = p.id AND candidate.node_id = p.node_id
+      AND candidate.stream = 'ble_windows' AND candidate.dataset = 'field'
+      AND candidate.utc_ms >= ? AND candidate.utc_ms <= ? AND candidate.expires_at_ms > ?
+      AND json_extract(candidate.item_json, '$.time.uncertainty_ms') BETWEEN 0 AND 30000
+      AND NOT EXISTS (SELECT 1 FROM json_each(candidate.item_json, '$.quality_flags') flag
+        WHERE flag.value NOT IN ('partial_window','unique_table_overflow','aggregation_drops','raw_drops','raw_pressure_pause'))
+      AND candidate.utc_ms - candidate.duration_ms - json_extract(candidate.item_json, '$.time.uncertainty_ms') >= p.valid_from_ms
+      AND candidate.utc_ms + json_extract(candidate.item_json, '$.time.uncertainty_ms') <= COALESCE(c.valid_until_ms,p.valid_until_ms,9223372036854775807)
+      ORDER BY candidate.utc_ms DESC,candidate.node_id,candidate.seq DESC LIMIT 201
+    )
+    WHERE p.place_id = ?
+    ORDER BY w.utc_ms DESC,w.node_id,w.seq DESC LIMIT 201`).bind(from, now, now, place)
     .all<{ node_id: string; boot_id: string; placement_id: string; capture_config_id: string; item_json: string; utc_ms: number }>();
   return rows.results.map(row => {
     const item = JSON.parse(row.item_json) as BleWindow;

@@ -145,11 +145,11 @@ describe('public field response semantics', () => {
 });
 
 describe('field read ownership and failures', () => {
-  test('publishes real server data and sends no-store with an abort signal', async () => {
+  test('publishes real server data with an abort signal and permits shared public caching', async () => {
     const states = [], fetcher = vi.fn(async () => reply(summary()));
     const reader = createFieldReader(state => states.push(state), fetcher);
     await reader.read(options);
-    expect(fetcher).toHaveBeenCalledWith('/api/v1/places/parking/summary', { cache: 'no-store', signal: expect.any(AbortSignal) });
+    expect(fetcher).toHaveBeenCalledWith('/api/v1/places/parking/summary', { signal: expect.any(AbortSignal) });
     expect(states.map(state => state.loading)).toEqual([true, false]);
     expect(states.at(-1).data.sensor.visible_identifiers).toBe(5);
     reader.cancel();

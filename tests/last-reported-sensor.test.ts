@@ -12,13 +12,14 @@ const summary = async () => (await (await request('/api/v1/places/library/summar
 beforeEach(async () => {
   vi.spyOn(Date, 'now').mockReturnValue(NOW);
   state = await setup();
-  const config = { ...state.config, capture_config_id: 'field-config', dataset: 'field' as const };
+  const config = { ...fixture('capture-config-v2.fixture'), capture_config_id: 'field-config', dataset: 'field' as const, accept_until: new Date(NOW + 86400000).toISOString() };
   seedConfig(state.db, config);
+  state.db.prepare('INSERT INTO config_assignments(node_id,capture_config_id,assigned_at) VALUES (?,?,?)').run(config.node_id, config.capture_config_id, new Date(NOW).toISOString());
 });
 afterEach(() => { vi.restoreAllMocks(); state.db.close(); });
 
 async function upload(options: { version?: 1 | 2; config?: string; placement?: string; dataset?: string; seq?: number; utc?: number | null; uncertainty?: number | null; flags?: string[] } = {}) {
-  const version = options.version ?? 1;
+  const version = options.version ?? 2;
   const body = fixture(version === 2 ? 'ble-windows-v2.request' : 'ble-windows.request');
   Object.assign(body, { capture_config_id: options.config ?? 'field-config', dataset: options.dataset ?? 'field', batch_id: crypto.randomUUID(), boot_id: crypto.randomUUID() });
   if (options.placement) body.placement_id = options.placement;
@@ -85,7 +86,11 @@ describe('receipt-only public field aggregate fallback', () => {
     expect((await summary()).last_reported_sensor).toMatchObject({ seq: 1, received_at: ack.received_at });
   });
 
-  it('reads both validated protocol versions through the retained view', async () => {
+  it('reads validated v2 windows and withholds legacy v1 windows', async () => {
+    const legacy = { ...state.config, capture_config_id: 'legacy-field', dataset: 'field' as const };
+    seedConfig(state.db, legacy);
+    await upload({ version: 1, config: legacy.capture_config_id });
+    expect((await summary()).last_reported_sensor).toBeNull();
     const config = fixture('capture-config-v2.fixture');
     Object.assign(config, { capture_config_id: 'field-v2', dataset: 'field', accept_until: new Date(NOW + 86400000).toISOString() });
     seedConfig(state.db, config);
@@ -95,9 +100,10 @@ describe('receipt-only public field aggregate fallback', () => {
   });
 
   it('excludes demo, controlled tests, unknown quality flags and unknown places', async () => {
-    await upload({ config: state.config.capture_config_id, dataset: 'demo' });
-    const config = { ...state.config, capture_config_id: 'controlled-config', dataset: 'controlled_test' as const };
+    await upload({ version: 1, config: state.config.capture_config_id, dataset: 'demo' });
+    const config = { ...fixture('capture-config-v2.fixture'), capture_config_id: 'controlled-config', dataset: 'controlled_test' as const, accept_until: new Date(NOW + 86400000).toISOString() };
     seedConfig(state.db, config);
+    state.db.prepare('INSERT INTO config_assignments(node_id,capture_config_id,assigned_at) VALUES (?,?,?)').run(config.node_id, config.capture_config_id, new Date(NOW).toISOString());
     await upload({ config: config.capture_config_id, dataset: config.dataset });
     await upload({ flags: ['unknown_quality_flag'] });
     expect((await summary()).last_reported_sensor).toBeNull();
@@ -121,25 +127,25 @@ describe('receipt-only public field aggregate fallback', () => {
     expect(await readLastReportedSensor(state.env, 'east-parking', NOW + 2)).toBeNull();
     // End is exclusive: a queued record received at or after closure cannot
     // establish that its measurement belonged to the old physical placement.
-    state.db.prepare('UPDATE sensor_windows SET received_at=?').run(new Date(NOW + 1).toISOString());
+    state.db.prepare('UPDATE ingestion_items_v2 SET received_at=?').run(new Date(NOW + 1).toISOString());
     expect((await summary()).last_reported_sensor).toBeNull();
-    state.db.prepare('UPDATE sensor_windows SET received_at=?').run(new Date(NOW + 2).toISOString());
+    state.db.prepare('UPDATE ingestion_items_v2 SET received_at=?').run(new Date(NOW + 2).toISOString());
     expect((await summary()).last_reported_sensor).toBeNull();
   });
 
   it('requires receipt after placement start and exact registered placement/config scope', async () => {
     const { body } = await upload();
-    state.db.prepare('UPDATE sensor_windows SET received_at=?').run('1969-12-31T23:59:59.999Z');
+    state.db.prepare('UPDATE ingestion_items_v2 SET received_at=?').run('1969-12-31T23:59:59.999Z');
     expect((await summary()).last_reported_sensor).toBeNull();
-    state.db.prepare('UPDATE sensor_windows SET received_at=?').run(new Date(NOW + 1).toISOString());
+    state.db.prepare('UPDATE ingestion_items_v2 SET received_at=?').run(new Date(NOW + 1).toISOString());
     expect((await summary()).last_reported_sensor).toBeNull();
-    state.db.prepare('UPDATE sensor_windows SET received_at=?').run(new Date(NOW).toISOString());
+    state.db.prepare('UPDATE ingestion_items_v2 SET received_at=?').run(new Date(NOW).toISOString());
     // Corrupt scope with foreign keys off to verify the public reader itself
     // enforces the registry join rather than trusting a device-supplied label.
     state.db.exec('PRAGMA foreign_keys=OFF');
-    state.db.prepare('UPDATE sensor_windows SET capture_config_id=? WHERE boot_id=?').run('missing-config', body.boot_id);
+    state.db.prepare('UPDATE ingestion_items_v2 SET capture_config_id=? WHERE boot_id=?').run('missing-config', body.boot_id);
     expect((await summary()).last_reported_sensor).toBeNull();
-    state.db.prepare('UPDATE sensor_windows SET capture_config_id=? WHERE boot_id=?').run(state.config.capture_config_id, body.boot_id);
+    state.db.prepare('UPDATE ingestion_items_v2 SET capture_config_id=? WHERE boot_id=?').run(state.config.capture_config_id, body.boot_id);
     expect((await summary()).last_reported_sensor).toBeNull();
   });
 
@@ -148,8 +154,9 @@ describe('receipt-only public field aggregate fallback', () => {
       .run(state.config.placement_id, state.config.node_id, NOW - 1000, new Date(NOW).toISOString());
     state.db.prepare('INSERT INTO placements(id,node_id,place_id,valid_from_ms) VALUES (?,?,?,?)')
       .run('unlocated', state.config.node_id, null, NOW - 1000);
-    const config = { ...state.config, capture_config_id: 'unlocated-config', placement_id: 'unlocated', dataset: 'field' as const };
+    const config = { ...fixture('capture-config-v2.fixture'), capture_config_id: 'unlocated-config', placement_id: 'unlocated', dataset: 'field' as const, accept_until: new Date(NOW + 86400000).toISOString() };
     seedConfig(state.db, config);
+    state.db.prepare('INSERT INTO config_assignments(node_id,capture_config_id,assigned_at) VALUES (?,?,?)').run(config.node_id, config.capture_config_id, new Date(NOW).toISOString());
     await upload({ placement: 'unlocated', config: config.capture_config_id });
     expect((await summary()).last_reported_sensor).toBeNull();
   });

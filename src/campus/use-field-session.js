@@ -1,50 +1,61 @@
 import { useEffect, useRef, useState } from 'react';
-import { createFieldReader, FIELD_REFRESH_MS } from './field-data';
+import { createFieldReader, FIELD_REFRESH_MS, FIELD_HISTORY_REFRESH_MS } from './field-data';
 import { advanceLiveFieldRead } from './last-observation';
+import { createVisiblePoller } from './visible-polling';
 
 const empty = { data: null, loading: false, error: '', scope: '' };
 
-// One public read session powers both the shared axis and the detail cards.
+// One public read session powers the shared axis, detail cards and record form.
+// History has its own cadence; changing its range does not reread live data.
 // Cursor ownership stays with the parent so a refresh cannot move a scrubbed time.
 export function useFieldSession(placeId, enabled, minutes) {
   const [live, setLive] = useState(empty);
   const [history, setHistory] = useState(empty);
-  const [revision, setRevision] = useState(0);
   const [now, setNow] = useState(Date.now);
   const lastLive = useRef(null);
-  const scope = `${enabled ? placeId || '' : ''}:${minutes}`;
+  const livePoll = useRef(null), historyPoll = useRef(null);
+  const liveScope = enabled ? placeId || '' : '';
+  const historyScope = `${liveScope}:${minutes}`;
 
   useEffect(() => {
     if (!enabled || !placeId) return;
     if (lastLive.current?.placeId !== placeId) lastLive.current = null;
-    const publish = setter => next => setter(previous => ({ ...next,
-      data: next.loading && previous.scope === scope ? previous.data : next.data,
-      scope,
-    }));
-    const summaryReader = createFieldReader(next => {
+    const reader = createFieldReader(next => {
       const { cache, read } = advanceLiveFieldRead(next, lastLive.current, placeId, Date.now());
       lastLive.current = cache;
-      setLive({ ...read, scope });
+      setLive({ ...read, scope: liveScope });
     });
-    const historyReader = createFieldReader(publish(setHistory));
-    summaryReader.read({ placeId, mode: 'live' });
-    historyReader.read({ placeId, mode: 'replay', minutes });
-    return () => { summaryReader.cancel(); historyReader.cancel(); };
-  }, [placeId, enabled, minutes, revision, scope]);
+    const poll = createVisiblePoller(({ forceRefresh }) => reader.read({ placeId, mode: 'live', forceRefresh }), FIELD_REFRESH_MS);
+    livePoll.current = poll;
+    return () => { poll.stop(); reader.cancel(); if (livePoll.current === poll) livePoll.current = null; };
+  }, [placeId, enabled, liveScope]);
 
   useEffect(() => {
     if (!enabled || !placeId) return;
-    const refresh = () => { setNow(Date.now()); setRevision(value => value + 1); };
-    const visible = () => { if (document.visibilityState === 'visible') refresh(); };
-    const timer = setInterval(refresh, FIELD_REFRESH_MS);
-    const clock = setInterval(() => setNow(Date.now()), 1000);
-    window.addEventListener('focus', refresh);
-    document.addEventListener('visibilitychange', visible);
-    return () => { clearInterval(timer); clearInterval(clock); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', visible); };
+    const reader = createFieldReader(next => setHistory(previous => ({ ...next,
+      data: next.loading && previous.scope === historyScope ? previous.data : next.data,
+      scope: historyScope,
+    })));
+    const poll = createVisiblePoller(({ forceRefresh }) => reader.read({ placeId, mode: 'replay', minutes, forceRefresh }), FIELD_HISTORY_REFRESH_MS);
+    historyPoll.current = poll;
+    return () => { poll.stop(); reader.cancel(); if (historyPoll.current === poll) historyPoll.current = null; };
+  }, [placeId, enabled, minutes, historyScope]);
+
+  useEffect(() => {
+    if (!enabled || !placeId) return;
+    const tick = () => { if (document.visibilityState !== 'hidden') setNow(Date.now()); };
+    tick();
+    const clock = setInterval(tick, 1000);
+    document.addEventListener('visibilitychange', tick);
+    return () => { clearInterval(clock); document.removeEventListener('visibilitychange', tick); };
   }, [placeId, enabled]);
 
-  const current = state => state.scope === scope ? state : { ...empty, loading: enabled && !!placeId };
-  return { live: current(live), history: current(history), now,
-    refresh: () => { setNow(Date.now()); setRevision(value => value + 1); },
+  const current = (state, scope) => enabled && state.scope === scope ? state : { ...empty, loading: enabled && !!placeId };
+  return { live: current(live, liveScope), history: current(history, historyScope), now,
+    refresh: ({ afterPending = false } = {}) => {
+      setNow(Date.now());
+      livePoll.current?.refresh({ afterPending, forceRefresh: true });
+      historyPoll.current?.refresh({ afterPending, forceRefresh: true });
+    },
   };
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Clock, Info, Plus, Radio, ArrowClockwise, X } from '@phosphor-icons/react';
-import { latestManualObservations, normalizeFieldResponse, recordFreshness } from './field-data.js';
+import { latestManualObservations, recordFreshness } from './field-data.js';
+import { useFieldSession } from './use-field-session.js';
 import { formatObservationKinds, observationKinds, observationKindLabels } from '../shared/observation-kinds.js';
 import './observations.css';
 
@@ -16,13 +17,24 @@ async function request(path, init) {
 }
 const recordText = record => record.kind === 'parking' ? `${record.parking_min}–${record.parking_max} 辆` : `${record.wait_seconds} 秒`;
 
-export default function Observations({ open, onClose, initialPlaceId }) {
-  const [places, setPlaces] = useState([]), [placeId, setPlaceId] = useState('');
-  const [summary, setSummary] = useState(null), [history, setHistory] = useState([]), [minutes, setMinutes] = useState(15);
-  const [revision, setRevision] = useState(0), [loading, setLoading] = useState(false), [error, setError] = useState('');
+export default function Observations({ open, onClose, initialPlaceId, catalog, onCatalogRefresh, sharedSession, sharedPlaceId, sharedMinutes }) {
+  const places = catalog.places;
+  const [placeId, setPlaceId] = useState('');
+  const [minutes, setMinutes] = useState(15);
   const [token, setToken] = useState(''), [low, setLow] = useState(''), [high, setHigh] = useState(''), [wait, setWait] = useState('');
   const [saving, setSaving] = useState(false), [notice, setNotice] = useState('');
-  const [chosenKind, setChosenKind] = useState(''), [now, setNow] = useState(Date.now);
+  const [chosenKind, setChosenKind] = useState('');
+  // The map already owns live and timeline reads for its selected place. Its
+  // >=15-minute history also covers each record-form range; filter locally.
+  const sharesSession = placeId === sharedPlaceId && sharedMinutes >= minutes;
+  const ownSession = useFieldSession(placeId, open && !sharesSession, minutes);
+  const session = sharesSession ? sharedSession : ownSession;
+  const summary = session.live.data, now = session.now;
+  const historyData = session.history.data;
+  const cutoff = historyData ? Date.parse(historyData.to) - minutes * 60_000 : 0;
+  const history = historyData?.observations.filter(record => Date.parse(record.observed_at) >= cutoff) || [];
+  const loading = session.live.loading || session.history.loading;
+  const error = catalog.error || session.live.error || session.history.error;
   const pendingWrite = useRef(null), dialog = useRef(null);
   const place = places.find(item => item.id === placeId);
   const manualKinds = observationKinds(place).filter(kind => kind !== 'activity');
@@ -39,39 +51,9 @@ export default function Observations({ open, onClose, initialPlaceId }) {
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
-    const controller = new AbortController();
-    request('/places', { signal: controller.signal }).then(body => {
-      setPlaces(body.places);
-      setPlaceId(current => body.places.some(item => item.id === current) ? current : body.places[0]?.id || '');
-    }).catch(problem => { if (problem.name !== 'AbortError') setError('现场服务暂不可用，请稍后刷新；未使用模拟数据替代。'); });
-    return () => controller.abort();
-  }, [open, revision]);
-
-  useEffect(() => {
-    if (!open || !placeId) return;
-    const controller = new AbortController();
-    setLoading(true); setSummary(null); setHistory([]); setError('');
-    Promise.all([
-      request(`/places/${encodeURIComponent(placeId)}/summary`, { signal: controller.signal }),
-      request(`/places/${encodeURIComponent(placeId)}/history?minutes=${minutes}`, { signal: controller.signal }),
-    ]).then(([state, records]) => {
-      if (controller.signal.aborted) return;
-      setSummary(normalizeFieldResponse(state, { placeId, mode: 'live' }));
-      setHistory(normalizeFieldResponse(records, { placeId, mode: 'replay' }).observations);
-    })
-      .catch(problem => { if (!controller.signal.aborted) { setSummary(null); setHistory([]); setError('现场观察读取失败，请刷新后重试。'); } })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [open, placeId, minutes, revision]);
-
-  useEffect(() => {
-    if (!open) return;
-    const id = setInterval(() => setRevision(value => value + 1), 30000);
-    const clock = setInterval(() => setNow(Date.now()), 1000);
-    setNow(Date.now());
-    return () => { clearInterval(id); clearInterval(clock); };
-  }, [open]);
+    if (!open || !places.length) return;
+    setPlaceId(current => places.some(item => item.id === current) ? current : places[0]?.id || '');
+  }, [open, places]);
 
   useEffect(() => {
     if (!open) return;
@@ -100,7 +82,7 @@ export default function Observations({ open, onClose, initialPlaceId }) {
     try {
       const receipt = await request('/observations', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: pendingWrite.current.body });
       if (receipt.durability !== 'committed' || receipt.observation?.id !== JSON.parse(pendingWrite.current.body).id) throw new Error('服务端尚未确认持久保存');
-      pendingWrite.current = null; setNotice('记录已获服务端确认'); setRevision(value => value + 1);
+      pendingWrite.current = null; setNotice('记录已获服务端确认'); session.refresh({ afterPending: true });
     } catch (problem) { setNotice(`${problem.message} · 可重试同一条记录。`); }
     finally { setSaving(false); }
   };
@@ -110,7 +92,7 @@ export default function Observations({ open, onClose, initialPlaceId }) {
     try {
       const receipt = await request(`/observations/${encodeURIComponent(latest.id)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
       if (receipt.durability !== 'committed' || receipt.observation?.status !== 'cancelled') throw new Error('服务端尚未确认撤销');
-      setNotice('记录已撤销，服务端已确认'); setRevision(value => value + 1);
+      setNotice('记录已撤销，服务端已确认'); session.refresh({ afterPending: true });
     } catch (problem) { setNotice(problem.message); }
     finally { setSaving(false); }
   };
@@ -121,7 +103,7 @@ export default function Observations({ open, onClose, initialPlaceId }) {
       <div className="observation-title"><div><span className="observation-eyebrow"><Radio size={12} />现场数据 · 独立记录流</span><h2 id="observations-title">现场观察与记录</h2></div><button className="icon-button" aria-label="关闭记录表单" onClick={onClose}><X size={21} /></button></div>
       <p className="observation-boundary"><Info size={15} /><span>此目录包含全部现场地点；地图仅显示已核验且位于当前视图范围内的 GIS 锚点。人工记录不代表传感器覆盖，BLE 可见标识不等于人数。</span></p>
       <label className="observation-field">记录地点<select aria-label="记录地点" value={placeId} onChange={event => { setPlaceId(event.target.value); setNotice(''); }} disabled={saving || !places.length}>{!places.length && <option value="">等待现场服务</option>}{places.map(item => <option key={item.id} value={item.id}>{item.name} · {formatObservationKinds(item)}</option>)}</select></label>
-      <div className="observation-section-heading"><h3>{place?.name || '现场观察'}</h3><button className="observation-refresh" onClick={() => setRevision(value => value + 1)} disabled={loading || saving} aria-label="刷新现场观察"><ArrowClockwise size={14} />刷新</button></div>
+      <div className="observation-section-heading"><h3>{place?.name || '现场观察'}</h3><button className="observation-refresh" onClick={() => { session.refresh(); onCatalogRefresh(); }} disabled={loading || saving} aria-label="刷新现场观察"><ArrowClockwise size={14} />刷新</button></div>
       {error && <p className="observation-error" role="status">{error}</p>}
       <div className="observation-summary" aria-live="polite">
         {loading ? <p>正在读取服务端记录…</p> : error ? <strong>现场数据不可用</strong> : displayedKinds.length ? displayedKinds.map(kind => {
@@ -131,7 +113,7 @@ export default function Observations({ open, onClose, initialPlaceId }) {
             {record ? <><div className="observation-value"><strong>{recordText(record)}</strong><span className={fresh ? 'record-fresh' : 'record-stale'}>{fresh ? '有效观察' : '历史观察'}</span></div><p>来源：人工现场记录 · {kind === 'parking' ? '数量范围' : '本次已完成候梯时长，不是当前预测'}</p><p>观测于 {stamp(record.observed_at)}<br />有效至 {stamp(record.valid_until)}（北京时间）</p></> : <p>暂无人工现场记录；空白不表示无人或空闲。</p>}
           </article>;
         }) : <><strong>暂无人工现场记录</strong><p>设备窗口请在地图地点详情查看；空白不表示无人或空闲。</p></>}
-        {summary && <small>服务端状态时间 {stamp(summary.as_of)} · 每 30 秒刷新</small>}
+        {summary && <small>服务端状态时间 {stamp(summary.as_of)} · 最新观察每 30 秒、历史每 2 分钟刷新</small>}
       </div>
       <div className="observation-history-heading"><span><Clock size={13} />最近记录</span><div role="group" aria-label="现场记录时间范围">{[1, 5, 15].map(value => <button key={value} className={minutes === value ? 'active' : ''} aria-pressed={minutes === value} onClick={() => setMinutes(value)}>近 {value} 分钟</button>)}</div></div>
       <div className="observation-history">{!history.length ? <p>所选时段暂无可展示记录</p> : history.map(record => <div key={record.id}><span>{stamp(record.observed_at)}<small>{observationKindLabels[record.kind]} · 人工记录{record.status === 'cancelled' ? ' · 已撤销' : ''}</small></span><strong>{recordText(record)}</strong></div>)}</div>

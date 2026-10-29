@@ -120,16 +120,34 @@ describe('device HTTP ingestion', () => {
 });
 
 describe('public field sensor projection', () => {
-  it('withholds uncertain clocks, unknown quality flags and data captured after a placement closure', async () => {
-    const config = structuredClone(state.config); config.capture_config_id = 'field'; config.dataset = 'field';
+  const uploadPublic = async (value: any) => {
+    const bytes = JSON.stringify(value);
+    return request('/api/v2/ingest', { method: 'POST', body: bytes, headers: {
+      Authorization: `Bearer ${DEVICE_TOKEN}`, 'Content-Type': 'application/json',
+      'X-Body-SHA256': await sha256(new TextEncoder().encode(bytes)),
+    } });
+  };
+  const seedPublic = (config: any) => {
+    config.accept_until = new Date(Date.now() + 86400000).toISOString();
     seedConfig(state.db, config);
+    state.db.prepare('INSERT INTO config_assignments(node_id,capture_config_id,assigned_at) VALUES (?,?,?)')
+      .run(config.node_id, config.capture_config_id, new Date().toISOString());
+  };
+  beforeEach(() => {
+    const config = fixture('capture-config-v2.fixture');
+    config.accept_until = new Date(Date.now() + 86400000).toISOString();
+    seedPublic(config);
+  });
+  it('withholds uncertain clocks, unknown quality flags and data captured after a placement closure', async () => {
+    const config = fixture('capture-config-v2.fixture'); config.capture_config_id = 'field'; config.dataset = 'field';
+    seedPublic(config);
     const now = Date.now();
     const sendWindow = async (uncertainty: number | null, flags: string[] = []) => {
-      const body = fixture('ble-windows.request');
+      const body = fixture('ble-windows-v2.request');
       Object.assign(body, { dataset: 'field', capture_config_id: 'field', batch_id: crypto.randomUUID(), boot_id: crypto.randomUUID() });
       Object.assign(body.items[0].time, { utc_ms: now, uncertainty_ms: uncertainty });
       body.items[0].quality_flags = flags;
-      expect((await upload(body)).status).toBe(200);
+      expect((await uploadPublic(body)).status).toBe(200);
     };
     await sendWindow(null);
     await sendWindow(30001);
@@ -142,38 +160,38 @@ describe('public field sensor projection', () => {
   });
 
   it('uses capture time for stale backfill without inventing people counts', async () => {
-    const config = structuredClone(state.config); config.capture_config_id = 'field'; config.dataset = 'field';
-    seedConfig(state.db, config);
-    const body = fixture('ble-windows.request');
+    const config = fixture('capture-config-v2.fixture'); config.capture_config_id = 'field'; config.dataset = 'field';
+    seedPublic(config);
+    const body = fixture('ble-windows-v2.request');
     Object.assign(body, { dataset: 'field', capture_config_id: 'field' });
     Object.assign(body.items[0].time, { utc_ms: Date.now() - 180000, uncertainty_ms: 20 });
-    expect((await upload(body)).status).toBe(200);
+    expect((await uploadPublic(body)).status).toBe(200);
     const summary = await (await request('/api/v1/places/library/summary')).json();
     expect(summary).toMatchObject({ freshness: 'stale', sensor: { freshness: 'stale' } });
     expect(JSON.stringify(summary)).not.toContain('people_count');
   });
 
   it('keeps demo, controlled tests, unknown UTC, stale and placement changes distinct', async () => {
-    const body = fixture('ble-windows.request');
+    const body = fixture('ble-windows-v2.request');
     const now = Date.now();
     body.items[0].time.utc_ms = now;
     body.items[0].time.uncertainty_ms = 20;
-    await upload(body);
+    await uploadPublic(body);
     expect(await (await request('/api/v1/places/library/summary')).json()).toMatchObject({ sensor: null });
     for (const dataset of ['controlled_test', 'field'] as const) {
-      const config = structuredClone(state.config); config.capture_config_id = dataset; config.dataset = dataset;
-      seedConfig(state.db, config);
+      const config = fixture('capture-config-v2.fixture'); config.capture_config_id = dataset; config.dataset = dataset;
+      seedPublic(config);
       const value = { ...body, capture_config_id: dataset, dataset, batch_id: crypto.randomUUID(), boot_id: crypto.randomUUID() };
       value.items[0].time.utc_ms = dataset === 'field' ? null : now;
       value.items[0].time.uncertainty_ms = dataset === 'field' ? null : 20;
-      expect((await upload(value)).status).toBe(200);
+      expect((await uploadPublic(value)).status).toBe(200);
     }
     expect(await (await request('/api/v1/places/library/summary')).json()).toMatchObject({ sensor: null });
     body.dataset = 'field'; body.capture_config_id = 'field'; body.batch_id = crypto.randomUUID(); body.boot_id = crypto.randomUUID();
     body.items[0].time.utc_ms = now; body.items[0].time.uncertainty_ms = 20;
-    expect((await upload(body)).status).toBe(200);
+    expect((await uploadPublic(body)).status).toBe(200);
     const summary = await (await request('/api/v1/places/library/summary')).json();
-    expect(summary).toMatchObject({ freshness: 'fresh', sensor: { dataset: 'field', source: 'sensor', visible_identifiers: 12 } });
+    expect(summary).toMatchObject({ freshness: 'fresh', sensor: { dataset: 'field', source: 'sensor', visible_identifiers: body.items[0].visible_identifiers } });
     expect(JSON.stringify(summary)).not.toMatch(/payload_hex|identity|raw_object_key/);
     const history = await (await request('/api/v1/places/library/history')).json();
     expect(history).toMatchObject({ sensor_windows: [{ dataset: 'field' }], sensor_truncated: false });

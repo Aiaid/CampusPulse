@@ -1,5 +1,8 @@
 // Public field reads only. Synthetic scene data must never enter this module.
 export const FIELD_REFRESH_MS = 30_000;
+export const FIELD_HISTORY_REFRESH_MS = 120_000;
+export const FIELD_CATALOG_REFRESH_MS = 300_000;
+export const FIELD_READ_TIMEOUT_MS = 45_000;
 const ranges = [1, 5, 15, 60, 1440];
 const timestamp = value => typeof value === 'string' && Number.isFinite(Date.parse(value));
 const integer = value => Number.isInteger(value) && value >= 0;
@@ -144,16 +147,27 @@ export function createFieldReader(onState, fetcher = (...args) => fetch(...args)
       const controller = new AbortController();
       active = controller;
       const requestId = ++generation;
-      const current = () => requestId === generation && !controller.signal.aborted;
+      let timedOut = false, timeout;
+      const current = () => requestId === generation && (!controller.signal.aborted || timedOut);
       onState({ loading: true, data: null, error: '' });
       try {
-        const response = await fetcher(fieldReadPath(options.placeId, options.mode, options.minutes), { signal: controller.signal, cache: 'no-store' });
-        if (!response.ok) throw new Error(`现场读取失败（${response.status}）`);
-        const data = normalizeFieldResponse(await response.json(), options);
+        const data = await Promise.race([
+          (async () => {
+            const response = await fetcher(fieldReadPath(options.placeId, options.mode, options.minutes), {
+              signal: controller.signal,
+              ...(options.forceRefresh ? { headers: { 'Cache-Control': 'no-cache' } } : {}),
+            });
+            if (!response.ok) throw new Error(`现场读取失败（${response.status}）`);
+            return normalizeFieldResponse(await response.json(), options);
+          })(),
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => { timedOut = true; reject(new Error('现场读取超时，请刷新重试')); controller.abort(); }, FIELD_READ_TIMEOUT_MS);
+          }),
+        ]);
         if (current()) onState({ loading: false, data, error: '' });
       } catch (problem) {
         if (current()) onState({ loading: false, data: null, error: problem instanceof Error ? problem.message : '现场读取失败' });
-      }
+      } finally { clearTimeout(timeout); }
     },
     cancel() { generation += 1; active?.abort(); active = null; },
   };

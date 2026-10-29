@@ -259,6 +259,25 @@ describe('public automatic vehicle projection', () => {
     expect((await read()).vehicles).toMatchObject({ status: 'unavailable', reason: 'input_limit_exceeded', candidate_count: null });
   });
 
+  it('uses the unique private window identity index without the redundant prefix index', async () => {
+    await seed([compact({ name_brand_mask: 1 })]);
+    state.db.exec('DROP INDEX IF EXISTS ingestion_items_v2_window');
+    const plans: string[] = [], original = state.env.DB.prepare.bind(state.env.DB);
+    state.env.DB.prepare = ((sql: string) => {
+      const statement = original(sql), bind = statement.bind.bind(statement);
+      statement.bind = ((...values: unknown[]) => {
+        if (sql.includes("i.stream='address_summaries'")) {
+          plans.push(...state.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...values as []).map(row => String(row.detail)));
+        }
+        return bind(...values as []);
+      }) as typeof statement.bind;
+      return statement;
+    }) as typeof state.env.DB.prepare;
+    expect((await read()).vehicles).toMatchObject({ status: 'candidate_estimate', candidate_count: 1 });
+    expect(plans.join('\n')).toMatch(/SEARCH i USING INDEX sqlite_autoindex_ingestion_items_v2_2 \(node_id=\? AND boot_id=\? AND stream=\? AND window_seq=\?\)/);
+    expect(plans.join('\n')).not.toMatch(/SCAN i|ingestion_items_v2_expiry/);
+  });
+
   it('propagates storage errors instead of disguising them as no evidence', async () => {
     state.db.exec('DROP TABLE observations');
     await expect(read()).rejects.toThrow(/observations/);

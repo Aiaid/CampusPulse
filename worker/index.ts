@@ -6,6 +6,7 @@ import { readLastReportedSensor, readPublicWindows } from './sensors';
 import { expireIngestion } from './retention';
 import { handleAdmin, readPublicSettings, readRuntimeSettings } from './admin';
 import { readAutomaticObservations } from './place-inference';
+import { cachePublicRead } from './public-cache';
 
 const MAX_BODY = 8192;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -197,8 +198,9 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     await expireIngestion(env);
   },
-  async fetch(request: Request, env: Env): Promise<Response> {
-    return handleDocs(request) ?? await handleApi(request, env) ?? (env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 }));
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
+    return cachePublicRead(request, async () => handleDocs(request) ?? await handleApi(request, env)
+      ?? (env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 })), ctx);
   },
 };
 

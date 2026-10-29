@@ -28,6 +28,8 @@ jobs:
         run: node scripts/ingest-runtime-smoke.mjs
       - name: Verify device v2 against local workerd D1 and R2
         run: node scripts/device-v2-runtime-smoke.mjs
+      - name: Verify D1 write usage and preservation across index migration
+        run: node scripts/d1-usage-smoke.mjs
       - name: Verify MQTT gateway protocol, registry RPC and replay bounds
         run: |
           node --test relay/emqx-cloud/test/*.test.mjs

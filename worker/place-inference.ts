@@ -87,11 +87,11 @@ async function readVehicles(env: Env, place: Place, windows: PublicSensorWindow[
   // Re-read immutable placement scope and the actual window. The public DTO
   // intentionally omits mono/epoch and cannot establish cross-stream equality.
   const metadata = await env.DB.prepare(`SELECT w.item_json,c.config_json,p.observation_kinds_json
-    FROM all_sensor_windows w
+    FROM ingestion_items_v2 w
     JOIN placements p ON p.id=w.placement_id AND p.node_id=w.node_id
     JOIN capture_configs c ON c.id=w.capture_config_id AND c.node_id=w.node_id
     LEFT JOIN placement_closures pc ON pc.placement_id=p.id AND pc.node_id=p.node_id
-    WHERE w.node_id=? AND w.boot_id=? AND w.placement_id=? AND w.capture_config_id=? AND w.seq=?
+    WHERE w.stream='ble_windows' AND w.node_id=? AND w.boot_id=? AND w.placement_id=? AND w.capture_config_id=? AND w.seq=?
       AND p.place_id=? AND w.dataset='field' AND w.expires_at_ms>? AND w.received_at<=?
       AND w.utc_ms-w.duration_ms-? >= p.valid_from_ms
       AND w.utc_ms+? <= COALESCE(pc.valid_until_ms,p.valid_until_ms,9223372036854775807)
@@ -113,11 +113,11 @@ async function readVehicles(env: Env, place: Place, windows: PublicSensorWindow[
   if (source.visible_identifiers > 64 || source.visible_identifiers > config.summary.max_addresses) {
     return { ...result, reason: 'input_limit_exceeded' };
   }
-  // Fix the outer lookup to the existing node/boot/stream/window index. Without
+  // Keep the private lookup outermost on the node/boot/stream/window key. Without
   // this join order SQLite may scan a node's retained receipt history first.
   const rows = await env.DB.prepare(`SELECT i.item_json,i.seq,i.utc_ms,i.duration_ms,i.window_seq,i.address,i.address_type,
       b.node_id,b.boot_id,b.placement_id,b.capture_config_id,b.dataset,b.batch_id,b.firmware_version
-    FROM ingestion_items_v2 i INDEXED BY ingestion_items_v2_window CROSS JOIN ingestion_batches_v2 b
+    FROM ingestion_items_v2 i CROSS JOIN ingestion_batches_v2 b
       ON b.node_id=i.node_id AND b.batch_id=i.batch_id AND b.boot_id=i.boot_id
       AND b.placement_id=i.placement_id AND b.capture_config_id=i.capture_config_id AND b.dataset=i.dataset
     WHERE i.node_id=? AND i.boot_id=? AND i.placement_id=? AND i.capture_config_id=? AND i.window_seq=?

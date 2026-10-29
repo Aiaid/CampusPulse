@@ -11,6 +11,8 @@ import Observations from './Observations';
 import FieldDataPanel from './FieldDataPanel';
 import FieldTimeline from './FieldTimeline';
 import { useFieldSession } from './use-field-session';
+import { createVisiblePoller } from './visible-polling';
+import { FIELD_CATALOG_REFRESH_MS, FIELD_READ_TIMEOUT_MS } from './field-data';
 import { initialDataMode } from './data-mode';
 import { fieldIllustration as deriveFieldIllustration } from './field-illustration.js';
 import './data-mode.css';
@@ -35,6 +37,8 @@ export function App({ defaultMode = 'field', siteName = 'CampusPulse' } = {}) {
   const [fieldMinutes, setFieldMinutes] = useState(60);
   const [fieldCursor, setFieldCursor] = useState({ placeId: '', time: null });
   const [fieldCatalog, setFieldCatalog] = useState({ places: [], loading: true, error: '' });
+  const catalogPoll = useRef(null);
+  const refreshCatalog = useCallback(() => catalogPoll.current?.refresh({ forceRefresh: true }), []);
   const fieldRegistry = useMemo(() => fieldPlaceRegistry(fieldCatalog.places), [fieldCatalog.places]);
   const mapPlaces = demo ? places : fieldRegistry.mapPlaces;
   const [lighting, setLighting] = useState('campus');
@@ -102,12 +106,15 @@ export function App({ defaultMode = 'field', siteName = 'CampusPulse' } = {}) {
   useEffect(() => {
     if (demo) return;
     let controller;
-    const refresh = async () => {
+    const refresh = async ({ forceRefresh = false } = {}) => {
       controller?.abort();
       controller = new AbortController();
       const requestController = controller;
       try {
-        const response = await fetch('/api/v1/places', { signal: requestController.signal, cache: 'no-store' });
+        const response = await fetch('/api/v1/places', {
+          signal: AbortSignal.any([requestController.signal, AbortSignal.timeout(FIELD_READ_TIMEOUT_MS)]),
+          ...(forceRefresh ? { headers: { 'Cache-Control': 'no-cache' } } : {}),
+        });
         if (!response.ok) throw new Error('Places service unavailable');
         const body = await response.json();
         if (!Array.isArray(body.places)) throw new Error('Invalid places response');
@@ -117,10 +124,9 @@ export function App({ defaultMode = 'field', siteName = 'CampusPulse' } = {}) {
       }
     };
     setFieldCatalog(current => ({ ...current, loading: true, error: '' }));
-    refresh();
-    const timer = setInterval(refresh, 30000);
-    window.addEventListener('focus', refresh);
-    return () => { controller?.abort(); clearInterval(timer); window.removeEventListener('focus', refresh); };
+    const poll = createVisiblePoller(refresh, FIELD_CATALOG_REFRESH_MS);
+    catalogPoll.current = poll;
+    return () => { poll.stop(); controller?.abort(); if (catalogPoll.current === poll) catalogPoll.current = null; };
   }, [demo]);
   useEffect(() => {
     if (!demo && (fieldCatalog.loading || fieldCatalog.error)) return;
@@ -197,8 +203,8 @@ export function App({ defaultMode = 'field', siteName = 'CampusPulse' } = {}) {
       <div className="detail-footer"><button className="primary-button" disabled={!selected} onClick={() => demo ? setTrendOpen(value => !value) : openRecords()}>{!demo ? <><Plus size={18} />{!observationKinds(selected).some(kind => kind !== 'activity') ? '查看现场记录' : '添加现场记录'}<ArrowUpRight size={18} /></> : trendOpen ? <><ArrowLeft size={18} />返回局部视图</> : <><Clock size={18} />查看时段变化<ArrowUpRight size={18} /></>}</button><div className="data-meta"><span><span className="status-dot" />{demo ? scenario.label : replay ? '实测回放' : '现场视图'}</span><span>{demo ? `所选时段 ${timeText(minute)}` : replay ? '历史观测 · 非当前状态' : '按来源独立标记有效期'}</span></div></div>
     </aside>
     <footer className="bottom-dock"><div className="timeline-main">{!demo ? <FieldTimeline history={fieldSession.history.data} now={fieldSession.now} cursor={cursor} onSeek={seekField} onLive={returnLive} loading={fieldSession.history.loading} error={fieldSession.history.error} minutes={fieldMinutes} onRangeChange={value => { setFieldMinutes(value); returnLive(); }} /> : <><div className="timeline-label"><Clock size={19} /><div><strong>{yearText}{dateText}</strong><span>{timeText(demo ? minute : clockMinute)} <span className="time-label-tag">{demo ? '模拟回放' : '当前时间'}</span></span></div></div><button disabled={!demo} className={`play-button ${playing ? 'playing' : ''}`} aria-label={playing ? '暂停时段回放' : '播放时段回放'} title="控制所选时段的变化；人物与车辆的移动由场景设置单独控制" onClick={() => setPlaying(p => !p)}>{playing ? <Pause size={18} weight="fill" /> : <Play size={18} weight="fill" />}</button><div className="timeline-track"><div className="range-current" style={{ left: `${((demo ? minute : Math.min(1320, Math.max(420, clockMinute))) - 420) / 900 * 100}%` }}>{demo ? timeText(minute) : '现场'}</div><input disabled={!demo} type="range" min="420" max="1320" step="5" value={demo ? minute : Math.min(1320, Math.max(420, clockMinute))} onChange={e => { setMinute(Number(e.target.value)); setPlaying(false); }} aria-label="模拟回放时间" aria-valuetext={demo ? timeText(minute) : '现场模式不回放'} /><div className="time-ticks">{[420, 600, 780, 960, 1140, 1320].map(t => <span key={t}>{timeText(t)}</span>)}</div></div><div className="time-presets" role="group" aria-label="模拟时段快捷选择">{presets.map(p => <button disabled={!demo} key={p.minute} className={minute === p.minute ? 'active' : ''} onClick={() => { setMinute(p.minute); setPlaying(false); }}>{p.label}</button>)}</div></>}</div><div className="dock-bottom"><div className="layer-controls" role="group" aria-label="地图信息图层">{layerDefs.map(({ key, label, Icon }) => <button key={key} className={`layer-toggle ${key} ${layers[key] ? 'enabled' : ''}`} aria-pressed={layers[key]} onClick={() => setLayers(l => ({ ...l, [key]: !l[key] }))}><span className="layer-check">{layers[key] && <Check size={10} weight="bold" />}</span><Icon size={21} weight="duotone" /><span>{label}</span></button>)}</div><button className="data-notice" onClick={() => setNoticeOpen(true)}><Info size={13} /><span>{demo ? '模拟数据 · 非个体定位' : replay ? '实测历史 · 非当前状态' : '现场数据 · 独立记录'}</span></button><span className="map-attribution">底图：华师公开 GIS · 官方在线瓦片</span></div></footer>
-    </div>{noticeOpen && <div className="modal-backdrop" onClick={() => setNoticeOpen(false)}><section ref={dialogRef} className="notice-dialog" role="dialog" aria-modal="true" aria-labelledby="notice-title" onClick={e => e.stopPropagation()}><button className="icon-button modal-close" aria-label="关闭数据说明" onClick={() => setNoticeOpen(false)}><X size={20} /></button><span className="notice-icon"><Info size={27} weight="duotone" /></span><h2 id="notice-title">这张地图展示了什么？</h2><p>校园底图、已核对的建筑轮廓与地点锚点来自华师公开 GIS。模拟模式下，人物、电动车、活跃程度、变化趋势、停放占用和候梯时间均为合成示意；现场模式隐藏这些示意指标。教学日、周末与雨天场景是独立编写的全天演示曲线，不表示实际天气或日程。</p><p>示意人物不对应真实个人或车辆，也不表示精确位置和数量；未核实各楼栋的电梯设施。暂无测量数据的区域不能解释为无人或空闲。</p><p>骑乘车辆表示行驶示意，无人车辆表示停放示意，不代表实际通行方向或停车范围。夜间灯光为视觉示意，建筑透视用于查看后方活动，均不表示现场照明或建筑内部情况。</p><p>地图使用华师官方在线瓦片，仅显示当前有限视口；局部道路与场景活动仍需逐项核对，不提供真实导航，未验证经纬度配准。</p><p>现场模式从服务端读取地点，仅把已核验且在当前视图范围内的 GIS 锚点放到地图，每 30 秒及返回页面时更新。示意锚点不用于官方地图定位；其余地点仍可在现场记录目录中选择。人工候梯记录不是当前预测。实测回放只查询服务端保留的历史记录，不还原人员或车辆轨迹；模拟回放仍是独立合成数据。</p><button className="primary-button" onClick={() => setNoticeOpen(false)}>了解，继续探索</button></section></div>}
-    <Observations open={recordsOpen} onClose={closeRecords} initialPlaceId={!demo ? selected?.id : undefined} />
+    </div>{noticeOpen && <div className="modal-backdrop" onClick={() => setNoticeOpen(false)}><section ref={dialogRef} className="notice-dialog" role="dialog" aria-modal="true" aria-labelledby="notice-title" onClick={e => e.stopPropagation()}><button className="icon-button modal-close" aria-label="关闭数据说明" onClick={() => setNoticeOpen(false)}><X size={20} /></button><span className="notice-icon"><Info size={27} weight="duotone" /></span><h2 id="notice-title">这张地图展示了什么？</h2><p>校园底图、已核对的建筑轮廓与地点锚点来自华师公开 GIS。模拟模式下，人物、电动车、活跃程度、变化趋势、停放占用和候梯时间均为合成示意；现场模式隐藏这些示意指标。教学日、周末与雨天场景是独立编写的全天演示曲线，不表示实际天气或日程。</p><p>示意人物不对应真实个人或车辆，也不表示精确位置和数量；未核实各楼栋的电梯设施。暂无测量数据的区域不能解释为无人或空闲。</p><p>骑乘车辆表示行驶示意，无人车辆表示停放示意，不代表实际通行方向或停车范围。夜间灯光为视觉示意，建筑透视用于查看后方活动，均不表示现场照明或建筑内部情况。</p><p>地图使用华师官方在线瓦片，仅显示当前有限视口；局部道路与场景活动仍需逐项核对，不提供真实导航，未验证经纬度配准。</p><p>现场模式从服务端读取地点，仅把已核验且在当前视图范围内的 GIS 锚点放到地图；地点目录每 5 分钟、实时观察每 30 秒、历史每 2 分钟更新，返回页面时刷新。示意锚点不用于官方地图定位；其余地点仍可在现场记录目录中选择。人工候梯记录不是当前预测。实测回放只查询服务端保留的历史记录，不还原人员或车辆轨迹；模拟回放仍是独立合成数据。</p><button className="primary-button" onClick={() => setNoticeOpen(false)}>了解，继续探索</button></section></div>}
+    <Observations open={recordsOpen} onClose={closeRecords} initialPlaceId={!demo ? selected?.id : undefined} catalog={fieldCatalog} onCatalogRefresh={refreshCatalog} sharedSession={fieldSession} sharedPlaceId={!demo ? selected?.id : undefined} sharedMinutes={fieldMinutes} />
     <div className="sr-only" role="status">当前{isDark ? '夜间' : '日间'}模式，{demo ? `模拟场景 ${scenario.label}，模拟时间 ${timeText(minute)}` : replay ? '实测回放，历史记录非当前状态' : fieldIllustration ? '现场观察，观测输入驱动推测场景' : '现场观察，合成活动已隐藏'}，地点 {selected?.name || '暂无已定位的现场地点'}</div>
   </main>;
 }

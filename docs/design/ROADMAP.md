@@ -16,6 +16,15 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
+- [ ] 2026-10-29: Reduce production D1 usage without changing v2 collection or
+      retained v2 evidence. Replace public whole-history/expiry scans with
+      indexed v2-only reads, pause hidden/overlapping frontend polling and avoid
+      unnecessary history refreshes. Reduce redundant index and transactional
+      bookkeeping writes while retaining receipt idempotency, per-window caps,
+      replay rejection and atomic commits. The user permits discarding v1 data;
+      no v1-to-v2 history migration is required. Validate real read/write metrics
+      before and after coordinated production deployment.
+
 - [ ] 2026-10-29 follow-up: reproduce the Chrome existing-device Wi-Fi
       reconfiguration `storage_unavailable` failure, repair its actual cause and
       verify the production flow without rotating credentials. Replace the
