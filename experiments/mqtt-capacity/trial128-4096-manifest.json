@@ -1,0 +1,71 @@
+{
+  "evidence": "Offline synthetic workload only; actual production C collector/codec with host ASAN+UBSAN; no ESP32 heap or radio acceptance",
+  "profile": "CP_CAPACITY_PROFILE=128-trial",
+  "clock": "known",
+  "cases": 12,
+  "addresses": 128,
+  "window_bin_seconds": [
+    [
+      30,
+      10
+    ],
+    [
+      60,
+      20
+    ],
+    [
+      120,
+      40
+    ]
+  ],
+  "reception_hz_per_address": [
+    1,
+    2,
+    5,
+    10
+  ],
+  "raw": false,
+  "max_body_bytes": 4096,
+  "compiled_address_limit": 128,
+  "collector_static_core_c3_bytes": 16384,
+  "ram_formula": "16384 + 2 * selected_addresses * bin_count * 4 + 780",
+  "collector_group_c3_bytes": 20236,
+  "stream_order": [
+    "ble_windows",
+    "address_summaries",
+    "ble_reports",
+    "node_status"
+  ],
+  "source_sha256": {
+    "experiments/mqtt-capacity/codec-matrix.c": "56ff32453bc18ea1e8b821c16dd3802a28738f3e579a502c671bff1cd9ab86b7",
+    "experiments/mqtt-capacity/run-codec.sh": "24aeddcbd65f6ca695dc387bbcbf5d106e160a0685a2f795ab737a2fab5f6baf",
+    "firmware/components/cp_pipeline/codec.c": "8fa7f029cd6fb4b714a4fe7b0d5e420f088af2bab0369d0cf59b3d398e93c565",
+    "firmware/components/cp_pipeline/codec_status.c": "40130a88cc5d882a47dbe99ab92879fea08d0d339c61fe3d2c2459558cce9329",
+    "firmware/components/cp_pipeline/include/cp_codec.h": "bb03911590077e80d52e51123532f4b57fbc2a80039e7e3e1762e6eb73012725",
+    "firmware/components/cp_collect/cp_collect.c": "6570561f4168d22ae6665141fa25ecc73fd0afbbb9542321fa502ccfda2cd1cb",
+    "firmware/components/cp_collect/include/cp_collect.h": "9d0a51930f484c2600bc54850d8d6fbf577dadecb4e9a69a04bee11e3bc75adc",
+    "firmware/components/cp_vehicle/cp_vehicle.c": "ab75cec4b6182cf3fbec62530fabe785c01795fef90d7941ddaf4d9edc2d4947",
+    "firmware/components/cp_vehicle/include/cp_vehicle.h": "4120ebcc7db7912328812c31b9f0e2254b0d72f6db591f60412d2a66571bd2b1"
+  },
+  "cjson": {
+    "idf_tag": "v5.5.3",
+    "revision": "c859b25da02955fef659d658b8f324b5cde87be3",
+    "sha256": "298581a04a36c0165da4b0aade235c23088cb2faa58651d720ea2f3706ed0b0d"
+  },
+  "fixture_sha256": "b03d1436bb6ac3956a6677d5cb7db6b137157ae8b6538f77e4af89e525557a8f",
+  "validation": {
+    "asan_ubsan": true,
+    "exact_stream_items": [
+      1,
+      128,
+      0,
+      1
+    ],
+    "rejected_address_capacities": [
+      129,
+      256
+    ],
+    "native_256_support": false
+  },
+  "host_allocator": "Requested host cJSON bytes only; excludes ESP32 allocator overhead, fragmentation, stacks and transport"
+}

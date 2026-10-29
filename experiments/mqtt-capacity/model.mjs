@@ -23,6 +23,19 @@ export function webhookBytes(bodyBytes) {
   }));
 }
 
+// Static cores are sized by the compiled ceiling; dynamic bin banks are sized
+// by the selected policy. The 256 result is arithmetic only, never native support.
+export function projectCollectorRam(policyAddresses, binCount, compiledAddressLimit) {
+  if (![policyAddresses, binCount, compiledAddressLimit].every(Number.isInteger) ||
+      policyAddresses < 1 || policyAddresses > compiledAddressLimit ||
+      binCount < 1 || binCount > 16 || compiledAddressLimit < 1)
+    throw new Error('Invalid collector RAM projection');
+  return {
+    bytes: compiledAddressLimit * 2 * 64 + 2 * policyAddresses * binCount * 4 + 780,
+    native_supported_ceiling: [64, 128].includes(compiledAddressLimit),
+  };
+}
+
 export function calculate(input, options = {}) {
   const o = {...defaults, ...options};
   for (const [key, value] of Object.entries(o)) {
@@ -31,9 +44,21 @@ export function calculate(input, options = {}) {
   if (!o.days || !o.rpcMs || o.retryMultiplier < 1 || o.criticalPct > 100)
     throw new Error('Invalid service or retention input');
   const {addresses, window_seconds: seconds, body_sizes: sizes} = input;
-  if (![16, 32, 64].includes(addresses) || ![10, 30, 60].includes(seconds) ||
+  // Frozen pre-128 fixtures omit this metadata and retain their source's 64
+  // ceiling. New 128 input must explicitly identify the compiled memory profile.
+  const compiledLimit = input.compiled_address_limit ?? 64;
+  const binSeconds = input.bin_seconds ?? 5;
+  const bins = input.bin_count ?? seconds / binSeconds;
+  const bodyLimit = input.max_body_limit ?? 8192;
+  if (![16, 32, 64, 128].includes(addresses) || ![10, 30, 60, 120].includes(seconds) ||
+      ![64, 128].includes(compiledLimit) || addresses > compiledLimit ||
+      !Number.isInteger(binSeconds) || binSeconds < 1 ||
+      !Number.isInteger(bins) || bins < 1 || bins > 16 || bins * binSeconds !== seconds ||
+      !Number.isInteger(bodyLimit) || bodyLimit < 1 || bodyLimit > 8192 ||
+      (input.collector_static_core_c3_bytes !== undefined &&
+        input.collector_static_core_c3_bytes !== compiledLimit * 2 * 64) ||
       !Array.isArray(sizes) || !sizes.length ||
-      sizes.some(size => !Number.isInteger(size) || size < 1 || size > 8192))
+      sizes.some(size => !Number.isInteger(size) || size < 1 || size > bodyLimit))
     throw new Error('Invalid codec input');
   const batches = sizes.length;
   const bodyBytes = sizes.reduce((sum, size) => sum + size, 0);
@@ -63,7 +88,11 @@ export function calculate(input, options = {}) {
   const maxBody = Math.max(...sizes);
   return {
     ...input,
-    collector_group_c3_bytes: 8192 + 2 * addresses * (seconds / 5) * 4 + 780,
+    compiled_address_limit: compiledLimit, bin_seconds: binSeconds, bin_count: bins,
+    collector_static_core_c3_bytes: compiledLimit * 2 * 64,
+    collector_memory_profile: input.compiled_address_limit === undefined ?
+      'historical-64-ceiling-frozen-source' : 'explicit-codec-source-ceiling',
+    collector_group_c3_bytes: projectCollectorRam(addresses, bins, compiledLimit).bytes,
     json_body_bytes_per_window: bodyBytes,
     max_body_bytes: maxBody, max_webhook_bytes: Math.max(...events),
     // Exact admission arithmetic in mqtt_rpc.h, not a measured heap peak.

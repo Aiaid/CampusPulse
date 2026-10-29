@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { calculate, defaults, webhookBytes } from './model.mjs';
+import { calculate, defaults, webhookBytes, projectCollectorRam } from './model.mjs';
 
 const fixture = {
   addresses: 64, window_seconds: 30, reception_hz_per_address: 1, raw: false,
@@ -53,11 +53,48 @@ test('controls and retries consume service and free quota instead of adding capa
 });
 test('shape and invalid options fail explicitly', () => {
   assert.throws(() => calculate({...fixture, addresses: 128}));
+  assert.throws(() => calculate({...fixture, addresses: 129, compiled_address_limit: 128}));
+  assert.throws(() => calculate({...fixture, addresses: 256, compiled_address_limit: 256}));
   assert.throws(() => calculate({...fixture, body_sizes: [8193]}));
   assert.throws(() => calculate(fixture, {rpcMs: 0}));
   assert.throws(() => calculate(fixture, {retryMultiplier: 0.5}));
   assert.throws(() => calculate(fixture, {days: Infinity}));
   assert.ok(Object.isFrozen(defaults));
+});
+
+test('RAM uses compiled ceiling separately from selected policy and 256 is projection only', () => {
+  assert.equal(calculate(fixture).collector_static_core_c3_bytes, 8192);
+  const current = calculate({...fixture, compiled_address_limit: 128});
+  assert.equal(current.collector_static_core_c3_bytes, 16384);
+  assert.equal(current.collector_group_c3_bytes, 20236);
+  assert.equal(current.collector_memory_profile, 'explicit-codec-source-ceiling');
+  assert.equal(projectCollectorRam(128, 3, 128).bytes, 20236);
+  assert.deepEqual(projectCollectorRam(256, 3, 256), {bytes: 39692, native_supported_ceiling: false});
+  assert.throws(() => calculate({...fixture, compiled_address_limit: 128, collector_static_core_c3_bytes: 8192}));
+});
+
+test('actual production 128/4KiB fixture preserves all streams at three-bin resolution', () => {
+  const rows = readFileSync(new URL('./trial128-4096-codec.jsonl', import.meta.url), 'utf8')
+    .trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(rows.length, 12);
+  const combinations = new Set();
+  for (const row of rows) {
+    combinations.add([row.window_seconds, row.reception_hz_per_address].join('/'));
+    const result = calculate(row);
+    assert.equal(row.addresses, 128);
+    assert.equal(row.bin_count, 3);
+    assert.equal(row.bin_seconds * 3, row.window_seconds);
+    assert.equal(row.compiled_address_limit, 128);
+    assert.equal(row.raw, false);
+    assert.deepEqual(row.stream_batches, [1, 22, 0, 1]);
+    assert.deepEqual(row.stream_items, [1, 128, 0, 1]);
+    assert.equal(result.collector_group_c3_bytes, 20236);
+    assert.equal(row.reports, 128 * row.window_seconds * row.reception_hz_per_address);
+    assert.ok(result.max_body_bytes <= 4096);
+    assert.ok(result.json_requested_host_peak < 8192);
+    assert.equal(result.rpcs_per_window, 24);
+  }
+  assert.equal(combinations.size, 12);
 });
 
 test('all frozen actual-codec workloads fit transport bounds and retain 6-address batching provenance', () => {
