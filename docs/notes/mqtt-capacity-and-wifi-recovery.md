@@ -5,6 +5,40 @@ policy as a development target, not the historical measurements in
 [address capacity](address-capacity-and-public-path.md). Firmware source,
 host simulations, production server checks and physical acceptance are separate.
 
+> Current user decision: pause capacity escalation and observe64 addresses at
+> 120s windows/40s bins/4096B bodies on the same size-optimized image. The device
+> ACKs the fresh field policy. Keep every old batch and all failed trials; the
+> earlier ten-minute128 result is not a long-run acceptance claim.
+
+## Current64 observation and longer-run boundary
+
+A later same-boot128/120s snapshot contains30 complete windows (mean117.57
+addresses, maximum128),4 table-overflow windows,8 upload failures and113 pending
+slots. Window/summary/storage/ACK-loss counters remain0, but this fails long-run
+queue acceptance. A subsequent128/180s attempt also hits memory protection and
+is not accepted. No stable128 operating claim is made from the short trial.
+
+The user then selects64 for observation rather than further pressure tests.
+The selected field policy is64/120s/40s/4096B, with scan settings unchanged. No
+firmware reflash occurs: the compiled128 ceiling and16384B static core banks
+remain; only selected-bin allocation falls3072→1536B. This is a runtime64 policy
+comparison, not an image with only64 compiled core slots.
+
+A local read-only monitor samples current control, latest same-boot status and
+bounded15-minute receipt counts through Wrangler every15minutes. It keeps
+private aggregate history, separates new-boot baselines and software-loss/ACK
+increments from expected address-table overflow, and leaves serial ports and
+all device/account configuration unchanged. Cloud largest-block/minimum-heap
+telemetry is unavailable and remains unknown; free heap and reported pause
+reasons are observed instead.
+
+The initial64 sample confirms the selected policy and matching status. It still
+has151 pending slots,23 cumulative upload failures and a reported memory-pressure
+pause; those are baseline values, not zeroed or relabeled as new64 losses. Free
+heap is97984B, storage free2334720B, and window/summary/storage/ACK losses are0.
+The sample is several minutes old, so it is not a live assertion of the current
+scanner state. This observation phase has not yet established long-run stability.
+
 ## Production Wi-Fi reconfiguration failure
 
 Chrome reads the correct USB factory identity, then fails at the existing-node
