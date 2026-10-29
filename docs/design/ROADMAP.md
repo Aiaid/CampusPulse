@@ -16,6 +16,14 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
+- [ ] 2026-10-29: Materialize the v2 public backend cache incrementally from
+      committed source inserts/changes, retaining server receipt time and full
+      record identity. Handle delayed/tied-time uploads, manual cancellation,
+      placement closure and retention without rewriting source history or
+      changing collection. Compare against authoritative full queries, verify
+      atomic retries/rollback and measure the added writes versus saved reads
+      on real D1 before coordinated deployment and production acceptance.
+
 - [ ] 2026-10-29 follow-up: reproduce the Chrome existing-device Wi-Fi
       reconfiguration `storage_unavailable` failure, repair its actual cause and
       verify the production flow without rotating credentials. Replace the

@@ -279,8 +279,8 @@ describe('public automatic vehicle projection', () => {
   });
 
   it('propagates storage errors instead of disguising them as no evidence', async () => {
-    state.db.exec('DROP TABLE observations');
-    await expect(read()).rejects.toThrow(/observations/);
+    state.db.exec('DROP TABLE public_observation_projection');
+    await expect(read()).rejects.toThrow(/public_observation_projection/);
   });
 });
 

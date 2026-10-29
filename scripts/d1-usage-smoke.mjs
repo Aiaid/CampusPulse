@@ -50,7 +50,7 @@ try {
 }
 const apply = async (db, names) => {
   for (const name of names) await db.exec(readFileSync(`migrations/${name}`, 'utf8')
-    .replace(/^--.*$/gm, '').replace(/\n/g, ' '));
+    .replace(/^[\t ]*--.*$/gm, '').replace(/\n/g, ' '));
 };
 const fingerprint = async db => {
   const items = await db.prepare('SELECT * FROM ingestion_items_v2 ORDER BY node_id,boot_id,stream,seq').all();

@@ -21,7 +21,7 @@ export async function runDeviceV2RuntimeSmoke({fixtureDir}={}) {
  const upload=(value,version=2,exactBytes)=>{const body=exactBytes??JSON.stringify(value);return mf.dispatchFetch(`https://runtime.test/api/v${version}/ingest`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json','X-Body-SHA256':hash(body)},body});};
  try {
   const db=await mf.getD1Database('DB');
-  for(const name of readdirSync('migrations').filter(n=>/^\d+.*\.sql$/.test(n)).sort())await db.exec(readFileSync(`migrations/${name}`,'utf8').replace(/^--.*$/gm,'').replace(/\n/g,' '));
+  for(const name of readdirSync('migrations').filter(n=>/^\d+.*\.sql$/.test(n)).sort())await db.exec(readFileSync(`migrations/${name}`,'utf8').replace(/^[\t ]*--.*$/gm,'').replace(/\n/g,' '));
   const config=load('capture-config-v2.fixture');config.accept_until=new Date(Date.now()+86400000).toISOString();
   await db.prepare('INSERT INTO device_nodes(id,credential_sha256) VALUES(?,?)').bind(config.node_id,hash(token)).run();
   await db.prepare('INSERT INTO placements(id,node_id,place_id,valid_from_ms) VALUES(?,?,?,?)').bind(config.placement_id,config.node_id,'library',0).run();

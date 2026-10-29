@@ -28,7 +28,7 @@ function publicCachePlan(request: Request): PublicCachePlan | null {
   // A versioned, header-free key shares only the public snapshot. It never
   // incorporates client addresses, credentials, cookies or arbitrary queries.
   url.hash = '';
-  url.searchParams.set('__campuspulse_public_cache', '1');
+  url.searchParams.set('__campuspulse_public_cache', '2');
   return { key: new Request(url.toString(), { method: 'GET' }), ttl };
 }
 

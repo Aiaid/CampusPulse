@@ -22,6 +22,12 @@ function json(value: unknown, status = 200) {
   return Response.json(value, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 }
 
+function projectionJson(value: unknown) {
+  const response = json(value);
+  response.headers.set('X-CampusPulse-Projection', 'incremental-v2');
+  return response;
+}
+
 const placeFromRow = (row: PlaceRow): Place => ({
   id: row.id, name: row.name, kind: row.kind, observation_kinds: JSON.parse(row.observation_kinds_json),
   anchor: { x: row.anchor_x, y: row.anchor_y }, coverage: 'unconfigured',
@@ -128,10 +134,15 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
       if (route[2] === 'summary') {
         // One snapshot returns the latest active record independently per manual
         // purpose, including retained evidence for purposes since disabled.
-        const rows = await env.DB.prepare(`SELECT ${OBS_COLUMNS} FROM (SELECT ${OBS_COLUMNS},
-          ROW_NUMBER() OVER (PARTITION BY kind ORDER BY observed_at DESC,id DESC) AS rank
-          FROM observations WHERE place_id=? AND status='active') WHERE rank=1 ORDER BY observed_at DESC,id DESC`)
-          .bind(place.id).all<Observation>();
+        const rows = await env.DB.prepare(`SELECT ${OBS_COLUMNS} FROM public_observation_projection
+          WHERE id IN (
+            SELECT id FROM public_observation_projection WHERE place_id=? AND kind='parking'
+              ORDER BY observed_at DESC,id DESC LIMIT 1
+          ) OR id IN (
+            SELECT id FROM public_observation_projection WHERE place_id=? AND kind='elevator'
+              ORDER BY observed_at DESC,id DESC LIMIT 1
+          ) ORDER BY observed_at DESC,id DESC`)
+          .bind(place.id, place.id).all<Observation>();
         const latest = rows.results[0] ?? null;
         const latestByKind = { parking: rows.results.find(row => row.kind === 'parking') ?? null,
           elevator: rows.results.find(row => row.kind === 'elevator') ?? null };
@@ -141,15 +152,15 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
         const sensor = windows[0] ?? null;
         const last_reported_sensor = sensor ? null : await readLastReportedSensor(env, place.id, now);
         const automatic_observations = await readAutomaticObservations(env, place, windows, now);
-        return json({ ...summary, sensor, last_reported_sensor, automatic_observations, freshness: sensor?.freshness === 'fresh' || summary.freshness === 'fresh' ? 'fresh' : sensor || latest ? 'stale' : 'no_data' });
+        return projectionJson({ ...summary, sensor, last_reported_sensor, automatic_observations, freshness: sensor?.freshness === 'fresh' || summary.freshness === 'fresh' ? 'fresh' : sensor || latest ? 'stale' : 'no_data' });
       }
       const minutesText = url.searchParams.get('minutes') ?? '15';
       if (!['1', '5', '15', '60', '1440'].includes(minutesText)) throw new ApiError(422, 'invalid_range', 'minutes must be 1, 5, 15, 60, or 1440.');
       const to = new Date().toISOString();
       const from = new Date(Date.parse(to) - Number(minutesText) * 60_000).toISOString();
-      const result = await env.DB.prepare(`SELECT ${OBS_COLUMNS} FROM observations WHERE place_id = ? AND status = 'active' AND observed_at >= ? AND observed_at <= ? ORDER BY observed_at DESC, id DESC LIMIT 201`).bind(place.id, from, to).all<Observation>();
+      const result = await env.DB.prepare(`SELECT ${OBS_COLUMNS} FROM public_observation_projection WHERE place_id = ? AND observed_at >= ? AND observed_at <= ? ORDER BY observed_at DESC, id DESC LIMIT 201`).bind(place.id, from, to).all<Observation>();
       const windows = await readPublicWindows(env, place.id, Date.parse(from), Date.parse(to));
-      return json({ place_id: place.id, observations: result.results.slice(0, 200), sensor_windows: windows.slice(0, 200), from, to, truncated: result.results.length > 200, sensor_truncated: windows.length > 200 });
+      return projectionJson({ place_id: place.id, observations: result.results.slice(0, 200), sensor_windows: windows.slice(0, 200), from, to, truncated: result.results.length > 200, sensor_truncated: windows.length > 200 });
     }
     if (url.pathname === '/api/v1/observations' && request.method === 'POST') {
       await authorize(request, env);
@@ -182,7 +193,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
     const cancel = /^\/api\/v1\/observations\/([0-9a-f-]{36})$/.exec(url.pathname);
     if (cancel && request.method === 'DELETE') {
       await authorize(request, env);
-      await env.DB.prepare("UPDATE observations SET status = 'cancelled', cancelled_at = COALESCE(cancelled_at, ?) WHERE id = ?").bind(new Date().toISOString(), cancel[1]).run();
+      await env.DB.prepare("UPDATE observations SET status = 'cancelled', cancelled_at = COALESCE(cancelled_at, ?) WHERE id = ? AND status='active'").bind(new Date().toISOString(), cancel[1]).run();
       const observation = await env.DB.prepare(`SELECT ${OBS_COLUMNS} FROM observations WHERE id = ?`).bind(cancel[1]).first<Observation>();
       if (!observation) throw new ApiError(404, 'observation_not_found', 'Unknown observation.');
       return json({ observation, durability: 'committed' });

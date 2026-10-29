@@ -30,6 +30,8 @@ jobs:
         run: node scripts/device-v2-runtime-smoke.mjs
       - name: Verify D1 write usage and preservation across index migration
         run: node scripts/d1-usage-smoke.mjs
+      - name: Verify incremental public projections and actual D1 usage
+        run: node scripts/public-projection-runtime-smoke.mjs
       - name: Verify MQTT gateway protocol, registry RPC and replay bounds
         run: |
           node --test relay/emqx-cloud/test/*.test.mjs

@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium, expect } from '@playwright/test';
 import { GIS_SCENE_BOUNDS } from '../src/campus/gis-geometry.js';
+import { FIELD_CATALOG_REFRESH_MS, FIELD_REFRESH_MS } from '../src/campus/field-data.js';
 
 // UI/API-contract regression with an in-memory fixture. No Worker/database
 // writes, credentials, or production target. Official tiles remain remote.
@@ -15,6 +16,7 @@ let places = [
 ];
 const writes = [], errors = [];
 let placesUnavailable = false;
+let failedCatalogReads = 0;
 const capture = async (page, name) => {
   if (!process.env.GIS_SMOKE_SCREENSHOT_DIR) return;
   mkdirSync(process.env.GIS_SMOKE_SCREENSHOT_DIR, { recursive: true });
@@ -31,7 +33,10 @@ try {
   }
   await context.route('**/api/v1/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
-    if (path === '/api/v1/places' && placesUnavailable) return route.fulfill({ status: 503, json: { error: 'fixture-unavailable' } });
+    if (path === '/api/v1/places' && placesUnavailable) {
+      failedCatalogReads += 1;
+      return route.fulfill({ status: 503, json: { error: 'fixture-unavailable' } });
+    }
     let body;
     if (path === '/api/v1/settings') body = { site_name: 'GIS regression', default_mode: 'field' };
     else if (path === '/api/v1/admin/auth/status') body = { initialized: true };
@@ -50,6 +55,7 @@ try {
     return route.fulfill({ json: body });
   });
   const page = await context.newPage();
+  await page.clock.install();
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`${origin}/admin`);
   await page.getByRole('navigation', { name: '管理导航' }).getByRole('button', { name: '地点与部署', exact: true }).click();
@@ -98,6 +104,9 @@ try {
   // The official Nanhu campus focus is beyond the old crop on both axes.
   // A moved/renamed place must stay linked and center on this wider image area.
   places = places.map(place => place.id === 'unlocated' ? { ...place, name: '重命名测试点', gis_anchor: { x: 5608 / 24576, y: 17140 / 24576, verified: true } } : place);
+  // A focus immediately after initial loading belongs to the same wake event.
+  // Advance the live cadence before testing a distinct return to this page.
+  await page.clock.fastForward(FIELD_REFRESH_MS);
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await page.getByRole('heading', { name: '重命名测试点', exact: true }).waitFor();
   await expect.poll(() => page.locator('.overview-map .cp-map__anchor--selected').evaluate(element => {
@@ -158,6 +167,7 @@ try {
   }
   // Remove the registered anchor and verify public refresh has no phantom pin.
   places = places.map(place => place.id === 'unlocated' ? { ...place, gis_anchor: undefined } : place);
+  await page.clock.fastForward(FIELD_REFRESH_MS);
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   // Losing a GIS anchor removes the pin, while the all-place data selector
   // retains the chosen place and its observations.
@@ -165,8 +175,12 @@ try {
   await expect(page.getByRole('combobox', { name: '观测地点', exact: true })).toHaveValue('unlocated');
   assert.equal(await page.locator('.overview-map .cp-map__label').count(), 1);
   await expect(page.locator('.field-place-picker')).toContainText('1 个现场地点 · 1 个地点未显示');
+  const priorFailedCatalogReads = failedCatalogReads;
   placesUnavailable = true;
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  // The previous focus just refreshed this catalog. Advance its actual polling
+  // cadence rather than relying on another focus inside the wake debounce.
+  await page.clock.fastForward(FIELD_CATALOG_REFRESH_MS + 1);
+  await expect.poll(() => failedCatalogReads).toBe(priorFailedCatalogReads + 1);
   await expect(page.locator('.field-place-picker')).toContainText('现场地点服务暂不可用');
   assert.equal(await page.locator('.overview-map .cp-map__label').count(), 0, 'Failed API does not retain phantom pins');
   placesUnavailable = false;

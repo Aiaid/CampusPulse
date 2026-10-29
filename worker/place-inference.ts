@@ -189,7 +189,7 @@ async function readElevator(env: Env, place: Place, now: number): Promise<Automa
   if (!place.observation_kinds.includes('elevator')) return unavailableElevator('purpose_not_enabled');
   const policy = DEFAULT_ELEVATOR_POLICY;
   const rows = await env.DB.prepare(`SELECT id,place_id,kind,source,status,observed_at,received_at,wait_seconds
-    FROM observations WHERE place_id=? AND kind='elevator' AND status='active' AND source='manual'
+    FROM public_observation_projection WHERE place_id=? AND kind='elevator' AND status='active' AND source='manual'
       AND observed_at>=? AND observed_at<=? AND received_at<=?
     ORDER BY observed_at DESC,id DESC LIMIT ?`).bind(place.id,
       new Date(now - policy.lookback_days * 86_400_000).toISOString(), new Date(now).toISOString(),

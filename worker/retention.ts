@@ -1,8 +1,22 @@
 import type { Env } from './types';
 
+/** A derived-cache cleanup can run ahead of canonical retention. Deleting the
+ * child never deletes source evidence, receipts, or stale manual history. */
+export async function expirePublicProjections(env: Env, now = Date.now()): Promise<number> {
+  const result = await env.DB.prepare(`DELETE FROM public_sensor_projection_v2 WHERE rowid IN (
+    SELECT rowid FROM public_sensor_projection_v2 INDEXED BY public_sensor_projection_v2_expiry
+    WHERE expires_at_ms<=? LIMIT 5000)`).bind(now).run();
+  return result.meta.changes;
+}
+
 /** Bounded, idempotent cleanup of committed evidence only. Unreferenced R2
  * objects are deliberately excluded: they may belong to an in-flight commit. */
 export async function expireIngestion(env: Env, now = Date.now()): Promise<void> {
+  try { await expirePublicProjections(env, now); }
+  catch {
+    // Cache maintenance must not block the authoritative privacy/retention job.
+    console.warn(JSON.stringify({ event: 'public_projection_retention_failed' }));
+  }
   const expired = await env.DB.prepare('SELECT node_id,batch_id,raw_object_key FROM ingestion_batches WHERE raw_object_key IS NOT NULL AND expires_at_ms <= ? LIMIT 100')
     .bind(now).all<{ node_id: string; batch_id: string; raw_object_key: string }>();
   if (env.RAW_BUCKET) {
