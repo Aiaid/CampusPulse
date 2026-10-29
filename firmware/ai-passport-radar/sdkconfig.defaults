@@ -2,6 +2,11 @@
 CONFIG_IDF_TARGET="esp32c3"
 # 注:ESP32-C3 无 PSRAM,故不设 CONFIG_SPIRAM。
 
+# Use the measured size-optimized production profile instead of IDF's -Og
+# default. Fresh build directories pick this up; retain TLS and heap guards.
+CONFIG_COMPILER_OPTIMIZATION_DEBUG=n
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
 # --- Flash ---
 # FoloToy AI Passport 当前产品/固件基线使用 8MB Flash。
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
