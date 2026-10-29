@@ -16,15 +16,6 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
-- [ ] 2026-10-29: Reduce production D1 usage without changing v2 collection or
-      retained v2 evidence. Replace public whole-history/expiry scans with
-      indexed v2-only reads, pause hidden/overlapping frontend polling and avoid
-      unnecessary history refreshes. Reduce redundant index and transactional
-      bookkeeping writes while retaining receipt idempotency, per-window caps,
-      replay rejection and atomic commits. The user permits discarding v1 data;
-      no v1-to-v2 history migration is required. Validate real read/write metrics
-      before and after coordinated production deployment.
-
 - [ ] 2026-10-29 follow-up: reproduce the Chrome existing-device Wi-Fi
       reconfiguration `storage_unavailable` failure, repair its actual cause and
       verify the production flow without rotating credentials. Replace the
@@ -304,6 +295,15 @@ collection and durable upload. Final local software verification passed on
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] 2026-10-29: Deploy indexed v2 public reads, bounded server-side snapshot
+      caching and visibility-aware, independent frontend polling. Production
+      windows/fallback reads fall 54729→1241 and 49033→5310 rows; four public
+      route types verify MISS→HIT→HIT and forced BYPASS. Index-only migrations
+      preserve frozen v2 history and constraints; matched synthetic D1 writes
+      fall 28.30%, while short production windows show item writes 8.876→6.254
+      per INSERT and batch writes 10→8. See [D1 acceptance](../notes/d1-usage-optimization.md)
+      for timestamps, test evidence, workload boundaries and retained TTLs.
 
 - [x] 2026-10-29: Promote independent runtime MQTT/TLS enrollment and the
       dynamic Hangzhou EMQX→CF gateway to production. All16 device accounts plus

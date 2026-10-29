@@ -97,5 +97,58 @@ snapshots across migration, checks private item values, exact retry ACKs,
 atomic over-budget rollback and foreign keys. Dedicated tests also preserve
 out-of-order intervals and inclusive endpoint collision rejection.
 
-Production rollout and post-deployment measurements are pending; append actual
-times, read counts and cache-hit evidence only after verification.
+## Production acceptance
+
+Source `936fbc0ef687b483263b81daf57ef24d72231b56` was built from a clean Git
+archive, excluding another active session's unfinished 128-address changes.
+The full 1,016-test suite passed in the working source. Repeating the clean
+snapshot's suite concurrently with its build caused two existing timeout-only
+failures; both files then passed separately (15 tests) without code changes.
+Build, exact-byte device workerd/D1/R2 smoke, real-D1 usage benchmark, public
+history/replay browser smoke and polling/cache-bypass browser smoke pass.
+
+0009 applied at 12:49:29; Worker version
+`58841422-43d8-4a2f-9311-439b56cd9a2a` deployed at 12:49:55, 100% traffic.
+0010 applied after the new Worker was verified deployed. All times are
+2026-10-29 Asia/Shanghai. No device configuration, serial access, capture policy
+or firmware operation was performed by this release.
+
+| Production query, same frozen cutoff | Before | After |
+| --- | ---: | ---: |
+| Public windows, 201 results | 54,729 rows read | 1,241 rows read / 2.74 ms SQL |
+| Receipt fallback, one result | 49,033 rows read | 5,310 rows read / 14.67 ms SQL |
+
+The fallback still tests eligibility among that placement's field windows; the
+index removes unrelated private rows, not all per-window quality predicates.
+The ordinary summary only calls this fallback when no timed public window is
+available. These are individual production SQL measurements, not fleet-wide
+percentage guarantees.
+
+Before rollout, a frozen receipt cutoff selected 45,489 existing v2 items and
+16,738 receipts whose expiry was more than one hour away. Their counts and
+summed content lengths match after both migrations; production foreign-key
+check returns zero errors. Local migration tests additionally compare complete
+item/receipt/budget snapshots, not only counts/lengths. New uploads continued;
+their changing budget totals were not misreported as a frozen snapshot.
+
+Real public HTTP checks in the serving LAX location confirm all four cached
+route types return `MISS -> HIT -> HIT`; repeated cached snapshot bytes match,
+browser cache remains `no-store`, and explicit manual refresh returns `BYPASS`.
+A cache hit returns before invoking the D1 handler, so those repeated HTTP reads
+perform no D1 query. Cache remains per-location and naturally cold after deploy.
+The final release's 13 image assets were inspected with ExifTool; no identifying
+embedded metadata fields were found, and no image was modified.
+
+Cloudflare query analytics, excluding index-creation statements, also record:
+
+| Recorded production writes | Before, 12:43–12:49 | After, 12:51–12:55 |
+| --- | ---: | ---: |
+| Item INSERT statements / rows written | 628 / 5,574 | 417 / 2,608 |
+| Mean write rows per item INSERT | 8.876 | 6.254 |
+| Batch INSERT statements / rows written | 66 / 660 | 11 / 88 |
+| Mean write rows per batch INSERT | 10 | 8 |
+
+These are Cloudflare adaptive analytics over different short traffic windows,
+not matched capture loads or invoice totals. They confirm lower observed write
+amplification without claiming the synthetic percentage as a universal rate.
+One-time index migration writes are separate from these ingestion statements.
