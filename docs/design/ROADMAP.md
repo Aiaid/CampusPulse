@@ -16,6 +16,16 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
+- [ ] 2026-10-29 follow-up: reproduce the Chrome existing-device Wi-Fi
+      reconfiguration `storage_unavailable` failure, repair its actual cause and
+      verify the production flow without rotating credentials. Replace the
+      retained16-address policy with a measured larger policy, reduce bounded
+      summary-encoding/RPC overhead, and accept native MQTT memory, queue balance
+      and recovery on the connected board. Measure address count × received
+      report frequency × window interval; keep radio acceptance, modeled fleet
+      capacity and current broker/free-quota limits distinct. Preserve old
+      immutable policies, frozen batches and protected Flash throughout.
+
 - [ ] Deploy domestic durable custody after the passing EMQX Hangzhou native
       MQTT/TLS connectivity trial archived below. Keep account/price
       authorization separate from research. Design domestic durable custody and
