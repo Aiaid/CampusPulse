@@ -6,6 +6,7 @@ import { adminOrigin, adminSecret, requireAdminSession, requireFreshSession, ses
 import { handleAdminIdentity } from './admin-account';
 import { handleAdminDeviceDiagnostics } from './admin-device-diagnostics';
 import { handleAdminMqtt } from './admin-mqtt';
+import { reportAdminFailure } from './admin-errors';
 import { assignMqtt, decryptMqtt, mqttReadyAssertion, readyMqtt } from './mqtt-credentials';
 import { readRuntimeSettings, readSettingsRecord, validateSettings } from './admin-settings';
 export { readRuntimeSettings, readPublicSettings } from './admin-settings';
@@ -438,6 +439,9 @@ export async function handleAdmin(request: Request, env: Env): Promise<Response 
       if (error instanceof AuthRateLimitError) response.headers.set('Retry-After', String(error.retryAfterSeconds));
       return response;
     }
-    return json({ error: { code: 'storage_unavailable', message: 'Administrator service temporarily unavailable.', retryable: true } }, 503);
+    const requestId = reportAdminFailure(request, error);
+    const response = json({ error: { code: 'storage_unavailable', message: 'Administrator service temporarily unavailable.', retryable: true, request_id: requestId } }, 503);
+    response.headers.set('X-Request-ID', requestId);
+    return response;
   }
 }

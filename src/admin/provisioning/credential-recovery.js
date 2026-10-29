@@ -1,4 +1,5 @@
 import { NODE_PATTERN, TOKEN_PATTERN } from './enrollment.js';
+import { adminErrorReference } from '../error-reference.js';
 
 const trustedIdentity = (identity, node, transport) =>
   identity?.node_id === node && identity.transport === transport &&
@@ -67,6 +68,8 @@ export async function prepareNetworkCredential({ node, identity, client, api, se
     const failure = new Error(error instanceof Error ? error.message : '凭证准备失败，请检查设备和管理服务。');
     if (typeof error?.code === 'string') failure.code = error.code;
     if (Number.isInteger(error?.status)) failure.status = error.status;
+    const reference = adminErrorReference(error?.requestId);
+    if (reference) failure.requestId = reference;
     failure.credentialIssuanceUncertain = ['pending', 'uncertain', 'succeeded'].includes(lastOutcome);
     throw failure;
   }

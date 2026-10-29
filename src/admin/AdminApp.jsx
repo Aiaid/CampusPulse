@@ -6,6 +6,7 @@ import Places from './Places.jsx';
 import Configs from './Configs.jsx';
 import AccountSecurity from './AccountSecurity.jsx';
 import { Bootstrap, Login, ReauthDialog } from './AuthScreens.jsx';
+import { adminErrorReference } from './error-reference.js';
 import './admin.css';
 
 const messages = {
@@ -62,6 +63,7 @@ export default function AdminApp() {
       const loginFailure = path === '/session' && options.method === 'POST' && response.status === 401;
       const error = new Error(loginFailure ? '用户名或密码不正确，或初始化凭证不可用。请检查后重试。' : path === '/auth/reauth' && response.status === 401 ? '当前密码不正确，或会话已经失效。请重新检查。' : invalidField ? `字段不符合要求：${invalidField}。请检查格式与范围。` : messages[code] || body.error?.message || `服务请求失败（${response.status}）`);
       error.code = code; error.status = response.status;
+      error.requestId = adminErrorReference(body.error?.request_id);
       throw error;
     }
     return body;

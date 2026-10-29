@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useId, useRef, useState } from 'react';
 import { CircleNotch, WarningCircle, X, ArrowClockwise } from '@phosphor-icons/react';
+import { adminErrorReference } from './error-reference.js';
 
 export const AdminContext = createContext(null);
 export const useAdmin = () => useContext(AdminContext);
@@ -68,7 +69,8 @@ export function useMutation() {
 
 export function ErrorNotice({ error, retry }) {
   if (!error) return null;
-  return <div className="cp-admin-notice cp-admin-error" role="alert"><WarningCircle size={20} /><div><strong>操作未完成</strong><p>{error.message || '无法连接服务，请稍后重试。'}</p>{error.code && <small>错误代码：{error.code}</small>}</div>{retry && <button className="cp-admin-button cp-admin-small" type="button" onClick={retry}><ArrowClockwise />重试</button>}</div>;
+  const reference = adminErrorReference(error.requestId);
+  return <div className="cp-admin-notice cp-admin-error" role="alert"><WarningCircle size={20} /><div><strong>操作未完成</strong><p>{error.message || '无法连接服务，请稍后重试。'}</p>{error.code && <small>错误代码：{error.code}</small>}{reference && <p><small>错误参考：{reference}</small></p>}</div>{retry && <button className="cp-admin-button cp-admin-small" type="button" onClick={retry}><ArrowClockwise />重试</button>}</div>;
 }
 export function Loading({ label = '正在加载数据…' }) { return <div className="cp-admin-loading" role="status"><CircleNotch className="cp-admin-spin" size={23} />{label}</div>; }
 export function Resource({ resource, children }) {

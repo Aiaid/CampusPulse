@@ -16,6 +16,15 @@ const reauthWrapper = async action => {
 };
 
 describe('physical-device missing-credential recovery', () => {
+  it.each(['12345678-1234-4567-89ab-123456789abc', 'invalid-private-reference'])('retains only a validated admin failure reference through credential recovery', async reference => {
+    const error = Object.assign(httpError(503, 'storage_unavailable'), { requestId: reference });
+    const args = setup({ api: vi.fn().mockRejectedValue(error) });
+    const failure = await prepareNetworkCredential(args).catch(value => value);
+    expect(failure).toMatchObject({ status: 503, code: 'storage_unavailable', credentialIssuanceUncertain: true });
+    expect(failure.requestId).toBe(reference.startsWith('1234') ? reference : undefined);
+    expect(args.api).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ['invalid node', { node: 'manual-node' }],
     ['different node', { identity: { node_id: 'cp_112233445566', transport: 'usb', security: 'physical-usb', has_saved_credential: false } }],
