@@ -167,9 +167,9 @@ void ui_fill(int x, int y, int width, int height, uint16_t color)
     if (!status_render) return;
     assert(x >= 0 && y >= 0 && width > 0 && height > 0);
     assert(x + width <= UI_W && y + height <= UI_H);
-    if (y == 114 && color == UI_COL_TEAL) heap_bar_width = width;
-    if (y == 164 && color == UI_COL_YELLOW) queue_bar_width = width;
-    if ((y == 115 || y == 165) && color == UI_COL_MUTED) unknown_bar_marks++;
+    if (y == 122 && color == UI_COL_TEAL) heap_bar_width = width;
+    if (y == 180 && color == UI_COL_YELLOW) queue_bar_width = width;
+    if ((y == 123 || y == 181) && color == UI_COL_MUTED) unknown_bar_marks++;
     if (color == UI_COL_TEAL && y >= 160 && y < 194) activity_bars++;
 }
 void ui_text(int x, int y, const char *text, uint16_t color)
@@ -334,8 +334,8 @@ static void test_bounded_status(void)
     ui_owner = status_render = true;
     status_page_render(&view);
     assert(!strcmp(text_at(70), "Link -- Mb/s"));
-    assert(strstr(text_at(284), "Collect: "));
-    assert(unknown_bar_marks == 54 && !heap_bar_width && !queue_bar_width);
+    assert(strstr(text_at(296), "Collect: "));
+    assert(unknown_bar_marks == 41 && !heap_bar_width && !queue_bar_width);
     const unsigned calls = render_calls;
     status_page_render(NULL);
     assert(render_calls == calls);
@@ -391,45 +391,53 @@ static void test_debug_dashboard(void)
     assert(strstr(text_at(26), "SSID:") && strstr(text_at(26), "..."));
     assert(!strcmp(text_at(48), "-61dBm PHY:11n/20"));
     assert(!strcmp(text_at(70), "Link -- Mb/s"));
-    assert(!strcmp(text_at(92), "Heap 64/256 KiB"));
-    assert(!strcmp(text_at(120), "Blk22K BootMin16K"));
-    assert(!strcmp(text_at(142), "Q 128/1024 slots"));
-    assert(heap_bar_width == 54 && queue_bar_width == 27 && !unknown_bar_marks);
-    assert(!strcmp(text_at(174), "UP ACK verified"));
-    assert(!strcmp(text_at(196), "Last 18.5KiB/s 12s"));
-    assert(!strcmp(text_at(218), "HTTP 200 Err 0"));
-    assert(!strcmp(text_at(262), "Auth: ready"));
-    assert(!strcmp(text_at(284), "Collect: collecting"));
+    assert(!strcmp(text_at(92), "Heap free 64/256 KiB"));
+    assert(!strcmp(text_at(114), "Used 75%"));
+    assert(!strcmp(text_at(136), "Blk22K BootMin16K"));
+    assert(!strcmp(text_at(158), "Q 128/1024 slots"));
+    assert(heap_bar_width == 84 && queue_bar_width == 27 && !unknown_bar_marks);
+    assert(!strcmp(text_at(186), "UP ACK verified"));
+    assert(!strcmp(text_at(208), "Last 18.5KiB/s 12s"));
+    assert(!strcmp(text_at(230), "HTTP 200 Err 0"));
+    assert(!strcmp(text_at(274), "Auth: ready"));
+    assert(!strcmp(text_at(296), "Collect: collecting"));
     // Ordinary rows have >=22 px pitch around the true 20 px glyph cell.
     for (unsigned i = 1; i < status_text_count; i++)
         assert(status_text[i].y - status_text[i - 1].y >= FONT_ZH_CELL + 2);
     for (unsigned i = 0; i < status_text_count; i++)
         assert(!strstr(status_text[i].text, "secret-"));
+    d->heap_internal_free = d->heap_internal_total;
+    status_page_render(&view);
+    assert(heap_bar_width == 0 && !strcmp(text_at(114), "Used 0%"));
+    d->heap_internal_free = 0;
+    status_page_render(&view);
+    assert(heap_bar_width == HEAP_BAR_SPAN && !strcmp(text_at(114), "Used 100%"));
+    d->heap_internal_free = 64 * 1024;
     d->upload.last_age_ms = 31000;
     status_page_render(&view);
-    assert(strstr(text_at(196), "Old 18.5KiB/s 31s"));
+    assert(strstr(text_at(208), "Old 18.5KiB/s 31s"));
     d->wifi_connected = false;
     status_page_render(&view);
     assert(!strcmp(text_at(26), "Wi-Fi disconnected"));
     assert(!strcmp(text_at(48), "--dBm PHY:--"));
-    assert(strstr(text_at(196), "Off 18.5KiB/s 31s"));
+    assert(strstr(text_at(208), "Off 18.5KiB/s 31s"));
     d->upload.in_flight = true;
     status_page_render(&view);
-    assert(!strcmp(text_at(174), "UP sending"));
+    assert(!strcmp(text_at(186), "UP sending"));
     d->upload.in_flight = false;
     d->upload.result = CP_DEBUG_UPLOAD_BAD_ACK;
     // Even an inconsistent producer cannot display verified speed for bad ACK.
     status_page_render(&view);
-    assert(!strcmp(text_at(174), "UP bad ACK"));
-    assert(!strcmp(text_at(196), "Last -- KiB/s 31s"));
+    assert(!strcmp(text_at(186), "UP bad ACK"));
+    assert(!strcmp(text_at(208), "Last -- KiB/s 31s"));
     d->upload.result = CP_DEBUG_UPLOAD_ACKED;
     d->upload.goodput_bytes_per_sec = 0;
     status_page_render(&view);
-    assert(strstr(text_at(196), "0.0KiB/s"));
+    assert(strstr(text_at(208), "0.0KiB/s"));
     d->upload.known = false;
     status_page_render(&view);
-    assert(!strcmp(text_at(174), "UP idle / no result"));
-    assert(!strcmp(text_at(196), "Last -- KiB/s age --"));
+    assert(!strcmp(text_at(186), "UP idle / no result"));
+    assert(!strcmp(text_at(208), "Last -- KiB/s age --"));
     // All maximal counters, bounded unterminated text and bar arithmetic are
     // exercised under ASan/UBSan using the real generated font advances.
     d->wifi_connected = d->wifi_mbps_known = true;
@@ -445,12 +453,13 @@ static void test_debug_dashboard(void)
     d->upload.last_http_status = INT32_MIN;
     d->upload.last_error = INT32_MAX;
     status_page_render(&view);
-    assert(heap_bar_width == UI_W - 24 && queue_bar_width == UI_W - 24);
+    assert(heap_bar_width == 0 && queue_bar_width == UI_W - 24);
     assert(strstr(text_at(26), "SSID: ???") && strstr(text_at(26), "..."));
-    assert(strstr(text_at(196), "999s+"));
+    assert(strstr(text_at(208), "999s+"));
     d->heap_internal_total = d->queue_capacity = 0;
     status_page_render(&view);
-    assert(unknown_bar_marks == 54 && !heap_bar_width && !queue_bar_width);
+    assert(unknown_bar_marks == 41 && !heap_bar_width && !queue_bar_width);
+    assert(!strcmp(text_at(114), "Used --%"));
     ui_owner = status_render = false;
 }
 

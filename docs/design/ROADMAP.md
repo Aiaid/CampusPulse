@@ -305,6 +305,11 @@ collection and durable upload. Final local software verification passed on
       per INSERT and batch writes 10→8. See [D1 acceptance](../notes/d1-usage-optimization.md)
       for timestamps, test evidence, workload boundaries and retained TTLs.
 
+- [x] 2026-10-29: Clarify the Passport heap display with `Heap free` and a
+      labeled used-percentage bar. Preserve free/total, Blk and BootMin within
+      the 240x320 layout. Host UI bounds/endpoint checks, actual-font preview,
+      raster and incremental/full pixel-identity checks pass; not flashed.
+
 - [x] 2026-10-29: Promote independent runtime MQTT/TLS enrollment and the
       dynamic Hangzhou EMQX→CF gateway to production. All16 device accounts plus
       the reply-only server pass real broker ACL checks; official API verifies

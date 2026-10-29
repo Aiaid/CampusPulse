@@ -116,6 +116,15 @@ static bool setup_row(const cp_status_view_t *v, unsigned row, text_projection_t
     return true;
 }
 
+/* Clamp inconsistent telemetry before subtraction; unknown totals stay unknown. */
+static uint32_t heap_used(const cp_debug_snapshot_t *d)
+{
+    return d->heap_internal_total > d->heap_internal_free
+        ? d->heap_internal_total - d->heap_internal_free : 0;
+}
+#define HEAP_BAR_X 116
+#define HEAP_BAR_SPAN (UI_W - 12 - HEAP_BAR_X)
+
 static bool debug_row(const cp_status_view_t *v, unsigned row, text_projection_t *p)
 {
     const cp_debug_snapshot_t *d=&v->debug;
@@ -139,49 +148,55 @@ static bool debug_row(const cp_status_view_t *v, unsigned row, text_projection_t
         else TEXT(70, UI_COL_MUTED, "Link -- Mb/s");
         break;
     case 4:
-        if (d->heap_known) TEXT(92, UI_COL_FG, "Heap %lu/%lu KiB",
+        if (d->heap_known) TEXT(92, UI_COL_FG, "Heap free %lu/%lu KiB",
             (unsigned long)(d->heap_internal_free/1024),(unsigned long)(d->heap_internal_total/1024));
-        else TEXT(92, UI_COL_FG, "Heap --/-- KiB");
+        else TEXT(92, UI_COL_FG, "Heap free --/-- KiB");
         break;
     case 5:
-        if (d->heap_known) TEXT(120, UI_COL_MUTED, "Blk%luK BootMin%luK",
-            (unsigned long)(d->heap_internal_largest/1024),(unsigned long)(d->heap_boot_min_8bit/1024));
-        else TEXT(120, UI_COL_MUTED, "Blk--K BootMin--K");
+        if (d->heap_known && d->heap_internal_total)
+            TEXT(114, UI_COL_SOFT, "Used %lu%%",
+                 (unsigned long)((uint64_t)heap_used(d)*100/d->heap_internal_total));
+        else TEXT(114, UI_COL_SOFT, "Used --%%");
         break;
     case 6:
-        if (d->queue_known) TEXT(142, UI_COL_FG, "Q %lu/%lu slots%s",
-            (unsigned long)d->queue_pending,(unsigned long)d->queue_capacity,d->queue_quarantined?" !":"");
-        else TEXT(142, UI_COL_FG, "Q --/-- slots");
-        if (d->queue_quarantined) p->color=UI_COL_ORANGE;
+        if (d->heap_known) TEXT(136, UI_COL_MUTED, "Blk%luK BootMin%luK",
+            (unsigned long)(d->heap_internal_largest/1024),(unsigned long)(d->heap_boot_min_8bit/1024));
+        else TEXT(136, UI_COL_MUTED, "Blk--K BootMin--K");
         break;
     case 7:
-        TEXT(174, UI_COL_FG, "UP %s",u->in_flight?"sending":u->known?upload_result(u->result):"idle / no result");
+        if (d->queue_known) TEXT(158, UI_COL_FG, "Q %lu/%lu slots%s",
+            (unsigned long)d->queue_pending,(unsigned long)d->queue_capacity,d->queue_quarantined?" !":"");
+        else TEXT(158, UI_COL_FG, "Q --/-- slots");
+        if (d->queue_quarantined) p->color=UI_COL_ORANGE;
+        break;
+    case 8:
+        TEXT(186, UI_COL_FG, "UP %s",u->in_flight?"sending":u->known?upload_result(u->result):"idle / no result");
         if (u->known && u->result!=CP_DEBUG_UPLOAD_ACKED && u->result!=CP_DEBUG_UPLOAD_NONE)
             p->color=UI_COL_ORANGE;
         break;
-    case 8:
+    case 9:
         if (u->known && u->goodput_known && u->result==CP_DEBUG_UPLOAD_ACKED) {
             unsigned long tenths=(unsigned long)(((uint64_t)u->goodput_bytes_per_sec*10)/1024);
-            TEXT(196, UI_COL_SOFT, "%s %lu.%luKiB/s %lus%s",!d->wifi_connected?"Off":u->last_age_ms>30000?"Old":"Last",
+            TEXT(208, UI_COL_SOFT, "%s %lu.%luKiB/s %lus%s",!d->wifi_connected?"Off":u->last_age_ms>30000?"Old":"Last",
                 tenths/10,tenths%10,(unsigned long)(u->last_age_ms/1000>999?999:u->last_age_ms/1000),
                 u->last_age_ms/1000>999?"+":"");
-        } else if (u->known) TEXT(196, UI_COL_SOFT, "Last -- KiB/s %lus%s",
+        } else if (u->known) TEXT(208, UI_COL_SOFT, "Last -- KiB/s %lus%s",
             (unsigned long)(u->last_age_ms/1000>999?999:u->last_age_ms/1000),u->last_age_ms/1000>999?"+":"");
-        else TEXT(196, UI_COL_SOFT, "Last -- KiB/s age --");
-        break;
-    case 9:
-        if (u->known) TEXT(218, UI_COL_MUTED, "HTTP %ld Err %ld",(long)u->last_http_status,(long)u->last_error);
-        else TEXT(218, UI_COL_MUTED, "HTTP -- Err --");
+        else TEXT(208, UI_COL_SOFT, "Last -- KiB/s age --");
         break;
     case 10:
-        TEXT(240, UI_COL_SOFT, "BLE %s A%lu S%lu R%lu",d->ble_memory_paused?"mem":d->ble_pressure_paused?"hold":
+        if (u->known) TEXT(230, UI_COL_MUTED, "HTTP %ld Err %ld",(long)u->last_http_status,(long)u->last_error);
+        else TEXT(230, UI_COL_MUTED, "HTTP -- Err --");
+        break;
+    case 11:
+        TEXT(252, UI_COL_SOFT, "BLE %s A%lu S%lu R%lu",d->ble_memory_paused?"mem":d->ble_pressure_paused?"hold":
             d->ble_raw_paused?"raw":d->ble_collecting?"on":"off",(unsigned long)d->aggregation_drops,
             (unsigned long)d->summary_drops,(unsigned long)d->raw_drops);
         if (d->aggregation_drops||d->summary_drops||d->raw_drops||d->storage_drops||d->windows_dropped)
             p->color=UI_COL_ORANGE;
         break;
-    case 11: TEXT(262, UI_COL_SOFT, "Auth: %.24s",v->authentication); break;
-    case 12: TEXT(284, UI_COL_SOFT, "Collect: %.24s",v->collection); break;
+    case 12: TEXT(274, UI_COL_SOFT, "Auth: %.24s",v->authentication); break;
+    case 13: TEXT(296, UI_COL_SOFT, "Collect: %.24s",v->collection); break;
     default: return false;
     }
     return true;
@@ -310,18 +325,18 @@ static bool project_row(const cp_status_view_t *v, unsigned row, text_projection
 
 /* -1 is the neutral unknown-denominator track; all other values are the exact
  * filled pixel width. Equal rounded widths do not damage a bar. */
-static int bar_width(uint32_t used, uint32_t capacity, bool known)
+static int bar_width(uint32_t used, uint32_t capacity, bool known, int span)
 {
     if (!known || !capacity) return -1;
     if (used>capacity) used=capacity;
-    return (int)(((uint64_t)used*(UI_W-24))/capacity);
+    return (int)(((uint64_t)used*span)/capacity);
 }
-static void usage_bar(int y, int width, uint16_t color)
+static void usage_bar(int x0, int y, int span, int width, uint16_t color)
 {
-    ui_fill(12,y,UI_W-24,4,UI_COL_LINE);
+    ui_fill(x0,y,span,4,UI_COL_LINE);
     if (width<0) {
-        for (int x=12;x<UI_W-12;x+=8) ui_fill(x,y+1,4,2,UI_COL_MUTED);
-    } else if (width) ui_fill(12,y,width,4,color);
+        for (int x=x0;x<x0+span;x+=8) ui_fill(x,y+1,4,2,UI_COL_MUTED);
+    } else if (width) ui_fill(x0,y,width,4,color);
 }
 static bool debug_page(const cp_status_view_t *v)
 {
@@ -336,8 +351,8 @@ static void paint_status(void *arg)
     for (unsigned i=0;project_row(v,i,&row);i++) ui_text(row.x,row.y,row.text,row.color);
     const cp_debug_snapshot_t *d=&v->debug;
     if (debug_page(v)) {
-        usage_bar(114,bar_width(d->heap_internal_free,d->heap_internal_total,d->heap_known),UI_COL_TEAL);
-        usage_bar(164,bar_width(d->queue_pending,d->queue_capacity,d->queue_known),UI_COL_YELLOW);
+        usage_bar(HEAP_BAR_X,122,HEAP_BAR_SPAN,bar_width(heap_used(d),d->heap_internal_total,d->heap_known,HEAP_BAR_SPAN),UI_COL_TEAL);
+        usage_bar(12,180,UI_W-24,bar_width(d->queue_pending,d->queue_capacity,d->queue_known,UI_W-24),UI_COL_YELLOW);
     } else if (!v->setup_active && v->page==CP_DEVICE_PAGE_ACTIVITY) {
         const cp_debug_domain_t *slice=&d->domain;
         const unsigned bins=chart_bins(slice);
@@ -404,10 +419,10 @@ void status_page_render_diff(const cp_status_view_t *next,const cp_status_view_t
     }
     if (debug_page(next)) {
         const cp_debug_snapshot_t *a=&next->debug,*b=&previous->debug;
-        if (bar_width(a->heap_internal_free,a->heap_internal_total,a->heap_known)!=
-            bar_width(b->heap_internal_free,b->heap_internal_total,b->heap_known)) damage_rows(&damage,114,4);
-        if (bar_width(a->queue_pending,a->queue_capacity,a->queue_known)!=
-            bar_width(b->queue_pending,b->queue_capacity,b->queue_known)) damage_rows(&damage,164,4);
+        if (bar_width(heap_used(a),a->heap_internal_total,a->heap_known,HEAP_BAR_SPAN)!=
+            bar_width(heap_used(b),b->heap_internal_total,b->heap_known,HEAP_BAR_SPAN)) damage_rows(&damage,122,4);
+        if (bar_width(a->queue_pending,a->queue_capacity,a->queue_known,UI_W-24)!=
+            bar_width(b->queue_pending,b->queue_capacity,b->queue_known,UI_W-24)) damage_rows(&damage,180,4);
     } else if (!next->setup_active && next->page==CP_DEVICE_PAGE_ACTIVITY &&
                !same_chart(&next->debug.domain,&previous->debug.domain)) damage_rows(&damage,160,35);
     for (unsigned band=0;band<UI_H/4;) {

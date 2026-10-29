@@ -65,7 +65,7 @@ static void test_sequential_projections(void)
     v.debug.wifi_mbps_known=true;v.debug.wifi_mbps=72;v.debug.wifi_rssi_dbm=-61;
     strcpy(v.debug.wifi_ssid,"Synthetic Long Debug AP");strcpy(v.debug.wifi_phy,"11n/20");
     v.debug.heap_known=v.debug.queue_known=true;
-    v.debug.heap_internal_free=102400;v.debug.heap_internal_total=1024000;
+    v.debug.heap_internal_free=102401;v.debug.heap_internal_total=1024000;
     v.debug.heap_internal_largest=22000;v.debug.heap_boot_min_8bit=16000;
     v.debug.queue_pending=2;v.debug.queue_capacity=341;
     v.debug.upload.known=v.debug.upload.goodput_known=true;
