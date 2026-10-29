@@ -217,8 +217,11 @@ void cp_mqtt_wss_end_memory_work(void)
 {if(s_memory_work){s_memory_work=false;xSemaphoreGive(s_io);}}
 bool cp_mqtt_wss_encode_ready(uint32_t timeout_ms)
 {
-    /* Current six-address/six-bin C3 codec estimate: ~14 KiB temporary JSON.
-     * Retain the existing 10 KiB reserve for other runtime work. RX/TX cannot
+    /* The incremental address codec retains one <=8197-byte body plus only
+     * one bounded item's JSON tree/string. Host allocation tests cover 16 bins
+     * below the existing 14 KiB temporary-JSON budget; allocator/runtime costs
+     * and physical acceptance remain separate. Retain the existing 10 KiB
+     * reserve for other runtime work. RX/TX cannot
      * allocate while this gate is held; already cached TLS bytes are included
      * in the fresh heap sample. Largest >=14 KiB preserves the existing floor.
      * This admission estimate is

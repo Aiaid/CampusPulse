@@ -627,7 +627,7 @@ static void test_full_vehicle_summary_window(void) {
     }
     seal_and_persist(30000);
     assert(s_health.windows_committed == 1 && s_health.summaries_committed == 64);
-    assert(s_health.pending == 13 && !s_health.windows_dropped && !s_health.summary_drops);
+    assert(s_health.pending == 7 && !s_health.windows_dropped && !s_health.summary_drops);
     assert(s_sealed.window.raw_count == 0 && s_sealed.window.address_count == 64);
     write_fixtures("vehicle-full64");
     assert_released();
@@ -1365,36 +1365,36 @@ static void test_seal_bank_is_included_in_start_budget(void) {
     assert_released();
 }
 static void test_compact_policy_matrix_and_bank_swap(void) {
-    const unsigned capacities[] = {16, 64};
-    const unsigned bin_counts[] = {1, 6, 16};
-    for (unsigned ci = 0; ci < 2; ++ci)
-        for (unsigned bi = 0; bi < 3; ++bi)
+    const unsigned capacities[] = {16, 32, 64};
+    const unsigned bin_counts[] = {1, 2, 6, 12, 16};
+    for (unsigned ci = 0; ci < sizeof capacities / sizeof capacities[0]; ++ci)
+        for (unsigned bi = 0; bi < sizeof bin_counts / sizeof bin_counts[0]; ++bi)
             for (unsigned raw = 0; raw < 2; ++raw) {
                 reset();
                 const unsigned capacity = capacities[ci], bins = bin_counts[bi];
                 s_policy.max_addresses = capacity;
-                s_policy.summary_window_ms = bins * 1000;
-                s_policy.summary_bin_ms = 1000;
+                s_policy.summary_window_ms = bins * 5000;
+                s_policy.summary_bin_ms = 5000;
                 s_policy.raw_enabled = raw;
                 memory_owned = true;
                 assert(reserve_seal_bank(capacity, bins));
                 memory_owned = false;
                 assert(seal_bytes == 2 * capacity * bins * sizeof(uint32_t));
                 assert(sizeof s_collect_cores == 8192);
-                assert(cp_collect_compact_begin(&s_window, 1000, bins * 1000, 1000,
+                assert(cp_collect_compact_begin(&s_window, 1000, bins * 5000, 5000,
                                                 1, capacity, raw));
                 cp_address_core_t *active = s_window.addresses;
                 uint32_t *active_bins = s_window.bins;
                 unsigned allocated = seal_allocations;
                 for (unsigned b = 0; b < bins; ++b)
                     for (unsigned a = 0; a < capacity; ++a) {
-                        cp_report_t report = {.mono_ms = 1000 + b * 1000 + a,
+                        cp_report_t report = {.mono_ms = 1000 + b * 5000 + a,
                             .report_seq = b * capacity + a + 1, .address = {2,0,0,0,0,(uint8_t)a},
                             .rssi = -50, .raw = raw ? (b == 0 && a < CP_COLLECT_RAW ?
                                 CP_RAW_SELECTED : CP_RAW_INTENTIONAL) : CP_RAW_OFF};
                         assert(cp_collect_compact_observe(&s_window, &report));
                     }
-                close_window(bins * 1000);
+                close_window(bins * 5000);
                 assert(s_sealed.window.cores == active && s_sealed.window.bins == active_bins);
                 assert(s_window.addresses != active && s_window.bins != active_bins);
                 assert(s_sealed.window.address_count == capacity &&
@@ -1411,6 +1411,11 @@ static void test_compact_policy_matrix_and_bank_swap(void) {
                 assert(s_health.windows_committed == 1 && s_health.summaries_committed == capacity);
                 assert(!s_health.windows_dropped && !s_health.raw_drops && !s_health.summary_drops);
                 assert(!s_health.seal_overflows && !s_health.callback_queue_drops);
+                if (!raw && (bins == 2 || bins == 6 || bins == 12)) {
+                    char prefix[64];
+                    snprintf(prefix, sizeof prefix, "refresh-n%u-w%u-b5000", capacity, bins * 5000);
+                    write_fixtures(prefix);
+                }
                 /* Same-size reuse must preserve swapped bindings and never
                  * allocate or alias the just-persisted bank to the next one. */
                 memory_owned = true;

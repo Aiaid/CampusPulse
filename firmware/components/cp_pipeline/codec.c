@@ -349,6 +349,158 @@ bool cp_codec_window(cp_codec_t *c, cp_collect_t *w, uint32_t duration) {
     w->raw_count = 0;
     return ok;
 }
+/* Address batches are assembled from one independently serialized item at a
+ * time. Keep the full body plus at most one small cJSON tree/string, rather
+ * than retaining a tree for every address in the batch. All number, string,
+ * null and field-order semantics still come from the same cJSON builders. */
+#define SUMMARY_ITEM_BYTES 2048u
+#define SUMMARY_BODY_BYTES 8192u
+static char *summary_item(cp_codec_t *c, const cp_codec_window_view_t *w,
+                          unsigned i, uint32_t duration, uint64_t end, uint32_t seq) {
+    cJSON *items = cp_codec_begin_items(c, 1);
+    const cp_address_core_t *a = address_core(w, i);
+    const uint32_t *address_counts = address_bins(w, i);
+    cJSON *o = cp_codec_object(c, items, NULL);
+    char mac[18];
+    mac_text(a->address, mac);
+    if (a->address_type > 4) {
+        c->build_failed = true;
+        cJSON_Delete(items);
+        return NULL;
+    }
+    cp_codec_number(c, o, "seq", seq);
+    cp_codec_time(c, o, end);
+    cp_codec_number(c, o, "window_seq", w->window_seq);
+    cp_codec_number(c, o, "duration_ms", duration);
+    cp_codec_number(c, o, "bin_ms", w->bin_ms);
+    cp_codec_string(c, o, "address", mac);
+    cp_codec_string(c, o, "address_type", address_types[a->address_type]);
+    cp_codec_number(c, o, "reports", a->reports);
+    cp_codec_number(c, o, "adv_reports", a->adv);
+    cp_codec_number(c, o, "scan_response_reports", a->scan_responses);
+    cp_codec_number(c, o, "first_offset_ms", a->first_ms);
+    cp_codec_number(c, o, "last_offset_ms", a->last_ms);
+    rssi_json(c, o, a->samples, a->rssi_min, a->rssi_max, a->rssi_sum);
+    cJSON *bins = cp_codec_array(c, o, "bins");
+    for (unsigned k = 0; k < ((uint64_t)duration + w->bin_ms - 1) / w->bin_ms; k++)
+        cp_codec_number(c, bins, NULL, address_counts[k]);
+    const cp_vehicle_evidence_t *e = &a->vehicle_evidence;
+    cJSON *vehicle = cp_codec_object(c, o, "vehicle_evidence");
+    cp_codec_string(c, vehicle, "schema_version", CP_VEHICLE_SCHEMA_VERSION);
+    cp_codec_number(c, vehicle, "parsed_reports", e->parsed_reports);
+    cp_codec_number(c, vehicle, "malformed_reports", e->malformed_reports);
+    cp_codec_number(c, vehicle, "name_brand_mask", e->name_brand_mask);
+    cp_codec_number(c, vehicle, "exclusion_mask", e->exclusion_mask);
+    cp_codec_number(c, vehicle, "ecosystem_mask", e->ecosystem_mask);
+    char *text = c->build_failed ? NULL : print_bounded(o, SUMMARY_ITEM_BYTES);
+    cJSON_Delete(items);
+    return text;
+}
+static char *summary_body(cp_codec_t *c, unsigned limit, size_t *used) {
+    c->build_failed = false;
+    cJSON *b = cJSON_CreateObject();
+    if (!b) c->build_failed = true;
+    char id[37];
+    c->uuid(id);
+    cp_codec_string(c, b, "protocol", "campuspulse/2");
+    cp_codec_string(c, b, "node_id", c->node_id);
+    cp_codec_string(c, b, "boot_id", c->boot_id);
+    cp_codec_string(c, b, "placement_id", c->placement_id);
+    cp_codec_string(c, b, "capture_config_id", c->config_id);
+    cp_codec_string(c, b, "dataset", c->dataset);
+    cp_codec_string(c, b, "firmware_version", c->firmware_version);
+    cp_codec_string(c, b, "batch_id", id);
+    cp_codec_string(c, b, "stream", "address_summaries");
+    (void)cp_codec_array(c, b, "items");
+    char *body = c->build_failed ? NULL : cJSON_malloc((size_t)limit + 5u);
+    bool ok = body && cJSON_PrintPreallocated(b, body, (int)limit + 5, false);
+    cJSON_Delete(b);
+    if (ok) {
+        size_t length = strlen(body);
+        ok = length >= 2 && length <= limit && !strcmp(body + length - 2, "]}");
+        if (ok) {
+            *used = length - 2; /* Replace only the final empty-array closer. */
+            body[*used] = 0;
+            return body;
+        }
+    }
+    cJSON_free(body);
+    return NULL;
+}
+static void summary_emit(cp_codec_t *c, char *body, size_t used, unsigned count) {
+    if (count) {
+        memcpy(body + used, "]}", 3);
+        if (c->sink(c->sink_context, body, used + 2, "address_summaries", count, false))
+            c->summaries_committed += count;
+        else
+            dropped(c, "address_summaries", count);
+    }
+    cJSON_free(body);
+}
+static void summaries(cp_codec_t *c, const cp_codec_window_view_t *w,
+                      uint32_t duration, uint64_t end) {
+    const unsigned limit = c->max_body_bytes < SUMMARY_BODY_BYTES ?
+        c->max_body_bytes : SUMMARY_BODY_BYTES;
+    char *body = NULL;
+    size_t used = 0;
+    unsigned count = 0;
+    for (unsigned i = 0; i < w->address_count;) {
+        if (*c->summary_sequence == UINT32_MAX) {
+            dropped(c, "address_summaries", w->address_count - i);
+            break;
+        }
+        if (!body) {
+            body = summary_body(c, limit, &used);
+            if (!body) {
+                ++*c->summary_sequence;
+                ++i;
+                dropped(c, "address_summaries", 1);
+                continue;
+            }
+        }
+        char *item = summary_item(c, w, i, duration, end, *c->summary_sequence + 1);
+        if (!item) {
+            /* A failed item creates an explicit sequence gap. End the preceding
+             * contiguous batch before consuming the missing sequence. */
+            summary_emit(c, body, used, count);
+            body = NULL;
+            count = 0;
+            ++*c->summary_sequence;
+            ++i;
+            dropped(c, "address_summaries", 1);
+            continue;
+        }
+        size_t length = strlen(item);
+        bool fits = used + (count != 0) + length + 2u <= limit;
+        if (!fits) {
+            cJSON_free(item);
+            summary_emit(c, body, used, count);
+            body = NULL;
+            if (!count) {
+                ++*c->summary_sequence;
+                ++i;
+                dropped(c, "address_summaries", 1);
+            }
+            count = 0;
+            /* Rebuild the same unconsumed item after flushing a full body.
+             * No pending item allocation is retained across Flash writes. */
+            continue;
+        }
+        if (count) body[used++] = ',';
+        memcpy(body + used, item, length + 1);
+        used += length;
+        cJSON_free(item);
+        ++count;
+        ++*c->summary_sequence;
+        ++i;
+        if (count == c->max_items) {
+            summary_emit(c, body, used, count);
+            body = NULL;
+            count = 0;
+        }
+    }
+    if (body) summary_emit(c, body, used, count);
+}
 bool cp_codec_encode_window_view(cp_codec_t *c, const cp_codec_window_view_t *w,
                                  uint32_t duration) {
     if (!window_valid(c, w, duration))
@@ -397,65 +549,7 @@ bool cp_codec_encode_window_view(cp_codec_t *c, const cp_codec_window_view_t *w,
             return false;
         }
     }
-    /* Reserve envelope space and budget a full 16-bin record plus compact
-     * evidence. Cap at six addresses even under a larger body policy: cJSON
-     * retains the tree and print buffer simultaneously on the no-PSRAM C3.
-     * The final serialized body limit is checked independently below. */
-    unsigned target = (c->max_body_bytes - 1024) / 1024;
-    if (!target)
-        target = 1;
-    if (target > 6)
-        target = 6;
-    if (target > c->max_items)
-        target = c->max_items;
-    for (unsigned first = 0; first < w->address_count; first += target) {
-        unsigned count = w->address_count - first;
-        if (count > target)
-            count = target;
-        if (count > UINT32_MAX - *c->summary_sequence) {
-            dropped(c, "address_summaries", w->address_count - first);
-            break;
-        }
-        cJSON *items = cp_codec_begin_items(c, count);
-        for (unsigned i = first; i < first + count; i++) {
-            const cp_address_core_t *a = address_core(w, i);
-            const uint32_t *address_counts = address_bins(w, i);
-            cJSON *o = cp_codec_object(c, items, NULL);
-            char mac[18];
-            mac_text(a->address, mac);
-            uint32_t seq = ++*c->summary_sequence;
-            if (a->address_type > 4) {
-                c->build_failed = true;
-                continue;
-            }
-            cp_codec_number(c, o, "seq", seq);
-            cp_codec_time(c, o, end);
-            cp_codec_number(c, o, "window_seq", w->window_seq);
-            cp_codec_number(c, o, "duration_ms", duration);
-            cp_codec_number(c, o, "bin_ms", w->bin_ms);
-            cp_codec_string(c, o, "address", mac);
-            cp_codec_string(c, o, "address_type", address_types[a->address_type]);
-            cp_codec_number(c, o, "reports", a->reports);
-            cp_codec_number(c, o, "adv_reports", a->adv);
-            cp_codec_number(c, o, "scan_response_reports", a->scan_responses);
-            cp_codec_number(c, o, "first_offset_ms", a->first_ms);
-            cp_codec_number(c, o, "last_offset_ms", a->last_ms);
-            rssi_json(c, o, a->samples, a->rssi_min, a->rssi_max, a->rssi_sum);
-            cJSON *bins = cp_codec_array(c, o, "bins");
-            for (unsigned k = 0; k < ((uint64_t)duration + w->bin_ms - 1) / w->bin_ms; k++)
-                cp_codec_number(c, bins, NULL, address_counts[k]);
-            const cp_vehicle_evidence_t *e = &a->vehicle_evidence;
-            cJSON *vehicle = cp_codec_object(c, o, "vehicle_evidence");
-            cp_codec_string(c, vehicle, "schema_version", CP_VEHICLE_SCHEMA_VERSION);
-            cp_codec_number(c, vehicle, "parsed_reports", e->parsed_reports);
-            cp_codec_number(c, vehicle, "malformed_reports", e->malformed_reports);
-            cp_codec_number(c, vehicle, "name_brand_mask", e->name_brand_mask);
-            cp_codec_number(c, vehicle, "exclusion_mask", e->exclusion_mask);
-            cp_codec_number(c, vehicle, "ecosystem_mask", e->ecosystem_mask);
-        }
-        if (cp_codec_emit_items(c, "address_summaries", items, false))
-            c->summaries_committed += count;
-    }
+    summaries(c, w, duration, end);
     cJSON *items = cp_codec_begin_items(c, 1), *o = cp_codec_object(c, items, NULL);
     cp_codec_number(c, o, "seq", w->window_seq);
     cp_codec_time(c, o, end);

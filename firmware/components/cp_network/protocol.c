@@ -134,9 +134,18 @@ bool cp_network_parse_policy(const char *json, size_t length, const char *node,
     out->scan_window_ms=(uint32_t)value;
     /* Integer milliseconds must map exactly to NimBLE 0.625 ms units. */
     if (out->scan_interval_ms%5 || out->scan_window_ms%5) goto done;
-    if (!KEYS(summary,"window_ms","bin_ms","max_addresses") || !number(summary,"window_ms",30000,30000,NULL) ||
-        !number(summary,"bin_ms",5000,5000,NULL) || !number(summary,"max_addresses",1,64,&value)) goto done;
-    out->summary_window_ms=30000; out->summary_bin_ms=5000; out->max_addresses=(uint32_t)value;
+    if (!KEYS(summary,"window_ms","bin_ms","max_addresses") ||
+        !number(summary,"window_ms",1000,300000,&value)) goto done;
+    out->summary_window_ms=(uint32_t)value;
+    if (!number(summary,"bin_ms",1000,out->summary_window_ms,&value)) goto done;
+    out->summary_bin_ms=(uint32_t)value;
+    /* Match the server's divisible-window contract within the collector's
+     * native 16-bin bound. Policy-sized banks are admitted before scanning;
+     * accepting a policy here does not bypass runtime heap/lease admission. */
+    if (out->summary_window_ms%out->summary_bin_ms ||
+        out->summary_window_ms/out->summary_bin_ms>16 ||
+        !number(summary,"max_addresses",1,64,&value)) goto done;
+    out->max_addresses=(uint32_t)value;
     if (!KEYS(cc,"lease_ms") || !number(cc,"lease_ms",1,CP_NETWORK_LEASE_MS,&value)) goto done;
     if (value<out->lease_ms) out->lease_ms=value;
     if (equals(raw,"mode","off")) { if (!KEYS(raw,"mode")) goto done; }

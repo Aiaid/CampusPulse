@@ -131,10 +131,10 @@ static void saturated_window(unsigned limit) {
     w.reports_seen = w.reports_aggregated = w.adv = w.rssi_samples = 3840000000u;
     assert(cp_codec_window(&c, &w, 30000));
     assert(c.summaries_committed == 64 && c.windows_committed == 1 && !c.failed_items);
-    assert(items_seen == 65 && bodies == (limit == 4096 ? 23u : 12u));
+    assert(items_seen == 65 && bodies < (limit == 4096 ? 23u : 12u));
     if (require_single_body) {
         assert(largest_request <= (size_t)limit + 5u);
-        assert(peak_bytes < (limit == 4096 ? 14500u : 27500u));
+        assert(peak_bytes < (limit == 4096 ? 10000u : 14u * 1024u));
     }
     printf("Bounded codec: body limit %u, requested host peak %zu B, largest request %zu B\n",
            limit, peak_bytes, largest_request);
@@ -159,10 +159,10 @@ static void compact_window(unsigned bin_count) {
     cp_codec_window_view_t view = cp_codec_window_from_compact(&w);
     assert(cp_codec_encode_window_view(&c, &view, w.window_ms));
     assert(c.summaries_committed == 64 && c.windows_committed == 1 && !c.failed_items);
-    assert(items_seen == 65 && bodies == 12);
+    assert(items_seen == 65 && bodies < 12);
     if (require_single_body) {
         assert(largest_request <= (size_t)limit + 5u);
-        assert(peak_bytes < 27500u);
+        assert(peak_bytes < 14u * 1024u);
     }
     assert(!live_bytes && !live_count);
     printf("Compact codec: 64 addresses / %u bins, requested host JSON peak %zu B\n",

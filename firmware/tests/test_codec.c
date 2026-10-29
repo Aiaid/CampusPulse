@@ -16,6 +16,9 @@ static size_t live_allocations, allocation_calls, fail_at;
 static size_t live_json_bytes, peak_json_bytes, largest_body_bytes;
 static bool inside_sink;
 static unsigned sink_items[4], sink_batches[4], uuid_counter;
+static unsigned reject_summary_batch, rejected_summary_items, summary_item_limit;
+static size_t first_summary_bytes;
+static uint32_t last_summary_sequence;
 static double expected_uncertainty = 23;
 static bool expect_known = true, expect_null_uncertainty;
 static unsigned expected_unacked_slots;
@@ -102,7 +105,12 @@ static bool sink(void *ctx, const char *body, size_t bytes, const char *stream, 
     assert(control == (index == 0 || index == 3));
     sink_items[index] += count;
     sink_batches[index]++;
+    if (index == 1) {
+        if (!first_summary_bytes) first_summary_bytes = bytes;
+        if (summary_item_limit) assert(count <= summary_item_limit);
+    }
     const cJSON *item = NULL;
+    uint32_t previous = 0;
     cJSON_ArrayForEach(item, items) {
         check_time(item);
         assert(cJSON_IsNumber(field(item, "seq")));
@@ -116,6 +124,11 @@ static bool sink(void *ctx, const char *body, size_t bytes, const char *stream, 
                    field(item, "reports_aggregated")->valuedouble +
                        field(item, "aggregation_drops")->valuedouble);
         } else if (index == 1) {
+            double sequence = field(item, "seq")->valuedouble;
+            assert(sequence >= 1 && sequence <= UINT32_MAX);
+            assert(sequence > last_summary_sequence);
+            if (previous) assert(sequence == (double)previous + 1);
+            previous = last_summary_sequence = (uint32_t)sequence;
             REQUIRED(item, "seq", "time", "window_seq", "duration_ms", "bin_ms", "address",
                      "address_type", "reports", "adv_reports", "scan_response_reports",
                      "first_offset_ms", "last_offset_ms", "rssi", "bins", "vehicle_evidence");
@@ -171,6 +184,10 @@ static bool sink(void *ctx, const char *body, size_t bytes, const char *stream, 
     }
     cJSON_Delete(j);
     inside_sink = false;
+    if (index == 1 && sink_batches[1] == reject_summary_batch) {
+        rejected_summary_items += count;
+        return false;
+    }
     return true;
 }
 static void uuid(char out[37]) {
@@ -234,6 +251,8 @@ static void reset(size_t fail) {
     allocation_calls = 0;
     fail_at = fail;
     inside_sink = false;
+    reject_summary_batch = rejected_summary_items = summary_item_limit = 0;
+    first_summary_bytes = last_summary_sequence = 0;
     memset(sink_items, 0, sizeof sink_items);
     memset(sink_batches, 0, sizeof sink_batches);
 }
@@ -298,6 +317,7 @@ static void clocks(void) {
 static void packed_summaries(void) {
     for (unsigned budget = 4096; budget <= 8192; budget *= 2) {
         reset(0);
+        summary_item_limit = 16;
         uint32_t seq = 0;
         cp_codec_t c = context(&seq);
         c.max_body_bytes = budget;
@@ -332,11 +352,79 @@ static void packed_summaries(void) {
         w.reports_seen = w.reports_aggregated = w.adv = w.rssi_samples = 3840000000u;
         assert(cp_codec_window(&c, &w, 30000));
         assert(c.summaries_committed == 64 && c.failed_items == 0);
-        assert(sink_batches[1] == (budget == 4096 ? 22u : 11u));
-        assert(peak_json_bytes < 40000); /* Host cJSON nodes are larger than C3. */
+        assert(sink_batches[1] < (budget == 4096 ? 22u : 11u));
+        assert(peak_json_bytes < 14u * 1024u); /* Host cJSON nodes are larger than C3. */
         printf("Full 64-address packing: body limit %u, %u batches, largest body %zu, host JSON peak %zu bytes\n",
                budget, sink_batches[1], largest_body_bytes, peak_json_bytes);
         assert(live_allocations == 0);
+        if (budget == 8192) {
+            unsigned batch_count = sink_batches[1];
+            size_t sites = allocation_calls;
+            for (unsigned reject = 1; reject <= batch_count; ++reject) {
+                reset(0);
+                seq = 0;
+                c = context(&seq);
+                c.config_id = c.placement_id = long_id;
+                reject_summary_batch = reject;
+                assert(cp_codec_window(&c, &w, 30000));
+                assert(c.summaries_committed + c.summaries_dropped == 64);
+                assert(c.summaries_dropped == rejected_summary_items && rejected_summary_items);
+                assert(c.windows_committed == 1 && !c.windows_dropped && seq == 64);
+                assert(!live_allocations);
+            }
+            /* Sweep allocations across body rollover, not just a single small
+             * batch. Any failed item consumes exactly one sequence; remaining
+             * emitted batches stay contiguous and every address is accounted. */
+            for (size_t failure = 1; failure <= sites; ++failure) {
+                reset(failure);
+                seq = 0;
+                c = context(&seq);
+                c.config_id = c.placement_id = long_id;
+                (void)cp_codec_window(&c, &w, 30000);
+                assert(c.summaries_committed + c.summaries_dropped == 64);
+                assert(c.windows_committed + c.windows_dropped == 1);
+                assert(c.failed_items == c.summaries_dropped + c.windows_dropped);
+                assert(c.failed_items && seq == 64 && !live_allocations);
+            }
+            printf("Incremental full-window OOM sweep: %zu allocation sites, %u sink rejection positions passed\n",
+                   sites, batch_count);
+
+            w.address_count = 1;
+            w.reports_seen = w.reports_aggregated = w.adv = w.rssi_samples = 60000000;
+            reset(0);
+            seq = 0;
+            c = context(&seq);
+            c.config_id = c.placement_id = long_id;
+            c.max_items = summary_item_limit = 1;
+            assert(cp_codec_window(&c, &w, 30000) && c.summaries_committed == 1);
+            unsigned exact = (unsigned)first_summary_bytes;
+            assert(exact >= 1024);
+            for (unsigned difference = 0; difference <= 1; ++difference) {
+                reset(0);
+                seq = 0;
+                c = context(&seq);
+                c.config_id = c.placement_id = long_id;
+                c.max_items = summary_item_limit = 1;
+                c.max_body_bytes = exact - difference;
+                c.sink_context = &c.max_body_bytes;
+                (void)cp_codec_window(&c, &w, 30000);
+                assert(c.summaries_committed == 1 - difference && c.summaries_dropped == difference);
+                assert(seq == 1 && !live_allocations);
+            }
+            reset(0);
+            seq = UINT32_MAX;
+            c = context(&seq);
+            assert(cp_codec_window(&c, &w, 30000));
+            assert(seq == UINT32_MAX && !c.summaries_committed && c.summaries_dropped == 1);
+            assert(!live_allocations);
+            reset(0);
+            seq = UINT32_MAX - 1;
+            w.address_count = 2;
+            c = context(&seq);
+            assert(cp_codec_window(&c, &w, 30000));
+            assert(seq == UINT32_MAX && c.summaries_committed == 1 && c.summaries_dropped == 1);
+            assert(!live_allocations);
+        }
     }
 }
 static void invalid_vehicle_evidence(void) {
