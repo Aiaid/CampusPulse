@@ -6,6 +6,12 @@ bodies, acknowledgements, or configured retention. The user permits discarding
 v1 observations; public sensor projection now reads v2 only. Legacy tables and
 ingestion helpers are not migrated into v2 or used by that projection.
 
+> Status update: this note preserves the first optimization's accepted results.
+> The read path and the former incremental-cache limitation below are now
+> superseded by the deployed [backend incremental cache](backend-incremental-cache.md).
+> Original capture/receipt preservation and the short server result-cache layer
+> remain applicable; use the newer note for current query and maintenance costs.
+
 ## Failure and retained evidence
 
 The production 24-hour investigation found about 1.8 billion D1 rows read for

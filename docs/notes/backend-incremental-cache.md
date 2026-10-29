@@ -105,5 +105,44 @@ specific workload measurements, not universal fleet ratios or invoice totals.
 Canonical-query oracle counts are independent reference-query measurements,
 not a claim that every preceding production API had the same query plan.
 
-Production acceptance is pending; record deployment identity, actual read costs,
-cache-hit behavior and canonical-preservation checks after coordinated rollout.
+## Production acceptance
+
+Validated source `58266e2e1c6a62e97c6cef6a8d0f42e57defcdb4` was built from a
+clean committed snapshot, excluding concurrent uncommitted hardware changes.
+1044 unit/integration tests, TypeScript/build, the complete GIS regression, exact
+device v2 workerd/D1/R2 checks and the real-D1 projection benchmark passed.
+
+The staged 0011 → Worker → 0012 rollout completed on 2026-10-29. Worker version
+`930369c4-c60b-4878-a28b-d7e8ce9d1b4b` received 100% traffic at **13:36:02
+Asia/Shanghai**. A forced public request returned HTTP200, `incremental-v2` and
+`BYPASS`. No serial, firmware, device-policy or collection operation was made
+by this release; the separate hardware session resumed after this server handoff.
+
+Production uncached SQL measurements return 201 windows with 201 rows read and
+one receipt fallback with one row read (4.73ms /0.51ms in the recorded sample).
+The preceding indexed version's samples were1241/5310 rows respectively;
+these are individual measurements at different timestamps, not matched fleet
+traffic or a universal latency percentage.
+
+Independent canonical-source queries at the same cutoff matched exact record
+identities and item payload bytes for all five real places, both history-window
+and receipt-fallback paths. The production active-manual projection also matched
+its source (zero active rows in this snapshot); positive cancellation/history
+cases are covered by isolated real-D1 and API tests, not synthetic production
+field writes. Those ten full-source comparisons are one-time audit reads, not
+the normal public query path.
+
+A frozen pre-rollout receipt cutoff selected **48361 v2 items and17186 receipts**
+whose expiry was more than one hour away. Their counts and summed content
+lengths match after rollout, and foreign-key checks return zero errors. Local
+migration tests additionally compare complete source snapshots byte for byte.
+Production cache-expiry cleanup found zero eligible rows, read two rows, wrote
+zero and performed no canonical deletion; positive expiry and backlog tests run
+only against isolated databases.
+
+All four result-cache route types again returned `MISS → HIT → HIT`, with
+identical repeated snapshot bytes, browser `no-store`, and explicit manual
+`BYPASS`. Hits do not execute the D1 handler. The serving location in these
+HTTP samples was LAX; CacheAPI remains per-location. The final release's13
+image assets were checked with ExifTool, with no identifying embedded metadata
+fields detected and no image modifications.

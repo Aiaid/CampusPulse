@@ -16,14 +16,6 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
-- [ ] 2026-10-29: Materialize the v2 public backend cache incrementally from
-      committed source inserts/changes, retaining server receipt time and full
-      record identity. Handle delayed/tied-time uploads, manual cancellation,
-      placement closure and retention without rewriting source history or
-      changing collection. Compare against authoritative full queries, verify
-      atomic retries/rollback and measure the added writes versus saved reads
-      on real D1 before coordinated deployment and production acceptance.
-
 - [ ] 2026-10-29 follow-up: reproduce the Chrome existing-device Wi-Fi
       reconfiguration `storage_unavailable` failure, repair its actual cause and
       verify the production flow without rotating credentials. Replace the
@@ -303,6 +295,16 @@ collection and durable upload. Final local software verification passed on
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] 2026-10-29: Deploy transactional incremental backend public caches for
+      field v2 windows and active manual records. Equal-time/backfill changes,
+      cancellation fallback, closure repair and independent expiry pruning are
+      verified without rewriting source history or capture policy.1044 tests,
+      real-D1 lifecycle/cost checks and production five-place source parity pass;
+      public window/fallback reads201/1, result-cache HIT/BYPASS and48361 frozen
+      items/17186 receipts are verified. The synthetic cache-maintenance write
+      cost is +1.35%; see [backend cache acceptance](../notes/backend-incremental-cache.md)
+      for boundaries and the staged0011→Worker→0012 rollout.
 
 - [x] 2026-10-29: Fix administrator browser regressions after contextual help
       made partial form-label locators ambiguous. Exact labels, scoped status
