@@ -226,7 +226,7 @@ the known8KiB/30s resource pressure for newly provisioned nodes.
 
 ![Observed heap and queue trials](../research/figures/mqtt-capacity-trials-20261029.png)
 
-The [main pipeline samples](../research/data/mqtt-capacity-trials-20261029.csv)
+The [main pipeline samples](../research/metrics/mqtt-capacity-trials-20261029.csv)
 contain only relative times, counts and memory sizes. Starting backlogs and
 server revisions differ; this figure is an observation comparison, not an
 isolated causal benchmark. The final PNG is stripped and checked with ExifTool:
