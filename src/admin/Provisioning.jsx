@@ -12,6 +12,7 @@ import { wifiPayload, supportsWifiMode } from './provisioning/network.js';
 import './provisioning.css';
 import { observationKinds, formatObservationKinds } from '../shared/observation-kinds.js';
 import WorkPurposes from './WorkPurposes.jsx';
+import HelpTip from './HelpTip.jsx';
 import { availableWorkPurposes, validateWorkPurposes } from './work-purposes.js';
 
 export default function Provisioning({ onClose, initialNodeId = '' }) {
@@ -294,40 +295,40 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
   return <Dialog title={initialNodeId ? '重新配置设备网络' : '连接并部署设备'} onClose={close} pending={mutation.pending} wide>
     <div className="cp-provision" aria-busy={mutation.pending}>
       <p>已登记设备会带入当前设置。位置、采集配置和 Wi-Fi 可以继续修改，保存后以新设置为准；发送到设备前再核对连接和设备凭证。</p>
-      <div className="cp-provision-modes">{[['ble', '蓝牙配网', Bluetooth, available], ['usb', 'USB 配网', Usb, usbAvailable], ['ap', '设备热点配网', WifiHigh, true]].map(([key, label, Icon, supported]) => <button key={key} type="button" className={`cp-admin-button ${mode === key ? 'cp-admin-primary' : ''}`} disabled={!supported || !!identity || submitted || mutation.pending} onClick={() => setMode(key)}><Icon />{label}</button>)}</div>
+      <p><HelpTip topic="配网方式" label="了解蓝牙、USB 与设备热点配网的区别" /></p><div className="cp-provision-modes">{[['ble', '蓝牙配网', Bluetooth, available], ['usb', 'USB 配网', Usb, usbAvailable], ['ap', '设备热点配网', WifiHigh, true]].map(([key, label, Icon, supported]) => <button key={key} type="button" className={`cp-admin-button ${mode === key ? 'cp-admin-primary' : ''}`} disabled={!supported || !!identity || submitted || mutation.pending} onClick={() => setMode(key)}><Icon />{label}</button>)}</div>
       {(!available || !usbAvailable) && <Notice>此浏览器{!available ? '没有可用的 Web Bluetooth' : ''}{!available && !usbAvailable ? '，也' : ''}{!usbAvailable ? '没有可用的 Web Serial' : ''}。iPhone / iPad 使用设备热点页面；无屏幕设备可用支持 Web Serial 的桌面 Chrome / Edge 连接 USB。</Notice>}
-      <section><h3>1 · 确认现场设备</h3>
+      <section><h3 aria-label="1 · 确认现场设备"><span>1 · 确认现场设备</span><HelpTip topic="确认现场设备" label="了解确认现场设备" /></h3>
         {mode === 'ble' ? <><Field label="设备屏幕上的配网码" hint="8 位数字，保留开头的 0；5 分钟有效，累计 5 次失败锁定本次配网。"><input type="password" inputMode="numeric" pattern="[0-9]{8}" autoComplete="off" maxLength={8} value={proof} onChange={e => setProof(e.target.value)} /></Field><button type="button" className="cp-admin-button" disabled={mutation.pending || validating || !PIN_PATTERN.test(proof)} onClick={() => connect()}>{identity ? '重新连接同一设备' : '选择蓝牙设备并验证'}</button></>
           : mode === 'usb' ? <><p>连接数据线并关闭其他串口程序。开始配网会暂停采集，无需屏幕或配网码。</p><button type="button" className="cp-admin-button" disabled={mutation.pending || validating} onClick={() => connect()}>{identity ? '重新连接同一 USB 设备' : '选择 USB 设备并开始配网'}</button></>
             : <><Notice>先保持互联网完成云端核对，再加入设备屏幕显示的热点，使用 12 位热点密码打开 http://192.168.4.1。本地页面核对 8 位配网码并接收 Wi-Fi 密码。</Notice><Field label="设备屏幕上的工厂节点 ID"><input value={manualNode} onChange={e => setManualNode(e.target.value.trim().toLowerCase())} disabled={!!initialNodeId || registered || registerUncertain} pattern="cp_[a-f0-9]{12}" autoComplete="off" placeholder="cp_001122aabbcc" /></Field></>}
         {identity && <p className="cp-admin-mono">{node} · {identity.board} {disconnected ? '（本机连接已断开）' : mode === 'usb' ? '（USB 工厂身份已读取）' : '（已验证身份）'}</p>}
         {initialNodeId && !identity && <p>已选择云端节点。写入前仍需核对同一台现场设备。</p>}
       </section>
-      <section><h3>2 · 设备登记与联网授权</h3><Notice>设备默认使用杭州 MQTT/TLS → EMQX → Cloudflare。登记时只分配已通过代理验证的独立授权；代理验证、现场保存和云端回执分别确认。</Notice>
+      <section><h3 aria-label="2 · 设备登记与联网授权"><span>2 · 设备登记与联网授权</span><HelpTip topic="设备登记与联网授权" label="了解设备登记与联网授权" /></h3><Notice>设备默认使用杭州 MQTT/TLS → EMQX → Cloudflare。登记时只分配已通过代理验证的独立授权；代理验证、现场保存和云端回执分别确认。</Notice>
         {lookup === 'idle' && <p>确认工厂节点 ID 后会自动检查登记状态。</p>}{lookup === 'checking' && <p role="status">正在查询云端是否已有此节点…</p>}
         {lookup === 'new' && <><Notice>这是尚未登记的节点。首次登记只创建一次云端身份；连接 Wi-Fi 需要下一步现场写入。</Notice><Field label="设备名称"><input value={name} maxLength={80} onChange={e => setName(e.target.value)} /></Field><button className="cp-admin-button" disabled={mutation.pending || !physicalReady || registerUncertain || !name.trim()} onClick={register}>首次登记并取得设备凭证</button></>}
         {registered && <><div className="cp-provision-existing"><strong>已登记设备 · {detail?.device?.name || '现场节点'}</strong><p>本次重新配置网络，沿用现有云端身份。不会再次创建设备记录。</p></div>
           {detail?.device?.enabled === false && <Notice>此云端节点已停用，设备认证会被拒绝。请在设备详情启用后重新检查登记状态，再提交 Wi-Fi。</Notice>}
-          {mayRequestSavedCredential && <label className="cp-provision-option"><input type="radio" name="credential-source" checked={credentialMode === 'saved'} disabled={mutation.pending || registerUncertain || submitted} onChange={() => { token.current = ''; setCredentialMode('saved'); }} /><span><strong>保留设备内现有凭证</strong><small>{mode === 'ap' ? '由设备本地页面核验是否支持复用；旧页面拒绝时请改用备份凭证。不会在浏览器读取设备内凭证。' : '设备已报告可复用保存的凭证；凭证不会被读取到浏览器。'}</small></span></label>}
+          {mayRequestSavedCredential && <><label className="cp-provision-option"><input type="radio" name="credential-source" checked={credentialMode === 'saved'} disabled={mutation.pending || registerUncertain || submitted} onChange={() => { token.current = ''; setCredentialMode('saved'); }} /><span><strong>保留设备内现有凭证</strong><small>{mode === 'ap' ? '由设备本地页面核验是否支持复用；旧页面拒绝时请改用备份凭证。不会在浏览器读取设备内凭证。' : '设备已报告可复用保存的凭证；凭证不会被读取到浏览器。'}</small></span></label><HelpTip topic="保留设备内现有凭证" label="了解复用设备内现有凭证" /></>}
           {mqttPrepared && !writeComplete && <p role="status">MQTT 代理授权已验证并准备好，仅在本向导内存保留；现场设备尚待保存确认。</p>}
           {registered && !mqttPrepared && !writeComplete && <><p>{identity?.has_saved_mqtt === true ? '设备报告已保存 MQTT；只修改 Wi-Fi 时保留原授权。' : '尚未确认现场设备已保存 MQTT。请准备授权后写入设备。'}</p><button className="cp-admin-button" disabled={mutation.pending || !physicalReady || disconnected || validating || writeComplete} onClick={prepareMqtt}>准备或复用 MQTT 授权</button></>}
           {credentialMode === 'provided' && <p role="status">设备凭证已准备，仅保留于当前向导。</p>}
           {!mayRequestSavedCredential && credentialMode !== 'provided' && !registerUncertain && <p>{authorizationNeeded ? '设备还没有保存联网授权。填写 Wi-Fi 后，直接点击下方的重新授权并连接，无需手动复制密钥。' : '当前连接尚未确认设备的联网授权状态。请重连现场设备，或使用备份的设备凭证。'}</p>}
-          <details><summary>使用已保存的设备凭证或更换凭证</summary><Field label="已有的独立设备凭证"><input type="password" autoComplete="off" value={existingToken} onChange={e => setExistingToken(e.target.value)} disabled={submitted && !diagnosis.failed} /></Field><button className="cp-admin-button" disabled={mutation.pending || (submitted && !diagnosis.failed)} onClick={useSaved}>使用已有设备凭证</button><details><summary>无法取得旧凭证：明确轮换</summary><Notice>轮换会立即使旧凭证失效，设备可能暂停联网。只在确实需要更换凭证时使用。</Notice><label className="cp-admin-checkbox"><input type="checkbox" checked={rotateConsent} onChange={e => setRotateConsent(e.target.checked)} />我确认旧凭证会立即失效，并将新凭证写入这台设备。</label><button className="cp-admin-button cp-admin-danger" disabled={mutation.pending || !rotateConsent || (submitted && !diagnosis.failed)} onClick={rotate}>确认轮换并重新配网</button></details></details>
+          <details><summary>使用已保存的设备凭证或更换凭证</summary><Field label="已有的独立设备凭证"><input type="password" autoComplete="off" value={existingToken} onChange={e => setExistingToken(e.target.value)} disabled={submitted && !diagnosis.failed} /></Field><button className="cp-admin-button" disabled={mutation.pending || (submitted && !diagnosis.failed)} onClick={useSaved}>使用已有设备凭证</button><details><summary>无法取得旧凭证：明确轮换</summary><Notice>轮换会立即使旧凭证失效，设备可能暂停联网。只在确实需要更换凭证时使用。</Notice><label className="cp-admin-checkbox"><input type="checkbox" checked={rotateConsent} onChange={e => setRotateConsent(e.target.checked)} />我确认旧凭证会立即失效，并将新凭证写入这台设备。</label><HelpTip topic="轮换设备凭证确认" label="了解轮换设备凭证的影响" /><button className="cp-admin-button cp-admin-danger" disabled={mutation.pending || !rotateConsent || (submitted && !diagnosis.failed)} onClick={rotate}>确认轮换并重新配网</button></details></details>
         </>}
         {registerUncertain && <Notice>上次登记或轮换的结果尚不确定。请先查询结果；不会自动再次登记或轮换。已有凭证无法由服务器再次取回。</Notice>}
         {NODE_PATTERN.test(node) && <button className="cp-admin-button" disabled={mutation.pending || lookup === 'checking'} onClick={() => mutation.run(() => inspect())}>重新检查登记状态</button>}
         <ErrorNotice error={lookupError} />
       </section>
-      <fieldset disabled={mutation.pending || !registered || validating}><legend>3 · 位置与采集配置</legend>
-        <fieldset className="cp-admin-edit-fields" disabled={configAttempted}><Field label="部署地点"><Resource resource={places}>{data => <select value={place} onChange={e => changeConfig('place', e.target.value)}><option value="">未定位 / 移动中</option>{data.places.map(p => <option key={p.id} value={p.id}>{p.name} · {formatObservationKinds(p)}</option>)}</select>}</Resource></Field>
+      <fieldset disabled={mutation.pending || !registered || validating} aria-label="3 · 位置与采集配置"><legend><span>3 · 位置与采集配置</span><HelpTip topic="位置与采集配置" label="了解位置与采集配置" /></legend>
+        <fieldset className="cp-admin-edit-fields" disabled={configAttempted}><Field label="部署地点" help="目标地点"><Resource resource={places}>{data => <select value={place} onChange={e => changeConfig('place', e.target.value)}><option value="">未定位 / 移动中</option>{data.places.map(p => <option key={p.id} value={p.id}>{p.name} · {formatObservationKinds(p)}</option>)}</select>}</Resource></Field>
         <WorkPurposes value={workPurposes} allowed={availableWorkPurposes(places.data?.places.find(p => p.id === place))} onChange={value => changeConfig('purposes', value)} />
-        <Field label="数据用途"><select value={dataset} onChange={e => changeConfig('dataset', e.target.value)}><option value="controlled_test">受控测试</option><option value="field">现场观测</option></select></Field>
+        <Field label="数据用途" help="数据集"><select value={dataset} onChange={e => changeConfig('dataset', e.target.value)}><option value="controlled_test">受控测试</option><option value="field">现场观测</option></select></Field>
         <p>{currentConfig ? '带入当前设置，修改后保存即可；其余采集参数继续沿用。' : '默认使用 30 秒地址汇总、5 秒分箱、最多 64 个地址。BLE 可见标识不能当作人数。'}</p>
         </fieldset>{configAttempted && <Notice>本次地点、用途和数据集已固定。请重试核对原保存结果；更改其他内容请关闭后重新读取。</Notice>}<button className="cp-admin-button" onClick={saveConfig} disabled={places.loading || !!places.error || !workPurposes.length}>{configAttempted ? '重试本次保存' : '保存配置'}</button>
         {configDirty ? <p role="status">有尚未保存的配置修改。</p> : configId && <p role="status">当前配置已准备好，仍可继续修改并保存。</p>}
       </fieldset>
-      <fieldset disabled={mutation.pending || validating}><legend>4 · 设置 Wi-Fi</legend>
+      <fieldset disabled={mutation.pending || validating} aria-label="4 · 设置 Wi-Fi"><legend><span>4 · 设置 Wi-Fi</span><HelpTip topic="设置 Wi-Fi" label="了解设置 Wi-Fi" /></legend>
         {authorizationNeeded && <Notice>点击“重新授权并连接 Wi-Fi”会为已连接的这台设备重新签发联网凭证，旧凭证立即失效；设备登记、位置和采集配置继续保留。</Notice>}
         <p>支持 2.4 GHz WPA2、开放网络和 PEAP/MSCHAPv2 企业认证。企业认证不校验服务器证书；云端 MQTT/TLS 仍严格验证。网页登录 / Portal 需要另行处理。</p>
         {mode !== 'ap' ? <form onSubmit={e => { e.preventDefault(); transmit(); }}>
@@ -337,7 +338,7 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
         {submitReason && <p role="status">{submitReason}</p>}
       </fieldset>
       {writeComplete && <button className="cp-admin-button" disabled={mutation.pending} onClick={restartNetwork}>重新配置网络</button>}
-      {(submitted || localStatus?.state === 'failed' || debugAttached) && <section className={`cp-provision-result ${diagnosis.failed ? 'is-failed' : ''}`} aria-live="polite"><h3>5 · 设备验证与云端确认</h3>
+      {(submitted || localStatus?.state === 'failed' || debugAttached) && <section className={`cp-provision-result ${diagnosis.failed ? 'is-failed' : ''}`} aria-live="polite"><h3 aria-label="5 · 设备验证与云端确认"><span>5 · 设备验证与云端确认</span><HelpTip topic="设备验证与云端确认" label="了解设备验证与云端确认" /></h3>
         <div className="cp-provision-stage"><strong>{diagnosis.state}</strong>{diagnosis.stage && <span>最后报告阶段：{diagnosis.stage}</span>}</div>
         {bootChanged && <Notice>已观察到设备启动标识变化，说明设备发生过重启。当前等待状态不代表上次故障已解决；请查看历史记录与本次云端确认。</Notice>}
         {boot && <p>本次启动运行 {boot.uptime_ms == null ? '未知' : `${Math.floor(boot.uptime_ms / 1000)} 秒`}{boot.reset_reason == null ? '' : ` · 设备复位原因代码 ${boot.reset_reason}`}</p>}
@@ -346,12 +347,12 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
         {diagnosis.failed && <p>本次候选未确认保存。可修正上方 Wi-Fi 后重试；不需要重新登记设备或重新发布相同配置。</p>}
         {disconnected && <Notice>本机连接已断开。设备可能正在验证或重启，这本身不能判断成功或失败。继续检查云端，或连接 USB 读取诊断。</Notice>}
         {localError && <p role="status">{localError}</p>}
-        {lastDiagnostic && <details><summary>安全诊断详情</summary><pre className="cp-provision-diagnostic">{JSON.stringify(lastDiagnostic, null, 2)}</pre><small>这是最后一次收到的安全诊断，开始新尝试后保留至设备更新。仅含阶段、固定错误代码和数值，不包含网络名称、密码或设备凭证。</small></details>}
-        <ol className="cp-provision-checks"><li>云端身份：{registered ? '沿用已登记节点' : '尚未确认'}</li><li>MQTT 代理授权：{mqttPrepared ? networkSaved ? '代理已验证，本次设备保存已确认' : '代理已验证；本次设备保存尚未确认' : identity?.has_saved_mqtt === true ? '设备报告已有保存授权' : '尚未确认'}</li><li>期望配置：{configId || '尚未选择'}</li><li>本次网络设置：{networkSaved ? '设备已确认保存本次网络设置' : '尚未取得本次保存确认'}</li><li>本次云端联系：{progress.contact ? '已收到' : '尚未收到'}</li><li>本次配置应用确认：{progress.applied ? '已收到当前配置新的 applied ACK' : '尚未收到新的 applied ACK，历史确认不计入本次'}</li></ol>
+        {lastDiagnostic && <details><summary>安全诊断详情</summary><HelpTip topic="安全诊断详情" label="了解安全诊断的字段与证据边界" /><pre className="cp-provision-diagnostic">{JSON.stringify(lastDiagnostic, null, 2)}</pre><small>这是最后一次收到的安全诊断，开始新尝试后保留至设备更新。仅含阶段、固定错误代码和数值，不包含网络名称、密码或设备凭证。</small></details>}
+        <ol className="cp-provision-checks"><li>云端身份：{registered ? '沿用已登记节点' : '尚未确认'}</li><li>MQTT 代理授权：{mqttPrepared ? networkSaved ? '代理已验证，本次设备保存已确认' : '代理已验证；本次设备保存尚未确认' : identity?.has_saved_mqtt === true ? '设备报告已有保存授权' : '尚未确认'}</li><li>期望配置：{configId || '尚未选择'}</li><li><span>本次网络设置</span><HelpTip topic="本次网络设置" label="了解本次网络设置的确认条件" />：{networkSaved ? '设备已确认保存本次网络设置' : '尚未取得本次保存确认'}</li><li><span>本次云端联系</span><HelpTip topic="本次云端联系" label="了解本次云端联系的确认条件" />：{progress.contact ? '已收到' : '尚未收到'}</li><li><span>本次配置应用确认</span><HelpTip topic="本次配置应用确认" label="了解本次配置应用确认的确认条件" />：{progress.applied ? '已收到当前配置新的 applied ACK' : '尚未收到新的 applied ACK，历史确认不计入本次'}</li></ol>
         <div className="cp-provision-actions"><button className="cp-admin-button" disabled={mutation.pending} onClick={() => mutation.run(async () => { setDetail(await api(`/devices/${node}`)); setCloudError(''); })}>检查云端状态</button>{(mode === 'usb' || debugAttached) && <button className="cp-admin-button" disabled={mutation.pending} onClick={() => mutation.run(readStatus)}>读取设备阶段与诊断</button>}</div>{cloudError && <p role="status">{cloudError}</p>}
         {writeComplete && <button className="cp-admin-button cp-admin-primary" onClick={() => { notify(progress.applied ? '设备已重新联系云端并确认应用配置。' : '本次配网已完成；最新采集配置的应用状态请在设备目录查看。'); close(); }}>完成并返回设备目录</button>}
       </section>}
-      {usbAvailable && !(mode === 'usb' && client.current && !disconnected) && <section><h3>USB 排查</h3><p>只读模式不发送开始配网或配置命令。部分 USB 驱动打开串口时可能触发设备复位，RAM 中的旧故障可能丢失；不能用重启后的等待状态推断此前没有故障。连接同一台设备的数据线。</p><button className="cp-admin-button" disabled={mutation.pending} onClick={attachDiagnostics}>连接 USB 只读诊断</button>{debugAttached && <button className="cp-admin-button" disabled={mutation.pending} onClick={() => connect('usb', diagnosticPort.current)}>在同一 USB 设备上开始重配</button>}</section>}
+      {usbAvailable && !(mode === 'usb' && client.current && !disconnected) && <section><h3 aria-label="USB 排查"><span>USB 排查</span><HelpTip topic="USB 排查" label="了解 USB 只读诊断与重配" /></h3><p>只读模式不发送开始配网或配置命令。部分 USB 驱动打开串口时可能触发设备复位，RAM 中的旧故障可能丢失；不能用重启后的等待状态推断此前没有故障。连接同一台设备的数据线。</p><button className="cp-admin-button" disabled={mutation.pending} onClick={attachDiagnostics}>连接 USB 只读诊断</button>{debugAttached && <button className="cp-admin-button" disabled={mutation.pending} onClick={() => connect('usb', diagnosticPort.current)}>在同一 USB 设备上开始重配</button>}</section>}
       {message && <p role="status" className="cp-provision-status">{message}</p>}<ErrorNotice error={mutation.error} />
     </div>
   </Dialog>;

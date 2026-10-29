@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useId, useRef, useState } from 'react';
 import { CircleNotch, WarningCircle, X, ArrowClockwise } from '@phosphor-icons/react';
 import { adminErrorReference } from './error-reference.js';
+import HelpTip from './HelpTip.jsx';
+import { resolveAdminHelp } from './help-content.js';
 
 export const AdminContext = createContext(null);
 export const useAdmin = () => useContext(AdminContext);
@@ -80,14 +82,15 @@ export function Resource({ resource, children }) {
   return labelControls(children(resource.data), field);
 }
 export function Empty({ title = '暂无数据', children }) { return <div className="cp-admin-empty"><h3>{title}</h3>{children && <p>{children}</p>}</div>; }
-export function Field({ label, hint, children, className = '' }) {
+export function Field({ label, hint, help, children, className = '' }) {
   const id = useId();
+  const explanation = help === false ? null : resolveAdminHelp(help || label);
   const field = { controlId: `${id}-control`, labelId: `${id}-label`, hintId: hint ? `${id}-hint` : null };
-  return <FieldContext.Provider value={field}><div className={`cp-admin-field ${className}`}><label id={field.labelId} htmlFor={field.controlId}>{label}</label>{labelControls(children, field)}{hint && <small id={field.hintId}>{hint}</small>}</div></FieldContext.Provider>;
+  return <FieldContext.Provider value={field}><div className={`cp-admin-field ${className}`}><span className="cp-admin-field-label"><label id={field.labelId} htmlFor={field.controlId}>{label}</label>{explanation && <HelpTip help={explanation} label={label} />}</span>{labelControls(children, field)}{hint && <small id={field.hintId}>{hint}</small>}</div></FieldContext.Provider>;
 }
 export function Notice({ children }) { return <div className="cp-admin-notice"><WarningCircle size={20} /><div>{children}</div></div>; }
 export function PageHeader({ eyebrow, title, description, children }) { return <header className="cp-admin-page-header"><div><div className="cp-admin-eyebrow">{eyebrow}</div><h1>{title}</h1>{description && <p>{description}</p>}</div>{children && <div className="cp-admin-actions">{children}</div>}</header>; }
-export function Panel({ title, description, children, className = '', action }) { return <section className={`cp-admin-panel ${className}`}>{title && <div className="cp-admin-panel-head"><div><h2>{title}</h2>{description && <p>{description}</p>}</div>{action}</div>}{children}</section>; }
+export function Panel({ title, help, description, children, className = '', action }) { return <section className={`cp-admin-panel ${className}`}>{title && <div className="cp-admin-panel-head"><div><h2 aria-label={typeof title === 'string' ? title : undefined}><span>{title}</span>{help !== false && <HelpTip topic={help || title} label={typeof title === 'string' ? title : undefined} />}</h2>{description && <p>{description}</p>}</div>{action}</div>}{children}</section>; }
 export function FormActions({ pending, label = '保存', onCancel }) { return <div className="cp-admin-form-actions">{onCancel && <button type="button" className="cp-admin-button" onClick={onCancel} disabled={pending}>取消</button>}<button type="submit" className="cp-admin-button cp-admin-primary" disabled={pending}>{pending && <CircleNotch className="cp-admin-spin" />}{pending ? '正在处理…' : label}</button></div>; }
 
 export function Dialog({ title, children, onClose, pending = false, wide = false }) {
@@ -105,11 +108,11 @@ export function Confirm({ title, children, label = '确认', danger = false, act
 }
 
 const states = { recent: ['最近有回执', 'green'], stale: ['联系已过期', 'amber'], unknown: ['尚无回执', 'gray'], disabled: ['已停用', 'gray'], unassigned: ['未分配', 'gray'], pending: ['等待设备', 'amber'], reported: ['批次已引用', 'blue'], applied: ['设备确认应用', 'green'], failed: ['设备报告失败', 'red'] };
-export function Badge({ state, children }) { const [label, color] = states[state] || [state || '未知', 'gray']; return <span className={`cp-admin-badge cp-admin-badge-${color}`}>{children || label}</span>; }
+export function Badge({ state, children, help = false }) { const [label, color] = states[state] || [state || '未知', 'gray']; const badge = <span className={`cp-admin-badge cp-admin-badge-${color}`}>{children || label}</span>; return help ? <span className="cp-admin-status-help">{badge}<HelpTip topic={help === true ? state : help} label={label} /></span> : badge; }
 export const fmtTime = value => value === null || value === undefined || value === '' ? '尚未上报' : Number.isFinite(new Date(value).getTime()) ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '时间不可用';
 export const fmtNumber = value => value === null || value === undefined ? '未上报' : Number(value).toLocaleString('zh-CN');
 export function fmtBytes(value) { if (value === null || value === undefined) return '未上报'; if (value < 1024) return `${value} B`; if (value < 1048576) return `${(value / 1024).toFixed(1)} KB`; return `${(value / 1048576).toFixed(1)} MB`; }
 export const idPattern = '[a-z0-9_-]{1,64}';
 export function localTime(value = Date.now()) { const d = new Date(value); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
-export function Metric({ label, value, hint }) { return <div className="cp-admin-metric"><span>{label}</span><strong>{value ?? '—'}</strong>{hint && <small>{hint}</small>}</div>; }
-export function KeyValues({ entries }) { return <dl className="cp-admin-key-values">{entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value ?? '未上报'}</dd></div>)}</dl>; }
+export function Metric({ label, value, hint, help }) { return <div className="cp-admin-metric"><span className="cp-admin-metric-label"><span>{label}</span>{help !== false && <HelpTip topic={help || label} label={label} />}</span><strong>{value ?? '—'}</strong>{hint && <small>{hint}</small>}</div>; }
+export function KeyValues({ entries }) { return <dl className="cp-admin-key-values">{entries.map(([key, value, help]) => <div key={key}><dt><span className="cp-admin-key-label"><span>{key}</span>{help !== false && <HelpTip topic={help || key} label={key} />}</span></dt><dd>{value ?? '未上报'}</dd></div>)}</dl>; }

@@ -296,6 +296,15 @@ collection and durable upload. Final local software verification passed on
 
 ## Completed archive
 
+- [x] 2026-10-29: Add detailed contextual administrator help for capture policy,
+      device/receipt diagnostics, deployment, MQTT enrollment and site/account
+      settings. Mouse/focus/click/touch explanations support scrollable content,
+      Escape, native modal popovers and fallback positioning. Chromium/WebKit
+      desktop/390px interactions, synthetic config-editing workflow, 33 targeted
+      tests and production build pass locally. Preview PNG metadata stripped and
+      checked. Production rollout is tracked separately; no backend/default
+      changes or hardware use.
+
 - [x] 2026-10-29: Deploy indexed v2 public reads, bounded server-side snapshot
       caching and visibility-aware, independent frontend polling. Production
       windows/fallback reads fall 54729→1241 and 49033→5310 rows; four public

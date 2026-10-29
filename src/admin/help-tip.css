@@ -1,0 +1,26 @@
+.admin-root .cp-admin-help{display:inline-flex;vertical-align:middle;align-items:center;flex:none;margin-left:3px;font-size:13px;font-weight:400;letter-spacing:normal;text-transform:none}
+.admin-root .cp-admin-help-trigger{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;min-height:30px;padding:0;border:1px solid transparent;border-radius:50%;background:transparent;color:#627b70;vertical-align:middle;flex:none;line-height:1}
+.admin-root .cp-admin-help-trigger:hover,.admin-root .cp-admin-help-trigger[aria-expanded=true]{color:#164d39;background:#e9f2ec;border-color:#c8dcd0}
+.admin-root .cp-admin-help-panel{position:fixed;inset:auto;margin:0;padding:0;border:1px solid #bdcfc3;border-radius:12px;background:#fff;color:#20352f;box-shadow:0 12px 40px #18352929;overflow:auto;overscroll-behavior:contain;z-index:1000;font:400 14px/1.8 Inter,-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;text-align:left;white-space:normal;overflow-wrap:anywhere;letter-spacing:normal;text-transform:none;scrollbar-width:thin}
+.admin-root .cp-admin-help-panel:not(.is-open){display:none}
+.admin-root .cp-admin-help-panel.is-open{display:block}
+.admin-root .cp-admin-help-panel::backdrop{background:transparent;pointer-events:none}
+.admin-root .cp-admin-help-head{display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;padding:13px 16px;border-bottom:1px solid #e2eae4;background:#f5f8f4;z-index:1}
+.admin-root .cp-admin-help-head>strong{font-size:15px;font-weight:650;line-height:1.6}
+.admin-root .cp-admin-help-close{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;flex:none;padding:0;border:1px solid #d9e3dc;border-radius:6px;background:#fff;color:#456052}
+.admin-root .cp-admin-help-copy{display:block;padding:15px 17px;font-size:14px;line-height:1.85}
+.admin-root .cp-admin-help-paragraph{display:block;margin-bottom:11px}
+.admin-root .cp-admin-help-paragraph:last-child{margin-bottom:0}
+.admin-root .cp-admin-help-example,.admin-root .cp-admin-help-caution{display:block;margin-top:12px;padding:10px 12px;border-radius:7px;background:#eff5ef;color:#315847}
+.admin-root .cp-admin-help-caution{background:#fbf3e5;color:#785b2e}
+.admin-root .cp-admin-help-copy b{display:block;font-weight:650;margin-bottom:3px}
+.admin-root .cp-admin-field-label{display:flex;align-items:center;gap:2px;min-height:30px;font-weight:550}
+.admin-root .cp-admin-field-label>label{cursor:pointer}
+.admin-root .cp-admin-metric-label,.admin-root .cp-admin-key-label{display:inline-flex;align-items:center;gap:2px;flex-wrap:wrap}
+.admin-root .cp-admin-status-help{display:inline-flex;align-items:center}
+.admin-root .cp-admin-checkbox-with-help{display:flex;align-items:center;gap:3px}
+.admin-root .cp-admin-checkbox-with-help>.cp-admin-checkbox{flex:1;min-width:0}
+.admin-root .cp-admin-section-help{display:flex;align-items:center;gap:4px;margin:6px 0 12px;color:var(--cp-admin-muted);font-size:12px}
+.admin-root .cp-admin-purpose-options>div{display:inline-flex;align-items:center;gap:3px;min-width:0}
+@media(pointer:coarse){.admin-root .cp-admin-help-trigger{width:36px;height:36px;min-height:36px}.admin-root .cp-admin-help-close{width:36px;height:36px}}
+@media(max-width:500px){.admin-root .cp-admin-help-copy{font-size:14px}.admin-root .cp-admin-help-head{padding:11px 14px}.admin-root .cp-admin-help-head>strong{font-size:15px}}

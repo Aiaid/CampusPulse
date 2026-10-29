@@ -5,6 +5,7 @@ import GisPlaceMap from './GisPlaceMap.jsx';
 import { fieldPlaceRegistry, gisAnchorToScene } from '../campus/place-registry.js';
 import { observationKinds, formatObservationKinds } from '../shared/observation-kinds.js';
 import WorkPurposes from './WorkPurposes.jsx';
+import HelpTip from './HelpTip.jsx';
 import { validateWorkPurposes } from './work-purposes.js';
 
 const mapLink = id => `/?place=${encodeURIComponent(id)}`;
@@ -56,16 +57,16 @@ function PlaceForm({ place, onClose }) {
     }); }}>
       <div className="cp-admin-form-grid"><Field label="地点 ID"><input required pattern={idPattern} maxLength={64} disabled={!!place} value={form.id} onChange={update('id')} placeholder="例如 library-entry" /></Field><Field label="地点名称"><input required maxLength={120} value={form.name} onChange={update('name')} /></Field></div>
       <WorkPurposes title="地点支持的观测（可多选）" value={form.observation_kinds} onChange={value => setForm(v => ({ ...v, observation_kinds: value }))} />
-      <fieldset className="cp-admin-fieldset"><legend>GIS 地图位置</legend>
+      <fieldset className="cp-admin-fieldset" aria-label="GIS 地图位置"><legend><span>GIS 地图位置</span><HelpTip topic="GIS 地图位置" label="了解 GIS 地图位置" /></legend>
         <GisPlaceMap value={gisValue} onChange={point => setForm(v => ({ ...v, gx: point.x, gy: point.y, gis: true, confirmed: false }))} />
         {form.gis ? <><div className="cp-admin-form-grid"><Field label="GIS x（0–1）"><input required type="number" min="0" max="1" step="any" value={form.gx} onChange={changeGis('gx')} /></Field><Field label="GIS y（0–1）"><input required type="number" min="0" max="1" step="any" value={form.gy} onChange={changeGis('gy')} /></Field></div>
           {!gisAnchorToScene(gisValue) && <Notice>此坐标在当前校园底图范围外或尚未完整填写，前台不会放置标记。可在上方底图重新选点。</Notice>}
-          <label className="cp-admin-checkbox cp-location-confirm"><input type="checkbox" required checked={form.confirmed} onChange={e => setForm(v => ({ ...v, confirmed: e.target.checked }))} />我已核对所选 GIS 位置与此地点相符</label>
+          <label className="cp-admin-checkbox cp-location-confirm"><input type="checkbox" required checked={form.confirmed} onChange={e => setForm(v => ({ ...v, confirmed: e.target.checked }))} />我已核对所选 GIS 位置与此地点相符</label><HelpTip topic="核对 GIS 位置" label="了解 GIS 位置核对的作用" />
           <button type="button" className="cp-admin-text-button" onClick={() => setForm(v => ({ ...v, gis: false, confirmed: false, gx: '', gy: '' }))}>移除 GIS 位置，保留为待定位地点</button>
         </> : <p className="cp-admin-muted">尚未选点。可先保存地点资料，稍后定位；未定位地点不会放入前台 GIS。</p>}
         <p className="cp-location-map-help">坐标沿用学校完整图像的归一化位置；选点会自动转换。它不是经纬度，也不代表设备覆盖范围。</p>
       </fieldset>
-      <details className="cp-location-legacy" open={!place}><summary>兼容的示意锚点（独立于 GIS 位置）</summary><div className="cp-admin-form-grid"><Field label="锚点 x（0–1）"><input required type="number" min="0" max="1" step="0.0001" value={form.x} onChange={update('x')} /></Field><Field label="锚点 y（0–1）"><input required type="number" min="0" max="1" step="0.0001" value={form.y} onChange={update('y')} /></Field></div><p className="cp-admin-muted">保留既有示意坐标，不用于官方 GIS 定位。</p></details>
+      <details className="cp-location-legacy" open={!place}><summary>兼容的示意锚点（独立于 GIS 位置）</summary><HelpTip topic="兼容的示意锚点" label="了解兼容示意锚点与 GIS 位置的区别" /><div className="cp-admin-form-grid"><Field label="锚点 x（0–1）"><input required type="number" min="0" max="1" step="0.0001" value={form.x} onChange={update('x')} /></Field><Field label="锚点 y（0–1）"><input required type="number" min="0" max="1" step="0.0001" value={form.y} onChange={update('y')} /></Field></div><p className="cp-admin-muted">保留既有示意坐标，不用于官方 GIS 定位。</p></details>
       <ErrorNotice error={mutation.error} /><FormActions pending={mutation.pending} label="保存地点" onCancel={onClose} />
     </form>
   </Dialog>;
