@@ -1,5 +1,9 @@
 # Production MQTT enrollment and upload
 
+Current follow-up: [Wi-Fi lookup recovery and MQTT capacity](mqtt-capacity-and-wifi-recovery.md)
+records the history-query fix and larger-policy firmware/physical acceptance.
+The bounded release measurements below retain their original cohort and version.
+
 Date:2026-10-29. This is the current production software contract. The earlier
 [MQTT transition record](mqtt-wss-transition.md) retains protocol experiments and
 the2026-10-28 physical cloud-only trial; those measurements are not acceptance

@@ -19,6 +19,7 @@ validation records are not evidence for this implementation.
 
 | Document | Purpose | Status |
 | --- | --- | --- |
+| [MQTT capacity and Wi-Fi recovery](notes/mqtt-capacity-and-wifi-recovery.md) | Fix history-dependent admin timeouts, bounded summary packing, larger policy acceptance and address/frequency/fleet capacity evidence | Production Chrome recovery verified; C3 -Os128/120s/4KiB passes10min;60s queue pressure and later field/limit evidence recorded |
 | [Production MQTT enrollment](notes/mqtt-production.md) | Verified independent account pool, automatic registration, encrypted registry, runtime device settings, BLE chunks and direct EMQX→CF operations | Production API/UI/D1/gateway/rule and one C3 migration accepted; all16 identities broker/API verified;5min active run plus same-boot timeout recovery; other boards and capacity/long-run limits remain |
 | [Public MQTT CA certificate](../firmware/certs/README.md) | Checked public root, DER fingerprint, lifetime and redistribution provenance | Public CA only; strict runtime SDK bundle retained; no private keys or credentials |
 | [README screenshots](notes/readme-screenshots.md) | Actual-browser desktop/mobile images, synthetic fixture captions, official GIS attribution and metadata-clean capture recipe | Bilingual README presentation assets; not field or hardware evidence |

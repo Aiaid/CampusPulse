@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { validateAnyCaptureConfig } from '../../worker/device-v2-validation.ts';
 import { cloudProgress, provisionConfig, assignProvisionConfig, saveProvisionSettings } from '../../src/admin/provisioning/enrollment.js';
 describe('enrollment state boundaries',()=>{
-  it('publishes supported v2 defaults with explicit dataset',()=>{const c=provisionConfig('cp_001122aabbcc','p','c');expect(validateAnyCaptureConfig(c)).toEqual(c);expect(c.protocol).toBe('campuspulse/2');expect(c.dataset).toBe('controlled_test');expect(c.summary).toEqual({window_ms:30000,bin_ms:5000,max_addresses:64});expect(c.upload_policy.max_body_bytes).toBe(8192);});
+  it('publishes supported v2 defaults with explicit dataset',()=>{const c=provisionConfig('cp_001122aabbcc','p','c');expect(validateAnyCaptureConfig(c)).toEqual(c);expect(c.protocol).toBe('campuspulse/2');expect(c.dataset).toBe('controlled_test');expect(c.summary).toEqual({window_ms:120000,bin_ms:40000,max_addresses:64});expect(c.upload_policy.max_body_bytes).toBe(4096);});
   it('requires fresh contact and the same applied config, not registration alone',()=>{
     const d={device:{desired_config_id:'c',applied_config_id:'c',config_state:'applied',last_seen_at:'2026-10-24T00:00:00Z'}};
     expect(cloudProgress(d,'c',Date.parse('2026-10-24T01:00:00Z')).applied).toBe(false);

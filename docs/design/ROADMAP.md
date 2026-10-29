@@ -16,15 +16,13 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
-- [ ] 2026-10-29 follow-up: reproduce the Chrome existing-device Wi-Fi
-      reconfiguration `storage_unavailable` failure, repair its actual cause and
-      verify the production flow without rotating credentials. Replace the
-      retained16-address policy with a measured larger policy, reduce bounded
-      summary-encoding/RPC overhead, and accept native MQTT memory, queue balance
-      and recovery on the connected board. Measure address count × received
-      report frequency × window interval; keep radio acceptance, modeled fleet
-      capacity and current broker/free-quota limits distinct. Preserve old
-      immutable policies, frozen batches and protected Flash throughout.
+- [ ] Extend the bounded C3 size-optimized128-address acceptance with20+ full
+      windows, controlled known-transmission rate ramps and long interruption/
+      reconnect recovery. Keep per-window address identity distinct from physical
+      devices, record pressure/overflow/sequence gaps and preserve all old frozen
+      bodies. The measured120s/40s/4KiB profile is a bounded current-load result;
+      the60s pressure run grows its queue and is not a sustainable default. See
+      [Wi-Fi and MQTT capacity evidence](../notes/mqtt-capacity-and-wifi-recovery.md).
 
 - [ ] Deploy domestic durable custody after the passing EMQX Hangzhou native
       MQTT/TLS connectivity trial archived below. Keep account/price
@@ -50,18 +48,6 @@ collection and durable upload. Final local software verification passed on
       default and frozen batches; validate larger policies separately. Direct
       routing still fails complete acceptance. Cloudflare Queues is not part of
       the implemented device gateway.
-
-- [ ] Expand the per-window address capacity beyond the current16-address
-      policy without increasing TLS memory pressure. Allocate active/sealed
-      address and actual-bin banks, retain native64-address/16-bin semantics,
-      publish a new immutable policy only after the compatible image is ready,
-      and preserve old policies/queued bodies. Measure actual address overflow,
-      report rate, heap/stack, producer bytes/batches, durable ACK throughput and
-      journal growth. Model address count × received-report refresh frequency
-      and10/30/60-second windows; distinguish logical addresses from physical
-      devices and modeled saturation from real radio acceptance.
-      The [capacity and path evidence](../notes/address-capacity-and-public-path.md)
-      separates controlled static64 acceptance from direct public-path tests.
 
 - [ ] Complete sustained-load and public-path recovery acceptance after the
       [bounded performance evaluation](../notes/performance-evaluation.md):
@@ -295,6 +281,23 @@ collection and durable upload. Final local software verification passed on
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] 2026-10-29: Repair Chrome existing-device Wi-Fi setup's503
+      `storage_unavailable`: replace whole-history materialization with indexed
+      per-node latest probes and additive0008 indexes. Production query0.871ms/
+      9rows and actual Chrome saved-new-network flow pass without credential
+      rotation. Extend bounded streaming packing and actual codec/frequency
+      models, then validate a protected C3 size-optimized128-address image with
+      120s windows/40s bins/4KiB frozen bodies:602.821s sampled active collection,
+      19130 received reports, queue74→38, zero new software loss/allocation/pause
+      counters,172RPCs/171reuses. Retain the known historical422 and all failed
+      debug trials.60s windows grow24→42 slots in180.241s; restore a fresh128/
+      120s field version. Independent snapshots reach128 unique address/type
+      pairs/window with no table overflow. Adopt the measured -Os fresh-build
+      default and a conservative64/120s/40s/4KiB fresh-onboarding template while
+      preserving existing policies. Publish only metadata-checked aggregate
+      charts/data; radio completeness, full-load ceilings and long outages remain
+      separate acceptance. See [full evidence](../notes/mqtt-capacity-and-wifi-recovery.md).
 
 - [x] 2026-10-29: Deploy transactional incremental backend public caches for
       field v2 windows and active manual records. Equal-time/backfill changes,

@@ -7,8 +7,8 @@ export function provisionConfig(node, placement, id, dataset = 'controlled_test'
     capture_profile: 'address_metrics', allowed_streams: ['ble_windows', 'address_summaries', 'node_status'],
     scan: { stack: 'nimble', adapter_version: 'cp-nimble-v2', mode: 'passive', interval_ms: 100, window_ms: 100, filter_duplicates: false, host_filter: 'none' },
     raw_capture: { mode: 'off' }, identity_scheme: 'mac', accept_until: new Date(now + 7 * 86400000).toISOString(),
-    summary: { window_ms: 30000, bin_ms: 5000, max_addresses: 64 }, control: { lease_ms: 120000 },
-    upload_policy: { max_items: 16, max_body_bytes: 8192, flush_max_age_ms: 5000, warn_pct: 60, raw_pause_pct: 80, critical_pct: 95, resume_pct: 40, overload_action: 'pause_raw' } };
+    summary: { window_ms: 120000, bin_ms: 40000, max_addresses: 64 }, control: { lease_ms: 120000 },
+    upload_policy: { max_items: 16, max_body_bytes: 4096, flush_max_age_ms: 5000, warn_pct: 60, raw_pause_pct: 80, critical_pct: 95, resume_pct: 40, overload_action: 'pause_raw' } };
 }
 // Deterministic IDs plus reads before each write let the browser reconcile a
 // lost placement/draft/publish response without creating a second assignment.

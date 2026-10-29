@@ -1,5 +1,10 @@
 # Address capacity, upload pressure and public-path evidence
 
+> Historical2026-10-28 HTTPS evidence. The2026-10-29
+> [MQTT capacity/Wi-Fi follow-up](mqtt-capacity-and-wifi-recovery.md) implements
+> bounded summary packing and a new larger-policy acceptance plan. The retained
+> default and transport rates below describe the earlier trial, not that new run.
+
 Status: compact 64-address implementation and a bounded C3 collection run
 verified on 2026-10-28 (Asia/Shanghai). Sustained queue balance, larger report
 rates and direct-route 64-address operation remain unverified. The user's

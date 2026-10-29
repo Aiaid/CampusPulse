@@ -304,7 +304,7 @@ export default function Provisioning({ onClose, initialNodeId = '' }) {
         <fieldset className="cp-admin-edit-fields" disabled={configAttempted}><Field label="部署地点" help="目标地点"><Resource resource={places}>{data => <select value={place} onChange={e => changeConfig('place', e.target.value)}><option value="">未定位 / 移动中</option>{data.places.map(p => <option key={p.id} value={p.id}>{p.name} · {formatObservationKinds(p)}</option>)}</select>}</Resource></Field>
         <WorkPurposes value={workPurposes} allowed={availableWorkPurposes(places.data?.places.find(p => p.id === place))} onChange={value => changeConfig('purposes', value)} />
         <Field label="数据用途" help="数据集"><select value={dataset} onChange={e => changeConfig('dataset', e.target.value)}><option value="controlled_test">受控测试</option><option value="field">现场观测</option></select></Field>
-        <p>{currentConfig ? '带入当前设置，修改后保存即可；其余采集参数继续沿用。' : '默认使用 30 秒地址汇总、5 秒分箱、最多 64 个地址。BLE 可见标识不能当作人数。'}</p>
+        <p>{currentConfig ? '带入当前设置，修改后保存即可；其余采集参数继续沿用。' : '新设备默认使用 120 秒地址汇总、40 秒分箱、最多 64 个地址及 4 KiB 上传批体。BLE 可见标识不能当作人数。'}</p>
         </fieldset>{configAttempted && <Notice>本次地点、用途和数据集已固定。请重试核对原保存结果；更改其他内容请关闭后重新读取。</Notice>}<button className="cp-admin-button" onClick={saveConfig} disabled={places.loading || !!places.error || !workPurposes.length}>{configAttempted ? '重试本次保存' : '保存配置'}</button>
         {configDirty ? <p role="status">有尚未保存的配置修改。</p> : configId && <p role="status">当前配置已准备好，仍可继续修改并保存。</p>}
       </fieldset>
