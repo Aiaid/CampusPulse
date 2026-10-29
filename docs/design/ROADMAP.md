@@ -304,6 +304,13 @@ collection and durable upload. Final local software verification passed on
 
 ## Completed archive
 
+- [x] 2026-10-29: Fix administrator browser regressions after contextual help
+      made partial form-label locators ambiguous. Exact labels, scoped status
+      text and a WebKit combobox role preserve existing assertions. An isolated
+      committed-source snapshot passes provisioning, MQTT, diagnostics, places,
+      account/Passkey and full admin workflows. Dedicated Chromium/WebKit and
+      fallback help checks are included in CI; rollout is verified separately.
+
 - [x] 2026-10-29: Add detailed contextual administrator help for capture policy,
       device/receipt diagnostics, deployment, MQTT enrollment and site/account
       settings. Mouse/focus/click/touch explanations support scrollable content,

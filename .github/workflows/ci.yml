@@ -68,6 +68,11 @@ jobs:
         run: node scripts/field-illustration-browser-smoke.mjs
       - name: Verify capture correction and deployment retry workflows
         run: node scripts/config-editing-browser-smoke.mjs
+      - name: Verify detailed administrator help and accessible popovers
+        run: |
+          node scripts/admin-help-browser-smoke.mjs
+          node scripts/admin-help-browser-smoke.mjs --webkit
+          node scripts/admin-help-browser-smoke.mjs --fallback
       - name: Prepare local database and disposable operator/admin credentials
         run: |
           node --input-type=module -e "import {writeFileSync} from 'node:fs'; import {randomBytes} from 'node:crypto'; writeFileSync('.dev.vars',['OPERATOR_TOKEN='+randomBytes(32).toString('hex'),'ADMIN_TOKEN='+randomBytes(32).toString('hex'),'RESEARCH_TOKEN='+randomBytes(32).toString('hex'),'MQTT_PROVISIONING_KEY='+randomBytes(32).toString('base64url'),'ADMIN_SMOKE_USERNAME=ci-admin','ADMIN_SMOKE_PASSWORD='+randomBytes(24).toString('hex'),'ADMIN_SMOKE_NEW_USERNAME=ci-admin-updated','ADMIN_SMOKE_NEW_PASSWORD='+randomBytes(24).toString('hex')].join('\n')+'\n',{mode:0o600});"

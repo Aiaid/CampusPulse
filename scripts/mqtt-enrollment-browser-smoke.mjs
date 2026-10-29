@@ -36,7 +36,7 @@ try {
   await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.fallback() : route.abort());
   const page = await context.newPage(); await page.goto(`${origin}/admin`);
   await page.getByRole('button', { name: '设备管理', exact: true }).click();
-  await page.getByLabel('本批独立账号数量（1–32）').fill('2');
+  await page.getByLabel('本批独立账号数量（1–32）', { exact: true }).fill('2');
   await page.getByRole('button', { name: '生成私密批量导入材料', exact: true }).click();
   const exportDialog = page.getByRole('dialog', { name: '一次性私密 MQTT 批量导入材料' }); await exportDialog.waitFor();
   assert.equal(generated, 1); assert(!(await page.locator('body').innerText()).includes(mqtt.password));
