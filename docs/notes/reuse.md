@@ -1,5 +1,44 @@
 # Prior work and reuse
 
+## 2026-10-29 — Selected T-Energy-S3 branch integration
+
+The512-address continuation adds repository-original per-build limits,
+transactional PSRAM banks/frozen-read allocation, numeric memory telemetry and
+capacity fixtures. It calls the pinned ESP-IDF heap capability/placement APIs;
+no allocator or vendor driver implementation is copied. Saturated address
+fixtures are synthetic. API512 source/tests are independently committed in
+`c808f4a`; hardware evidence and scope are in
+[512 PSRAM acceptance](tenergy-512-psram-acceptance.md).
+
+The subsequent selected-board provisioning binding, optional USB-only transport
+gates, runtime refusal of unsupported setup modes, and optional current-boot
+upload preference are new CampusPulse changes. They use existing shared types,
+SDK APIs and the repository's original scheduler. No third-party provisioning or
+queue implementation was imported. Test fixtures remain synthetic; Flash,
+credentials and radio observations remain private and ignored. Current device
+acceptance is recorded in [USB-only/MQTT acceptance](tenergy-usb-mqtt-acceptance.md).
+
+`firmware/t-energy-s3/` selectively imports this repository's original T-Energy
+board adapter, shared-chain entry and standalone bring-up from
+`feat/tenergy-s3-port` at `ca7bc9e6f4f1cb276128f9a216f3fdb34f8b3321`. The original
+paths were `firmware/components/cp_board/tenergy_s3.c`,
+`firmware/t-energy-s3-chain/` and `firmware/t-energy-s3/`. They are consolidated
+under one board directory, with a local component override and current shared
+core. The branch's unrelated changes and old shared-component snapshots are not
+imported. New build/image checks and integration documentation are CampusPulse
+code. No external vendor source or new image assets are copied.
+
+The source branch records GPIO3, the half-voltage battery divider, 16 MB QIO
+Flash and 8 MB Octal PSRAM as vendor-derived hardware facts from
+`Xinyuan-LilyGO/T-Energy-S3`, revision
+`68a74854ce0443377d186786bf3478484a0813e0`. Its vendor repository declares
+GPL-3.0; the imported adapter and bring-up are original CampusPulse code calling
+the installed Apache-2.0 ESP-IDF ADC APIs, not copies of vendor sketches. Preserve
+the SDK notices if redistributing SDK material. Battery calibration remains
+unverified. Historical evidence and source hashes are in the
+[branch summary](../upstream/tenergy-s3/README.md); current differences and
+acceptance are in the [integration plan](../design/tenergy-s3-integration.md).
+
 ## 2026-10-28 — Performance, bounded JSON and transport comparison
 
 The optional `firmware/components/cp_perf/` observer/math, allocation-failure
@@ -876,3 +915,40 @@ Source/host/browser/workerd acceptance, production main/API deployment,
 broker import/verification, named gateway cutover and hardware migration are
 recorded separately in `docs/notes/mqtt-production.md`. Synthetic local MQTT
 fixture rows deliberately do not establish real broker verification.
+
+## Waveshare ePaper target (2026-10-29)
+
+The board adapter and SSD1681 display card originate in CampusPulse commit
+`463269d`, adapted to the current board interface and USB-only setup. The 5x7
+ASCII font in `firmware/components/cp_ui_epaper/font5x7.c` is derived from
+Adafruit GFX `glcdfont.c`, copyright 2012 Adafruit Industries, BSD-2-Clause;
+the license notice is included in the source and must accompany binaries.
+See `firmware/epaper-collector/README.md` for the hardware and validation scope.
+
+## Independent Waveshare raw recorder (2026-10-29)
+
+`firmware/waveshare-raw/` is newly authored recording, queue, binary-format,
+decoder and control code, independent of the existing cp_* pipeline. Its
+SSD1681 transfer/power code derives from the previously authored CampusPulse
+ePaper driver. Pin facts (SDMMC1-bit CLK39/CMD41/D0=40) were checked against
+the official Waveshare V2 SD example at commit
+`aaf395c1bbd86f7c5b7a2f9f0401241ff5c44956`; no vendor example source was copied.
+LVGL9.5.0 is a pinned external MIT dependency; its built-in Montserrat/symbol
+font sources and notices remain with that dependency. This target no longer
+embeds the Adafruit glyph table from the earlier ePaper adapter. Raw captures,
+device images, card identifiers and operational credentials are not imported.
+
+The later PCF85063 calendar/I2C, safe-power, strict USB command and read-only
+export modules are newly authored. V2 wiring and power-latch polarity were
+cross-checked against the same pinned Waveshare commit and schematic; RTC
+register facts were checked against NXP's PCF85063A datasheet. SensorLib and
+vendor application implementations were not copied. Native Chinese UI fonts
+derive from the already-reviewed Noto Sans CJK SC Bold2.004 source under OFL;
+source hash/notices and generation details are in waveshare-raw/fonts/.
+
+The partial-refresh waveform in `raw_panel.c` is copied from Waveshare's
+MIT-licensed epd1in54_V2 implementation at commit
+`d28b3c4cfc78eef1c6cd6e6e3013654e449d2864`; its159 bytes were compared with
+the selected board V2 example. The full permission notice is retained in
+`licenses/Waveshare-ePaper-MIT.txt`. Frame differencing, mixed refresh policy,
+LVGL transport integration and failure-state tracking are authored here.
