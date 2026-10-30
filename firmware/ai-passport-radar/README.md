@@ -30,8 +30,9 @@ are recorded separately in the [chain note](../../docs/notes/firmware-chain.md).
 Final local acceptance passed on 2026-10-25, including four fresh C3 image
 variants from one frozen firmware source manifest. No physical radio, Flash,
 phone setup or production acceptance is implied. Normal headless needs existing
-validated enrollment or a separate secure setup-proof channel; no USB onboarding
-is implemented.
+validated enrollment or physical USB setup through the administrator wizard.
+As of2026-10-29, setup is [USB only](../../docs/notes/usb-only-provisioning.md)
+for display and headless builds; Bluetooth and device-hotspot setup are retired.
 
 Wi-Fi credentials are not included. Runtime credentials are provisioned locally and saved only after network/cloud
 validation. Any optional legacy local diagnostic configuration must remain

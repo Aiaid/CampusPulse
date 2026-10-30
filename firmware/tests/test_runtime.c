@@ -10,7 +10,7 @@
 
 typedef struct {size_t width;unsigned capacity,head,length;command_t slots[2];} test_queue_t;
 typedef enum { NETWORK_START,NETWORK_STOP,PIPE_STOP,PIPE_APPLY,PROVISION_STOP,
-    PROVISION_BLE,PROVISION_AP,PROVISION_USB_EVENT,VALIDATE,SAVE,RESTART,APPLIED,FAILED } event_t;
+    PROVISION_USB_EVENT,VALIDATE,SAVE,RESTART,APPLIED,FAILED } event_t;
 static event_t events[256];static unsigned event_count;
 static unsigned net_start_count,provision_start_count,validate_count,save_count,restart_count,apply_count,report_count;
 static cp_settings_t persisted,validated,saved_input,last_network_settings;
@@ -29,6 +29,8 @@ static uint64_t stop_delay_ms;
 static char capture_state[20],last_report_id[65];static bool last_report_applied;
 static cp_provision_submit_fn submit_callback;static void *submit_context;
 static cp_provision_credential_resolver_fn credential_callback;static void *credential_context;
+static unsigned board_bind_count,context_bind_count;
+static esp_err_t board_bind_error=ESP_OK;
 static cp_network_diagnostic_t validation_diagnostic,provision_diagnostic;
 static cp_network_attempt_t history_records[2],loaded_history,shown_history;
 static unsigned history_save_count,progress_count;static bool shown_previous;
@@ -167,13 +169,16 @@ void cp_pipeline_snapshot(cp_pipeline_snapshot_t*out){*out=pipe_state;}
 void cp_pipeline_renew_lease(uint64_t deadline){assert(deadline>clock_ms);last_lease_deadline=deadline;++lease_renewals;}
 esp_err_t cp_provision_start(cp_provision_mode_t mode,const char*node,const char*proof,cp_provision_submit_fn fn,void*ctx)
 {assert(!network_started&&!pipe_state.collecting&&!provision.active&&strlen(proof)==32&&node);
- record(mode==CP_PROVISION_BLE?PROVISION_BLE:mode==CP_PROVISION_SOFTAP?PROVISION_AP:PROVISION_USB_EVENT);++provision_start_count;provision.active=true;provision.mode=mode;submit_callback=fn;submit_context=ctx;return ESP_OK;}
+ assert(mode==CP_PROVISION_USB);record(PROVISION_USB_EVENT);++provision_start_count;provision.active=true;provision.mode=mode;submit_callback=fn;submit_context=ctx;return ESP_OK;}
 esp_err_t cp_provision_stop(void){record(PROVISION_STOP);if(provision_stop_error==ESP_OK)provision.active=false;return provision_stop_error;}
 void cp_provision_snapshot(cp_provision_snapshot_t*out){*out=provision;}
 void cp_provision_set_status(const char*state,const char*why)
 {snprintf(provision.state,sizeof provision.state,"%s",state);snprintf(provision.reason,sizeof provision.reason,"%s",why);}
 esp_err_t cp_provision_bind_context(const char *node,const char *boot,uint32_t reset,cp_provision_credential_resolver_fn resolver,void *context)
-{assert(!strcmp(node,"cp_aabbccddeeff")&&strlen(boot)==36&&reset==7&&resolver);credential_callback=resolver;credential_context=context;return ESP_OK;}
+{assert(board_bind_count==1&&board_bind_error==ESP_OK);++context_bind_count;assert(!strcmp(node,"cp_aabbccddeeff")&&strlen(boot)==36&&reset==7&&resolver);credential_callback=resolver;credential_context=context;return ESP_OK;}
+esp_err_t cp_provision_bind_board(const char *board_id,const char *target_chip)
+{assert(s_core.profile&&!context_bind_count&&!provision.active);++board_bind_count;
+ assert(!strcmp(board_id,s_core.profile->board_id)&&!strcmp(target_chip,s_core.profile->target_chip));return board_bind_error;}
 void cp_provision_set_diagnostic(const cp_network_diagnostic_t *diagnostic,const char *attempt)
 {assert(cp_network_diag_valid(diagnostic));if(attempt)assert(strlen(attempt)==36);provision_diagnostic=*diagnostic;}
 void cp_provision_set_previous_attempt(const cp_network_attempt_t *attempt,esp_err_t error)
@@ -195,6 +200,7 @@ static void prepare_headless_with_settings(bool enrolled)
     persisted=settings("previous-network");load_error=enrolled?ESP_OK:ESP_ERR_NOT_FOUND;
     pipe_state.storage_ready=true;pipe_state.free_slots=200;pipe_state.capacity_slots=341;
     headless_board=board;headless_board.capabilities&=~CP_CAP_DISPLAY;
+    headless_board.board_id="tenergy_s3";headless_board.target_chip="esp32s3";
     assert(cp_runtime_prepare("cp_aabbccddeeff",&headless_board)==ESP_OK);
 }
 static void issue_candidate(void)
@@ -203,12 +209,12 @@ static void issue_candidate(void)
     assert(submit_callback(&candidate,"12345678-1234-4234-8234-123456789abc",submit_context)==ESP_OK);
     assert(!save_count&&!validate_count); /* Transport callback only queues. */
 }
-static void candidate_success_tick(unsigned n){if(n==1){marker=event_count;issue_candidate();}}
-static void candidate_handoff_tick(unsigned n){if(n==1){provision_stop_error=ESP_FAIL;issue_candidate();}}
-static void candidate_ap_tick(unsigned n)
+static void candidate_success_tick(unsigned n){if(n==1)assert(cp_runtime_request_setup(CP_PROVISION_USB));if(n==2){marker=event_count;issue_candidate();}}
+static void candidate_handoff_tick(unsigned n){if(n==1)assert(cp_runtime_request_setup(CP_PROVISION_USB));if(n==2){provision_stop_error=ESP_FAIL;issue_candidate();}}
+static void candidate_retry_tick(unsigned n)
 {
-    if(n==1)assert(cp_runtime_request_setup(CP_PROVISION_SOFTAP));
-    if(n==2){assert(provision.mode==CP_PROVISION_SOFTAP);marker=event_count;issue_candidate();}
+    if(n==1)assert(cp_runtime_request_setup(CP_PROVISION_USB));
+    if(n==2){assert(provision.mode==CP_PROVISION_USB);marker=event_count;issue_candidate();}
 }
 static void candidate_usb_tick(unsigned n)
 {
@@ -216,7 +222,21 @@ static void candidate_usb_tick(unsigned n)
     if(n==2){assert(provision.active&&provision.mode==CP_PROVISION_USB);marker=event_count;issue_candidate();}
 }
 static void usb_begin_tick(unsigned n){if(n==1)assert(cp_runtime_request_setup(CP_PROVISION_USB));}
-static void stop_failure_tick(unsigned n){if(n==1)assert(cp_runtime_request_setup(CP_PROVISION_SOFTAP));}
+static void reject_wireless_tick(unsigned n)
+{
+    if(n!=2)return;
+    assert(pipe_state.collecting&&network_started&&!s_core.setup_active);
+    unsigned before=event_count,queued=queue_storage.length;
+    uint64_t deadline=last_lease_deadline;
+    assert(!cp_runtime_request_setup(CP_PROVISION_BLE));
+    assert(!cp_runtime_request_setup(CP_PROVISION_SOFTAP));
+    assert(queue_storage.length==queued);
+    /* Exercise the consumer guard too, including a stale/internal request. */
+    enter_setup(CP_PROVISION_BLE);enter_setup(CP_PROVISION_SOFTAP);
+    assert(event_count==before&&pipe_state.collecting&&network_started);
+    assert(!s_core.setup_active&&s_core.lease_valid&&deadline==last_lease_deadline);
+}
+static void stop_failure_tick(unsigned n){if(n==1)assert(cp_runtime_request_setup(CP_PROVISION_USB));}
 static void policy_invalidate_tick(unsigned n)
 {
     if(n==2){assert(pipe_state.collecting);net.policy_response_sequence=2;net.policy_valid=false;net.policy_present=false;}
@@ -281,7 +301,7 @@ static void transient_tick(unsigned n)
 static void no_actual_scan_tick(unsigned n)
 {if(n==2){pipe_state.collecting=false;pipe_state.pressure_paused=true;pipe_state.free_slots=1;}}
 static void resume_tick(unsigned n)
-{if(n==1)assert(cp_runtime_request_setup(CP_PROVISION_SOFTAP));if(n==2)assert(cp_runtime_request_resume());}
+{if(n==1)assert(cp_runtime_request_setup(CP_PROVISION_USB));if(n==2)assert(cp_runtime_request_resume());}
 static void memory_start_tick(unsigned n)
 {
     if(n==2){assert(apply_count==1&&!last_report_applied&&!strcmp(capture_state,"paused")&&s_core.policy_state==CP_POLICY_STAGED);publish_policy(2,clock_ms,120000);}
@@ -301,8 +321,7 @@ static void memory_stop_failed_tick(unsigned n)
 {if(n==2){pipe_state.collecting=false;pipe_state.memory_paused=true;pipe_state.stop_failed=true;publish_policy(2,clock_ms,120000);}}
 static void init_fault_setup_tick(unsigned n)
 {
-    if(n==1){assert(cp_runtime_request_setup(CP_PROVISION_BLE));}
-    if(n==2){assert(!provision.active&&!provision_start_count&&!apply_count);assert(!strcmp(s_reason,"ble_restart_required"));assert(cp_runtime_request_setup(CP_PROVISION_USB));}
+    if(n==1){assert(!cp_runtime_request_setup(CP_PROVISION_BLE));assert(cp_runtime_request_setup(CP_PROVISION_USB));}
 }
 static void init_fault_repeat_tick(unsigned n)
 {publish_policy(n,clock_ms,120000);}
@@ -336,17 +355,19 @@ static void assert_saved_credential(bool available)
 }
 static void scenario(const char*name)
 {
-    if(!strcmp(name,"legacy_mqtt_setup")){prepare(true);memset(s_settings.mqtt_uri,0,sizeof s_settings.mqtt_uri);memset(s_settings.mqtt_username,0,sizeof s_settings.mqtt_username);memset(s_settings.mqtt_password,0,sizeof s_settings.mqtt_password);memset(s_settings.mqtt_namespace,0,sizeof s_settings.mqtt_namespace);persisted=s_settings;assert(run(1,NULL)==1);assert(!net_start_count&&provision_start_count==1&&s_enrolled&&!save_count&&!strcmp(s_reason,"mqtt_setup_required"));assert_saved_credential(true);}
+    if(!strcmp(name,"board_bind_failure")){board_bind_error=ESP_ERR_INVALID_ARG;persisted=settings("previous-network");assert(cp_runtime_prepare("cp_aabbccddeeff",&board)==ESP_ERR_INVALID_ARG);assert(!s_prepared&&!context_bind_count&&!net_start_count&&!provision_start_count&&!strcmp(s_reason,"board_profile_failed"));}
+    else if(!strcmp(name,"usb_only_unassigned_display")){prepare(false);assert(run(1,NULL)==1);assert(!net_start_count&&!provision_start_count&&!provision.active&&s_core.setup_active&&!strcmp(s_reason,"awaiting_usb_setup"));}
+    else if(!strcmp(name,"usb_only_wireless_rejected")){prepare(true);publish_policy(1,9000,120000);assert(run(2,reject_wireless_tick)==1);assert(apply_count==1&&pipe_state.collecting&&!provision_start_count);}
+    else if(!strcmp(name,"usb_only_legacy_mqtt")){prepare(true);memset(s_settings.mqtt_uri,0,sizeof s_settings.mqtt_uri);memset(s_settings.mqtt_username,0,sizeof s_settings.mqtt_username);memset(s_settings.mqtt_password,0,sizeof s_settings.mqtt_password);memset(s_settings.mqtt_namespace,0,sizeof s_settings.mqtt_namespace);persisted=s_settings;assert(run(1,NULL)==1);assert(!net_start_count&&!provision_start_count&&s_enrolled&&!save_count&&!strcmp(s_reason,"awaiting_usb_setup"));assert_saved_credential(true);}
     else if(!strcmp(name,"enrolled_boot")){prepare(true);assert(run(1,NULL)==1);assert(net_start_count==1&&!provision_start_count&&!save_count);assert(!strcmp(last_network_settings.ssid,"previous-network"));}
-    else if(!strcmp(name,"unassigned_boot")){prepare(false);assert(run(1,NULL)==1);assert(!net_start_count&&provision_start_count==1&&provision.mode==CP_PROVISION_BLE);assert(s_core.setup_active&&!s_core.lease_valid);}
     else if(!strcmp(name,"headless_explicit_usb")){prepare_headless_with_settings(false);assert(run(1,NULL)==1);assert(!net_start_count&&!provision_start_count&&!provision.active&&s_core.setup_active&&!strcmp(s_reason,"awaiting_usb_setup"));}
     else if(!strcmp(name,"headless_usb_begin")){prepare_headless_with_settings(false);assert(run(2,usb_begin_tick)==1);assert(provision_start_count==1&&provision.mode==CP_PROVISION_USB&&!net_start_count&&!validate_count&&!save_count);}
     else if(!strcmp(name,"usb_candidate_commit")){prepare_headless_with_settings(false);assert(run(3,candidate_usb_tick)==2);assert_candidate_order();assert(save_count==1&&restart_count==1&&!strcmp(persisted.ssid,"candidate-network"));}
     else if(!strcmp(name,"usb_candidate_failure")){prepare(true);validation_error=ESP_ERR_TIMEOUT;assert(run(3,candidate_usb_tick)==1);assert(validate_count==1&&!save_count&&!restart_count);assert(provision.active&&provision.mode==CP_PROVISION_USB&&!strcmp(persisted.ssid,"previous-network"));assert(!strcmp(provision.state,"failed"));assert(cp_runtime_request_setup(CP_PROVISION_USB));}
     else if(!strcmp(name,"headless_usb_save_failure")){prepare_headless_with_settings(true);save_error=ESP_FAIL;assert(run(3,candidate_usb_tick)==1);assert(validate_count==1&&save_count==1&&!restart_count);assert(provision.active&&provision.mode==CP_PROVISION_USB&&!strcmp(persisted.ssid,"previous-network"));assert(!strcmp(provision.state,"failed")&&s_enrolled);assert(cp_runtime_request_resume());}
-    else if(!strcmp(name,"candidate_commit")){prepare(false);assert(run(2,candidate_success_tick)==2);assert_candidate_order();assert(save_count==1&&restart_count==1&&!memcmp(&validated,&saved_input,sizeof validated));assert(!strcmp(persisted.ssid,"candidate-network"));}
-    else if(!strcmp(name,"candidate_failure_ap")){prepare(true);validation_error=ESP_ERR_TIMEOUT;assert(run(3,candidate_ap_tick)==1);assert(validate_count==1&&!save_count&&!restart_count);assert(provision.active&&provision.mode==CP_PROVISION_SOFTAP);assert(!strcmp(persisted.ssid,"previous-network")&&!strcmp(provision.state,"failed"));}
-    else if(!strcmp(name,"candidate_save_failure")){prepare(true);save_error=ESP_FAIL;assert(run(3,candidate_ap_tick)==1);assert(validate_count==1&&save_count==1&&!restart_count);assert(provision.active&&provision.mode==CP_PROVISION_SOFTAP&&!strcmp(persisted.ssid,"previous-network"));}
+    else if(!strcmp(name,"candidate_commit")){prepare(false);assert(run(3,candidate_success_tick)==2);assert_candidate_order();assert(save_count==1&&restart_count==1&&!memcmp(&validated,&saved_input,sizeof validated));assert(!strcmp(persisted.ssid,"candidate-network"));}
+    else if(!strcmp(name,"candidate_retry_failure")){prepare(true);validation_error=ESP_ERR_TIMEOUT;assert(run(3,candidate_retry_tick)==1);assert(validate_count==1&&!save_count&&!restart_count);assert(provision.active&&provision.mode==CP_PROVISION_USB);assert(!strcmp(persisted.ssid,"previous-network")&&!strcmp(provision.state,"failed"));}
+    else if(!strcmp(name,"candidate_save_failure")){prepare(true);save_error=ESP_FAIL;assert(run(3,candidate_retry_tick)==1);assert(validate_count==1&&save_count==1&&!restart_count);assert(provision.active&&provision.mode==CP_PROVISION_USB&&!strcmp(persisted.ssid,"previous-network"));}
     else if(!strcmp(name,"network_stop_failure")){prepare(true);network_stop_error=ESP_ERR_TIMEOUT;assert(run(1,stop_failure_tick)==1);assert(!provision_start_count&&network_started&&!strcmp(s_reason,"previous_owner_stop_failed"));}
     else if(!strcmp(name,"pipeline_stop_failure")){prepare(true);pipeline_stop_error=ESP_ERR_TIMEOUT;pipe_state.collecting=true;assert(run(1,stop_failure_tick)==1);assert(!provision_start_count&&pipe_state.collecting&&network_started);}
     else if(!strcmp(name,"fresh_policy_age")){prepare(true);publish_policy(1,9000,120000);assert(run(1,NULL)==1);assert(s_core.lease_started_ms==10500&&s_core.lease_duration_ms==118500&&s_core.latest_request_sequence==1);assert(apply_count==1&&last_report_applied&&pipe_state.collecting&&!strcmp(capture_state,"running"));}
@@ -389,13 +410,14 @@ static void scenario(const char*name)
     else if(!strcmp(name,"foreign_saved_credential")){persisted=settings("foreign-network");strcpy(persisted.node_id,"cp_000000000000");assert(cp_runtime_prepare("cp_aabbccddeeff",&board)==ESP_OK);assert(!s_enrolled);assert_saved_credential(false);assert(run(1,NULL)==1);assert(!net_start_count);}
     else if(!strcmp(name,"previous_attempt")){history_load_error=ESP_OK;loaded_history=(cp_network_attempt_t){.version=1,.state=CP_ATTEMPT_INTERRUPTED};strcpy(loaded_history.attempt_id,"12345678-1234-4234-8234-123456789abc");strcpy(loaded_history.boot_id,"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");cp_network_diag_update(&loaded_history.diagnostic,CP_DIAG_HANDOFF,CP_DIAG_VALIDATION_INTERRUPTED,ESP_ERR_INVALID_STATE,0,true,true);prepare(true);assert(shown_previous&&!memcmp(&shown_history,&loaded_history,sizeof loaded_history));assert(run(3,candidate_usb_tick)==2);assert(shown_previous&&!memcmp(&shown_history,&loaded_history,sizeof loaded_history));}
     else if(!strcmp(name,"history_read_failure")){history_load_error=ESP_FAIL;prepare(true);assert(!shown_previous&&shown_history_error==ESP_FAIL);assert_saved_credential(true);assert(run(1,NULL)==1);assert(net_start_count==1);}
-    else if(!strcmp(name,"history_write_failure")){history_save_error=ESP_FAIL;prepare(false);assert_saved_credential(false);assert(run(2,candidate_success_tick)==2);assert(shown_history_error==ESP_FAIL&&save_count==1&&restart_count==1);}
-    else if(!strcmp(name,"candidate_handoff_failure")){prepare(false);assert(run(2,candidate_handoff_tick)==1);assert(!validate_count&&!save_count&&!restart_count&&provision.active);assert(history_save_count==2&&history_records[1].state==CP_ATTEMPT_FAILED&&history_records[1].diagnostic.code==CP_DIAG_HANDOFF_FAILED);}
+    else if(!strcmp(name,"history_write_failure")){history_save_error=ESP_FAIL;prepare(false);assert_saved_credential(false);assert(run(3,candidate_success_tick)==2);assert(shown_history_error==ESP_FAIL&&save_count==1&&restart_count==1);}
+    else if(!strcmp(name,"candidate_handoff_failure")){prepare(false);assert(run(3,candidate_handoff_tick)==1);assert(!validate_count&&!save_count&&!restart_count&&provision.active);assert(history_save_count==2&&history_records[1].state==CP_ATTEMPT_FAILED&&history_records[1].diagnostic.code==CP_DIAG_HANDOFF_FAILED);}
     else {fprintf(stderr,"Unknown scenario: %s\n",name);exit(2);}
 }
 int main(int argc,char**argv)
 {
     assert(argc==2);scenario(argv[1]);assert(!radio_resource_held);
+    if(s_prepared)assert(board_bind_count==1&&context_bind_count==1);
     if(validate_count){assert(progress_count==2&&history_save_count==2);assert(history_records[0].state==CP_ATTEMPT_INTERRUPTED&&history_records[0].diagnostic.code==CP_DIAG_VALIDATION_INTERRUPTED);assert(history_records[1].state==(restart_count?CP_ATTEMPT_SAVED:CP_ATTEMPT_FAILED));assert(history_records[1].diagnostic.terminal);assert(history_records[1].diagnostic.code==(restart_count?CP_DIAG_SAVED:save_error!=ESP_OK?CP_DIAG_SAVE_FAILED:CP_DIAG_DHCP_TIMEOUT));assert(!memcmp(&provision_diagnostic,&history_records[1].diagnostic,sizeof provision_diagnostic));}
     printf("actual runtime: %s passed\n",argv[1]);return 0;
 }

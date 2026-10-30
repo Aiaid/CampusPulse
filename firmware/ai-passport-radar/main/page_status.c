@@ -75,42 +75,14 @@ static bool setup_row(const cp_status_view_t *v, unsigned row, text_projection_t
 #define TEXT(y_, color_, ...) do { p->y=(y_); p->color=(color_); \
     snprintf(p->text,sizeof p->text,__VA_ARGS__); } while (0)
     switch (row) {
-    case 0: TEXT(6, UI_COL_TEAL, "%s", v->setup_usb ? "USB setup" :
-                 v->setup_softap ? "Wi-Fi hotspot setup" : "Bluetooth setup"); break;
+    case 0: TEXT(6, UI_COL_TEAL, "USB setup"); break;
     case 1: TEXT(36, UI_COL_MUTED, "Node"); break;
     case 2: p->y=56; bounded_value(p,v->node_id,sizeof v->node_id); break;
-    case 3:
-        if (v->setup_usb) TEXT(92, UI_COL_FG, "Connect USB cable");
-        else TEXT(76, UI_COL_MUTED, "%s",v->setup_softap?"Wi-Fi name":"Device name");
-        break;
-    case 4:
-        if (v->setup_usb) TEXT(120, UI_COL_FG, "Select USB in admin");
-        else { p->y=96; bounded_value(p,v->setup_name,sizeof v->setup_name); }
-        break;
-    case 5: TEXT(v->setup_usb?176:116, UI_COL_MUTED, "%s",v->setup_usb?"State":"Setup PIN (5 min)"); break;
-    case 6:
-        p->y=v->setup_usb?196:136;
-        if (v->setup_usb) bounded_value(p,v->setup_state,sizeof v->setup_state);
-        else bounded_value(p,v->setup_proof,8);
-        break;
-    case 7:
-        if (v->setup_usb) TEXT(282, UI_COL_MUTED, "UP:BLE DOWN:Wi-Fi");
-        else TEXT(176, UI_COL_MUTED, "%s",v->setup_softap?"Wi-Fi password":"State");
-        break;
-    case 8:
-        if (v->setup_usb) return false;
-        p->y=196;
-        if (v->setup_softap) bounded_value(p,v->setup_password,12);
-        else bounded_value(p,v->setup_state,sizeof v->setup_state);
-        break;
-    case 9:
-        if (v->setup_usb) return false;
-        if (v->setup_softap) TEXT(230, UI_COL_FG, "Open 192.168.4.1");
-        else TEXT(282, UI_COL_MUTED, "UP:BLE DOWN:Wi-Fi");
-        break;
-    case 10:
-        if (!v->setup_softap || v->setup_usb) return false;
-        TEXT(282, UI_COL_MUTED, "UP:BLE DOWN:Wi-Fi"); break;
+    case 3: TEXT(92, UI_COL_FG, "Connect USB cable"); break;
+    case 4: TEXT(120, UI_COL_FG, "Open setup in admin"); break;
+    case 5: TEXT(176, UI_COL_MUTED, "State"); break;
+    case 6: p->y=196; bounded_value(p,v->setup_state,sizeof v->setup_state); break;
+    case 7: TEXT(282, UI_COL_MUTED, "Hold OK: resume"); break;
     default: return false;
     }
     return true;
@@ -399,7 +371,7 @@ static bool same_chart(const cp_debug_domain_t *a,const cp_debug_domain_t *b)
 }
 static unsigned setup_mode(const cp_status_view_t *v)
 {
-    return !v->setup_active ? 0 : v->setup_usb ? 1 : v->setup_softap ? 2 : 3;
+    return v->setup_active ? 1 : 0;
 }
 void status_page_render_diff(const cp_status_view_t *next,const cp_status_view_t *previous)
 {

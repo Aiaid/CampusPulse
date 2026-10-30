@@ -1,6 +1,9 @@
 #ifndef CP_UPLOAD_SCHEDULER_H
 #define CP_UPLOAD_SCHEDULER_H
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
 #include "cp_journal.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -20,11 +23,23 @@ typedef struct {
     uint8_t retry_exp[CP_JOURNAL_MAX_SLOTS];
     uint8_t stream[CP_JOURNAL_MAX_SLOTS];
     bool blocked[CP_JOURNAL_MAX_SLOTS];
+#if CONFIG_CP_UPLOAD_PREFER_CURRENT_BOOT
+    bool current[CP_JOURNAL_MAX_SLOTS];
+#endif
     uint8_t next_stream;
 } cp_upload_scheduler_t;
 
 void cp_upload_scheduler_init(cp_upload_scheduler_t *scheduler);
 bool cp_upload_scheduler_bind(cp_upload_scheduler_t *scheduler, uint16_t slot, unsigned stream);
+#if CONFIG_CP_UPLOAD_PREFER_CURRENT_BOOT
+/* Classification comes from frozen metadata, never from physical slot order. */
+void cp_upload_scheduler_set_current(cp_upload_scheduler_t *scheduler, uint16_t slot, bool current);
+#else
+static inline void cp_upload_scheduler_set_current(cp_upload_scheduler_t *scheduler,
+                                                   uint16_t slot, bool current) {
+    (void)scheduler; (void)slot; (void)current;
+}
+#endif
 void cp_upload_scheduler_block(cp_upload_scheduler_t *scheduler, uint16_t slot);
 void cp_upload_scheduler_confirmed(cp_upload_scheduler_t *scheduler, uint16_t slot);
 /* Choose the oldest unblocked pending batch in each stream BEFORE considering
@@ -32,7 +47,11 @@ void cp_upload_scheduler_confirmed(cp_upload_scheduler_t *scheduler, uint16_t sl
  * cannot overtake it. Permanently blocked evidence remains stored and is skipped.
  * Round robin advances only when a slot is selected. Unknown metadata is a fifth
  * lane: after discovery binds its stream, rerun selection before upload so it
- * cannot overtake an older known batch in that stream. */
+ * cannot overtake an older known batch in that stream.
+ * With current-boot preference enabled, ordering/backoff apply independently
+ * within the current and historical lanes of each stream. Ready current heads
+ * take priority; history is eligible only when all current heads are empty or
+ * delayed. Blocked bodies are preserved in both lanes. */
 uint16_t cp_upload_scheduler_select(cp_upload_scheduler_t *scheduler,
                                     const cp_journal_slot_t *slots, unsigned count,
                                     uint64_t now_ms);

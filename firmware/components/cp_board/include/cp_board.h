@@ -23,8 +23,8 @@ typedef struct {
     char node_id[32], board[24], network[24], authentication[24];
     char policy[24], collection[24];
     int battery_percent;
-    bool setup_active,setup_softap,setup_usb;
-    char setup_name[32],setup_proof[33],setup_password[33],setup_state[24];
+    bool setup_active;
+    char setup_state[24];
     cp_debug_snapshot_t debug;
     cp_device_page_t page;
 } cp_board_view_t;

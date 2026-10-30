@@ -1,18 +1,26 @@
 # CampusPulse firmware
 
+Local setup is **USB only** as of2026-10-29. Bluetooth and device-hotspot
+provisioning are removed from the administrator wizard and shared firmware;
+normal Wi-Fi networking and passive BLE collection remain. Use a USB data cable
+and a desktop browser with Web Serial in a secure context. The Passport setup
+action opens USB setup, and unconfigured devices wait for explicit USB setup.
+See [USB-only setup](../docs/notes/usb-only-provisioning.md) for the current
+contract and local verification boundaries. Earlier BLE/SoftAP acceptance below
+is historical.
+
 As of2026-10-29, normal builds default to native MQTT/TLS through Hangzhou EMQX
 and the CF gateway. Settings v3 stores independent MQTT URI, username, password
 and routing namespace at runtime; firmware images contain no broker password.
 Legacy v1/v2 settings are preserved and require MQTT migration through setup,
 with no silent HTTP upload fallback. Wi-Fi-only reconfiguration reuses saved
-MQTT credentials. BLE uses authenticated bounded chunks for larger candidates;
-USB/SoftAP accept1536-byte candidates. See
+MQTT credentials. USB accepts1536-byte candidates. See
 [production MQTT operations](../docs/notes/mqtt-production.md) for software,
 deployed-service and current hardware-rollout boundaries. The original chain
 acceptance below is historical evidence, not validation of every new image.
 
-The current local AI Passport implementation connects protected browser BLE or
-device-hosted SoftAP setup, durable enrollment, v2 policy control, canonical
+The current local AI Passport implementation connects physical USB setup,
+durable enrollment, v2 policy control, canonical
 MAC/address-type summaries, a frozen Flash journal and exact upload receipts.
 See the [firmware chain and evidence boundaries](../docs/notes/firmware-chain.md).
 The initial chain's software acceptance passed on 2026-10-25, including four
@@ -21,8 +29,22 @@ update/startup was verified while retaining protected data. Physical enrollment
 and capture/upload acceptance remain separate. The
 [short PIN and USB revision](../docs/specs/local-provisioning-v2.md) passes local
 native/SDK/browser checks and four C3 configurations; its physical acceptance
-is recorded separately. T-Energy-S3 and Waveshare support remain
-pending independently verified profiles and layouts.
+is recorded separately. The [T-Energy-S3 entry](t-energy-s3/README.md) now links
+the current shared core through an isolated S3 adapter. Its USB-only r2 image,
+native MQTT settings migration and bounded128/60s workload are
+[physically verified](../docs/notes/tenergy-usb-mqtt-acceptance.md): five complete
+windows/405 summaries reconcile and the sampled queue declines. The newer
+[512-address PSRAM profile](../docs/notes/tenergy-512-psram-acceptance.md) is also
+installed:112KiB banks and upload buffers are checked external, a601.981s stable
+observation has sampled internal free≥87071bytes and queue36→4. Its actual
+radio occupancy is below512; full saturation remains separate. Larger-load,
+interruption, calibrated battery and power-loss acceptance remain open in the
+[integration plan](../docs/design/tenergy-s3-integration.md). Waveshare support
+still requires an independently verified profile and layout. The later user-
+requested [Waveshare raw recorder](waveshare-raw/README.md) is an independent
+TF-only first implementation, with a separate build and decoder. It is not
+the shared authenticated collection/upload chain; its card/radio/physical
+acceptance remains pending and it has not been flashed.
 
 The project entry is [ai-passport-radar](ai-passport-radar/README.md), imported at
 the user's request on 2026-10-24. Shared components live under `components/`.
@@ -45,13 +67,13 @@ firmware/tools/build-passport.sh --diagnostic --headless
 
 The chain helper includes native sanitizer/fault tests and sends literal C-codec
 fixtures to a real isolated local workerd/D1/R2 instance. The browser script uses
-synthetic cloud/GATT and WebKit for the device page; it cannot validate physical
-Bluetooth or iPhone hotspot connectivity. The two build flags select diagnostics
+synthetic cloud and USB transport; it cannot validate physical USB connectivity.
+The two build flags select diagnostics
 and no LCD/buttons; they do not select another board family. The USB revision
 gives normal headless builds a physical setup path without a displayed code.
 Connecting a cable alone does not enter setup; select USB in the administrator
 wizard. It requires a desktop browser exposing Web Serial. iPhone/iPad browser
-setup uses the local hotspot of a display-equipped device.
+setup is unavailable; use the supported desktop USB route.
 
 Builds use fresh directories and validate separate bootloader, partition and app
 images. Python operations use `uv`. No helper deploys or flashes hardware.

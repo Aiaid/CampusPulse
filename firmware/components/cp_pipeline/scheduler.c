@@ -1,6 +1,11 @@
 #include "cp_upload_scheduler.h"
 #include <string.h>
 #define CP_UPLOAD_LANE_COUNT (CP_UPLOAD_STREAM_COUNT + 1u)
+#if CONFIG_CP_UPLOAD_PREFER_CURRENT_BOOT
+#define CP_UPLOAD_BOOT_LANES 2u
+#else
+#define CP_UPLOAD_BOOT_LANES 1u
+#endif
 
 void cp_upload_scheduler_init(cp_upload_scheduler_t *scheduler) {
     if (!scheduler)
@@ -16,8 +21,18 @@ bool cp_upload_scheduler_bind(cp_upload_scheduler_t *scheduler, uint16_t slot, u
     scheduler->retry_exp[slot] = 0;
     scheduler->blocked[slot] = stream >= CP_UPLOAD_STREAM_COUNT;
     scheduler->stream[slot] = stream < CP_UPLOAD_STREAM_COUNT ? (uint8_t)stream : UINT8_MAX;
+#if CONFIG_CP_UPLOAD_PREFER_CURRENT_BOOT
+    scheduler->current[slot] = false;
+#endif
     return !scheduler->blocked[slot];
 }
+
+#if CONFIG_CP_UPLOAD_PREFER_CURRENT_BOOT
+void cp_upload_scheduler_set_current(cp_upload_scheduler_t *scheduler, uint16_t slot, bool current) {
+    if (scheduler && slot < CP_JOURNAL_MAX_SLOTS)
+        scheduler->current[slot] = current;
+}
+#endif
 
 void cp_upload_scheduler_block(cp_upload_scheduler_t *scheduler, uint16_t slot) {
     if (!scheduler || slot >= CP_JOURNAL_MAX_SLOTS)
@@ -37,9 +52,10 @@ uint16_t cp_upload_scheduler_select(cp_upload_scheduler_t *scheduler,
                                     uint64_t now_ms) {
     if (!scheduler || !slots || count > CP_JOURNAL_MAX_SLOTS)
         return CP_UPLOAD_NO_SLOT;
-    uint16_t candidates[CP_UPLOAD_LANE_COUNT];
-    for (unsigned stream = 0; stream < CP_UPLOAD_LANE_COUNT; ++stream)
-        candidates[stream] = CP_UPLOAD_NO_SLOT;
+    uint16_t candidates[CP_UPLOAD_BOOT_LANES][CP_UPLOAD_LANE_COUNT];
+    for (unsigned lane = 0; lane < CP_UPLOAD_BOOT_LANES; ++lane)
+        for (unsigned stream = 0; stream < CP_UPLOAD_LANE_COUNT; ++stream)
+            candidates[lane][stream] = CP_UPLOAD_NO_SLOT;
     for (unsigned slot = 0; slot < count; ++slot) {
         unsigned stream = scheduler->stream[slot];
         if (slots[slot].state != CP_SLOT_PENDING || scheduler->blocked[slot])
@@ -48,16 +64,22 @@ uint16_t cp_upload_scheduler_select(cp_upload_scheduler_t *scheduler,
             stream = CP_UPLOAD_STREAM_COUNT;
         else if (stream >= CP_UPLOAD_STREAM_COUNT)
             continue;
-        uint16_t prior = candidates[stream];
+        unsigned lane = 0;
+#if CONFIG_CP_UPLOAD_PREFER_CURRENT_BOOT
+        lane = scheduler->current[slot] ? 0u : 1u;
+#endif
+        uint16_t prior = candidates[lane][stream];
         if (prior == CP_UPLOAD_NO_SLOT || slots[slot].ordinal < slots[prior].ordinal)
-            candidates[stream] = (uint16_t)slot;
+            candidates[lane][stream] = (uint16_t)slot;
     }
-    for (unsigned offset = 0; offset < CP_UPLOAD_LANE_COUNT; ++offset) {
-        unsigned stream = (scheduler->next_stream + offset) % CP_UPLOAD_LANE_COUNT;
-        uint16_t slot = candidates[stream];
-        if (slot != CP_UPLOAD_NO_SLOT && scheduler->retry_at[slot] <= now_ms) {
-            scheduler->next_stream = (uint8_t)((stream + 1) % CP_UPLOAD_LANE_COUNT);
-            return slot;
+    for (unsigned lane = 0; lane < CP_UPLOAD_BOOT_LANES; ++lane) {
+        for (unsigned offset = 0; offset < CP_UPLOAD_LANE_COUNT; ++offset) {
+            unsigned stream = (scheduler->next_stream + offset) % CP_UPLOAD_LANE_COUNT;
+            uint16_t slot = candidates[lane][stream];
+            if (slot != CP_UPLOAD_NO_SLOT && scheduler->retry_at[slot] <= now_ms) {
+                scheduler->next_stream = (uint8_t)((stream + 1) % CP_UPLOAD_LANE_COUNT);
+                return slot;
+            }
         }
     }
     return CP_UPLOAD_NO_SLOT;

@@ -59,8 +59,6 @@ static void test_sequential_projections(void)
     v.debug.domain.reports_seen=123;v.debug.upload.attempt_elapsed_ms=500;
     v.battery_percent=88;strcpy(v.board,"hidden");strcpy(v.node_id,"hidden-node");
     transition(&v,0,"unrendered fields");
-    v.setup_softap=v.setup_usb=true;transition(&v,0,"hidden setup mode flags");
-    v.setup_softap=v.setup_usb=false;transition(&v,0,NULL);
     v.debug.wifi_connected=v.debug.wifi_rssi_known=v.debug.wifi_phy_known=true;
     v.debug.wifi_mbps_known=true;v.debug.wifi_mbps=72;v.debug.wifi_rssi_dbm=-61;
     strcpy(v.debug.wifi_ssid,"Synthetic Long Debug AP");strcpy(v.debug.wifi_phy,"11n/20");
@@ -121,21 +119,11 @@ static void test_sequential_projections(void)
     v.debug.clock_epoch=2;v.debug.clock_uncertainty_ms=350;
     transition(&v,-1,"clock input rows");
     v.debug.reports_total++;transition(&v,0,"elevator hidden field");
-    v.setup_active=v.setup_usb=true;strcpy(v.setup_state,"waiting for candidate");
+    v.setup_active=true;strcpy(v.setup_state,"waiting for candidate");
     transition(&v,80,"USB setup transition");
-    v.setup_softap=true;transition(&v,0,"USB hidden AP flag");
     v.page=CP_DEVICE_PAGE_DEBUG;transition(&v,0,"setup hidden page");
-    v.setup_softap=false;transition(&v,0,NULL);
-    strcpy(v.setup_proof,"12345678");strcpy(v.setup_password,"example12345");
-    transition(&v,0,"USB hidden secrets");
     strcpy(v.setup_state,"OK");transition(&v,5,"shrinking setup state");
-    v.setup_usb=false;v.setup_softap=true;strcpy(v.setup_name,"Synthetic Setup AP");
-    transition(&v,80,"SoftAP transition");
-    v.setup_proof[0]='9';transition(&v,5,"setup PIN value");
-    strcpy(v.setup_password,"P");transition(&v,5,"shrinking AP password");
-    strcpy(v.setup_state,"invisible in SoftAP");transition(&v,0,"SoftAP hidden state");
-    v.setup_softap=false;transition(&v,80,"BLE setup transition");
-    strcpy(v.setup_state,"waiting");transition(&v,5,"BLE setup state");
+    strcpy(v.setup_state,"waiting");transition(&v,5,"USB setup state");
     v.setup_active=false;transition(&v,80,"leave setup");
     status_page_render_diff(NULL,&v);
 }
@@ -148,12 +136,7 @@ static void test_mixed_sequence(void)
         switch (random%35) {
         case 0: v.page=(cp_device_page_t)((unsigned)v.page+1u);if(v.page>=CP_DEVICE_PAGE_COUNT)v.page=CP_DEVICE_PAGE_DEBUG;break;
         case 1:v.setup_active=!v.setup_active;break;
-        case 2:v.setup_usb=!v.setup_usb;break;
-        case 3:v.setup_softap=!v.setup_softap;break;
         case 4:snprintf(v.setup_state,sizeof v.setup_state,"S%lu",(unsigned long)random);break;
-        case 5:snprintf(v.setup_name,sizeof v.setup_name,"AP%lu",(unsigned long)random);break;
-        case 6:snprintf(v.setup_proof,sizeof v.setup_proof,"%lu",(unsigned long)random);break;
-        case 7:snprintf(v.setup_password,sizeof v.setup_password,"P%lu",(unsigned long)random);break;
         case 8:v.debug.wifi_connected=!v.debug.wifi_connected;break;
         case 9:v.debug.wifi_rssi_dbm=(int8_t)random;break;
         case 10:v.debug.heap_known=!v.debug.heap_known;break;
@@ -182,8 +165,8 @@ static void test_mixed_sequence(void)
         case 33:snprintf(v.authentication,sizeof v.authentication,"A%lu",(unsigned long)random);break;
         case 34:snprintf(v.collection,sizeof v.collection,"C%lu",(unsigned long)random);break;
         }
-        unsigned old_mode=!shown.setup_active?0:shown.setup_usb?1:shown.setup_softap?2:3;
-        unsigned new_mode=!v.setup_active?0:v.setup_usb?1:v.setup_softap?2:3;
+        unsigned old_mode=shown.setup_active?1:0;
+        unsigned new_mode=v.setup_active?1:0;
         transition(&v,old_mode!=new_mode || (!v.setup_active && shown.page!=v.page) ? 80 : -1,NULL);
     }
 }

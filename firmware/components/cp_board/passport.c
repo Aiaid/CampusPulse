@@ -154,13 +154,8 @@ void cp_board_present(const cp_board_view_t *view) {
     COPY_FIELD(authentication);
     COPY_FIELD(policy);
     COPY_FIELD(collection);
-    COPY_FIELD(setup_name);
-    COPY_FIELD(setup_proof);
-    COPY_FIELD(setup_password);
     COPY_FIELD(setup_state);
     screen.setup_active = view->setup_active;
-    screen.setup_softap = view->setup_softap;
-    screen.setup_usb = view->setup_usb;
     screen.debug = view->debug;
     screen.page = view->page;
     /* Age text stops at 999s+; subsecond telemetry never defeats redraw

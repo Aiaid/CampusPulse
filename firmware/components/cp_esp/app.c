@@ -106,6 +106,18 @@ static void log_pipeline_state(const cp_runtime_snapshot_t *runtime) {
         (unsigned long)p->seal_wait_max_ms,(unsigned long)p->persist_max_ms,
         (unsigned)heap_caps_get_free_size(caps),
         (unsigned)heap_caps_get_largest_free_block(caps));
+#if CONFIG_CP_PIPELINE_PSRAM_BANKS
+    const uint32_t external_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    ESP_LOGI(TAG,"memory_caps internal_free=%u internal_min=%u internal_largest=%u internal_total=%u psram_free=%u psram_min=%u psram_largest=%u psram_total=%u",
+        (unsigned)heap_caps_get_free_size(caps),
+        (unsigned)heap_caps_get_minimum_free_size(caps),
+        (unsigned)heap_caps_get_largest_free_block(caps),
+        (unsigned)heap_caps_get_total_size(caps),
+        (unsigned)heap_caps_get_free_size(external_caps),
+        (unsigned)heap_caps_get_minimum_free_size(external_caps),
+        (unsigned)heap_caps_get_largest_free_block(external_caps),
+        (unsigned)heap_caps_get_total_size(external_caps));
+#endif
 }
 static bool begin_usb_setup(void *unused) {
     (void)unused;
@@ -162,11 +174,6 @@ static void show_status(const cp_runtime_snapshot_t *runtime) {
                  ? "CAPTURE STOPPED"
                  : cp_collection_state_name(runtime->collection));
     view.setup_active = runtime->provision.active;
-    view.setup_softap = runtime->provision.mode == CP_PROVISION_SOFTAP;
-    view.setup_usb = runtime->provision.mode == CP_PROVISION_USB;
-    snprintf(view.setup_name, sizeof view.setup_name, "%s", runtime->provision.service_name);
-    snprintf(view.setup_proof, sizeof view.setup_proof, "%s", runtime->provision.proof);
-    snprintf(view.setup_password, sizeof view.setup_password, "%s", runtime->provision.ap_password);
     snprintf(view.setup_state, sizeof view.setup_state, "%s", runtime->provision.state);
 #endif
     cp_board_present(&view);
@@ -200,12 +207,7 @@ static void supervisor(void *context) {
                     if (runtime.provision.active)
                         (void)cp_runtime_request_resume();
                     else
-                        (void)cp_runtime_request_setup(CP_PROVISION_BLE);
-                } else if (runtime.provision.active && event.kind == CP_INPUT_CLICK) {
-                    if (event.button == CP_BUTTON_UP)
-                        (void)cp_runtime_request_setup(CP_PROVISION_BLE);
-                    if (event.button == CP_BUTTON_DOWN)
-                        (void)cp_runtime_request_setup(CP_PROVISION_SOFTAP);
+                        (void)cp_runtime_request_setup(CP_PROVISION_USB);
                 } else if (!runtime.provision.active && event.kind == CP_INPUT_CLICK) {
                     if (event.button == CP_BUTTON_DOWN)
                         s_page=(cp_device_page_t)((s_page+1)%CP_DEVICE_PAGE_COUNT);

@@ -1,3 +1,17 @@
+# Current transport: physical USB only
+
+As of2026-10-29, Bluetooth and device-hotspot provisioning are removed from this
+component, including Security 2/SRP, GATT, setup HTTP pages and wireless
+dependencies. `cp_provision_start` accepts only `CP_PROVISION_USB`; legacy BLE
+and SoftAP enum values are reserved and return `ESP_ERR_NOT_SUPPORTED`.
+The USB path retains per-session nonces, identity validation, bounded requests,
+saved-credential reuse and asynchronous candidate validation/save.
+Normal Wi-Fi networking and BLE collection are separate components.
+See [current setup contract](../../../docs/notes/usb-only-provisioning.md).
+
+> The original component description below is historical. Wireless setup source
+> paths, protocols and tests described there were retired by the USB-only change.
+
 # Device-local provisioning
 
 The controller owns setup mode, candidate validation, durable settings and

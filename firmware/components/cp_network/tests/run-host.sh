@@ -56,19 +56,25 @@ read -r -a CP_CRYPTO_FLAGS <<< "$(pkg-config --cflags --libs openssl)"
 # Keep platform deprecation suppression limited to the pinned upstream cJSON.
 clang -std=c11 -Wall -Wextra -Werror -Wno-deprecated-declarations -g -fsanitize=address,undefined \
     -I"$CP_JSON_DIR" -c "$CP_JSON_DIR/cJSON.c" -o "$CP_TEST_DIR/cJSON.o"
-clang -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -DCP_NETWORK_HOST_TEST \
+for CP_ADDRESS_CAPACITY in 128 512; do
+CP_BATCH_ITEMS=16
+if [[ "$CP_ADDRESS_CAPACITY" == 512 ]]; then CP_BATCH_ITEMS=64; fi
+clang -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -DCP_NETWORK_HOST_TEST -DCONFIG_CP_COLLECT_MAX_ADDRESSES="$CP_ADDRESS_CAPACITY" -DCONFIG_CP_NETWORK_MAX_BATCH_ITEMS="$CP_BATCH_ITEMS" \
     -I"$CP_NETWORK_DIR/tests/host" -I"$CP_NETWORK_DIR/include" -I"$CP_NETWORK_DIR" -I"$CP_COMPONENTS_DIR/cp_core/include" \
     -I"$CP_COMPONENTS_DIR/cp_settings/include" -I"$CP_COMPONENTS_DIR/cp_settings/tests/host" \
     -I"$CP_JSON_DIR" "$CP_NETWORK_DIR/protocol.c" "$CP_TEST_DIR/cJSON.o" \
     "$CP_NETWORK_DIR/tests/test_protocol.c" "${CP_CRYPTO_FLAGS[@]}" -o "$CP_TEST_DIR/test-protocol"
 "$CP_TEST_DIR/test-protocol"
-clang -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -DCP_NETWORK_HOST_TEST \
+done
+for CP_BATCH_ITEMS in 16 64; do
+clang -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -DCP_NETWORK_HOST_TEST -DCONFIG_CP_NETWORK_MAX_BATCH_ITEMS="$CP_BATCH_ITEMS" \
     -I"$CP_NETWORK_DIR/tests/host" -I"$CP_NETWORK_DIR/include" -I"$CP_NETWORK_DIR" \
     -I"$CP_COMPONENTS_DIR/cp_core/include" -I"$CP_COMPONENTS_DIR/cp_settings/include" \
     -I"$CP_COMPONENTS_DIR/cp_settings/tests/host" -I"$CP_JSON_DIR" \
     "$CP_NETWORK_DIR/protocol.c" "$CP_TEST_DIR/cJSON.o" "$CP_NETWORK_DIR/tests/test_ack_canonical.c" \
     "${CP_CRYPTO_FLAGS[@]}" -o "$CP_TEST_DIR/test-ack-canonical"
 "$CP_TEST_DIR/test-ack-canonical"
+done
 clang -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
     -I"$CP_NETWORK_DIR/tests/host" -I"$CP_NETWORK_DIR/include" -I"$CP_NETWORK_DIR" -I"$CP_COMPONENTS_DIR/cp_core/include" \
     -I"$CP_COMPONENTS_DIR/cp_settings/include" -I"$CP_COMPONENTS_DIR/cp_settings/tests/host" \

@@ -1,5 +1,11 @@
 # Local provisioning: short PIN and physical USB
 
+> **Partially superseded, 2026-10-29:** current setup is
+> [USB only](../notes/usb-only-provisioning.md). Bluetooth/Security 2, PIN and
+> device-hotspot sections below describe the retired implementation. Their
+> source paths and tests are historical; USB framing and credential validation
+> remain applicable subject to the current contract.
+
 2026-10-29 update: production settings v3 adds runtime `mqtt` credentials and
 defaults to native MQTT/TLS; the MQTT operation contract is in
 [production MQTT operations](../notes/mqtt-production.md). BLE chunks below

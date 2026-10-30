@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Legacy transport values remain reserved and are always rejected. */
 typedef enum { CP_PROVISION_BLE = 0, CP_PROVISION_SOFTAP = 1, CP_PROVISION_USB = 2 } cp_provision_mode_t;
 /* Called on transport task: copy candidate and return promptly. Never block for
  * Wi-Fi/TLS/NVS here. ESP_OK means queued, not persisted or cloud accepted. */
@@ -15,22 +16,17 @@ typedef struct {
     bool active;
     cp_provision_mode_t mode;
     char node_id[16];
-    char service_name[30];
-    char proof[33]; /* Eight ASCII digits only; never the internal master. */
-    char ap_password[33];
     char attempt_id[37];
     char state[24];
     char reason[80];
 } cp_provision_snapshot_t;
-/* Exclusive boot mode: scanner/network must be stopped. proof is a persistent
- * factory-random secret (32 hex chars), never a MAC/global firmware password.
- * API origin is fixed by cp_settings. No BLE memory release occurs. */
+/* Physical USB only; other mode values return ESP_ERR_NOT_SUPPORTED before
+ * state changes. Scanner/network must be stopped. The persistent factory-random
+ * secret derives a per-session nonce; API origin is fixed by cp_settings. */
 esp_err_t cp_provision_start(cp_provision_mode_t mode, const char *node_id,
                              const char *proof, cp_provision_submit_fn submit,
                              void *ctx);
-/* On failure, ownership remains active and callers must not start another radio
- * owner. A failed BLE teardown is latched until reboot (IDF frees internal state
- * even when stop fails); do not retry initialization in that boot. */
+/* Nonblocking: a concurrent USB exchange must finish before stop succeeds. */
 esp_err_t cp_provision_stop(void);
 /* Physical USB adapter owns framing/begin. Caller frees successful response.
  * status remains available after stop during candidate validation; other
@@ -45,6 +41,10 @@ void cp_provision_set_status(const char *state, const char *reason);
  * capability query. Never access NVS/network from this callback. */
 typedef bool (*cp_provision_credential_resolver_fn)(const char *node_id,cp_settings_t *saved,
     uint32_t *generation,void *context);
+/* Bind the selected profile before context/start. Tokens contain 1..23 lower
+ * ASCII letters, digits, '_' or '-'. Immutable while any session is active.
+ * info.board is "<board_id> / <target_chip>"; no board component dependency. */
+esp_err_t cp_provision_bind_board(const char *board_id,const char *target_chip);
 esp_err_t cp_provision_bind_context(const char *node_id,const char *boot_id,uint32_t reset_reason,
     cp_provision_credential_resolver_fn resolver,void *context);
 void cp_provision_set_diagnostic(const cp_network_diagnostic_t *diagnostic,const char *attempt_id);

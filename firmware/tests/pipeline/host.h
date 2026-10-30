@@ -13,6 +13,7 @@
 #define configMAX_PRIORITIES 25
 #define MALLOC_CAP_INTERNAL 1u
 #define MALLOC_CAP_8BIT 2u
+#define MALLOC_CAP_SPIRAM 4u
 #define ESP_PARTITION_TYPE_DATA 1
 #define BLE_GAP_EVENT_DISC_COMPLETE 1
 #define BLE_GAP_EVENT_DISC 2
@@ -42,6 +43,9 @@ size_t esp_get_free_heap_size(void);
 size_t heap_caps_get_free_size(uint32_t caps);
 size_t heap_caps_get_largest_free_block(uint32_t caps);
 size_t heap_caps_get_minimum_free_size(uint32_t caps);
+void *heap_caps_malloc(size_t bytes, uint32_t caps);
+void heap_caps_free(void *p);
+bool esp_ptr_external_ram(const void *p);
 void esp_fill_random(void *data, size_t size);
 uint32_t esp_random(void);
 int64_t esp_timer_get_time(void);

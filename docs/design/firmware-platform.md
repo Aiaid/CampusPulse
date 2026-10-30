@@ -1,5 +1,9 @@
 # Firmware platform, onboarding and local interaction
 
+> **Partially superseded, 2026-10-29:** Bluetooth and device-hotspot setup are
+> retired. Current onboarding is [USB only](../notes/usb-only-provisioning.md);
+> the wireless setup and iOS fallback descriptions below are historical.
+
 Dates: 2026-10-24–2026-10-25. Status: **partially implemented platform design**. The
 Passport local software chain now implements protected browser BLE / device-hosted
 SoftAP onboarding, settings, policy control, canonical summaries, a Flash journal

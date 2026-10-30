@@ -1,0 +1,10 @@
+menu "CampusPulse collector"
+config CP_COLLECT_MAX_ADDRESSES
+    int "Compiled maximum distinct addresses per window"
+    range 1 512
+    default 128
+    help
+        Build ceiling, not a collection policy or a measured radio capacity.
+        Larger profiles need separately admitted address/bin banks and physical
+        memory, queue and upload acceptance. Default C3 builds retain 128.
+endmenu

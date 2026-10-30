@@ -39,8 +39,17 @@ int main(void) {
     make_ack(valid,sizeof valid,&e,"3","\"receipt_test\"");
     assert(transport(valid,strlen(valid),&e,&ack,CP_ACK_CANONICAL_MATCH));
     assert(!strcmp(ack.receipt_id,"receipt_test")&&ack.http_status==200);
-    for(unsigned count=1;count<=16;++count){char token[8];snprintf(token,sizeof token,"%u",count);e.accepted_count=count;
+    for(unsigned count=1;count<=CP_NETWORK_ITEMS_MAX;++count){char token[8];snprintf(token,sizeof token,"%u",count);e.accepted_count=count;
         make_ack(body,sizeof body,&e,token,"\"receipt\"");assert(transport(body,strlen(body),&e,&ack,CP_ACK_CANONICAL_MATCH));}
+#if CONFIG_CP_NETWORK_MAX_BATCH_ITEMS == 64
+    /* Current S3 batches coexist with old nine-item frozen bodies. */
+    e.accepted_count=9;make_ack(body,sizeof body,&e,"9","\"legacy_receipt\"");
+    assert(transport(body,strlen(body),&e,&ack,CP_ACK_CANONICAL_MATCH));
+    e.accepted_count=64;make_ack(body,sizeof body,&e,"64.0","\"receipt64\"");
+    assert(transport(body,strlen(body),&e,&ack,CP_ACK_NEEDS_GENERAL));
+    make_ack(body,sizeof body,&e,"63","\"wrong_count\"");
+    assert(!transport(body,strlen(body),&e,&ack,CP_ACK_CANONICAL_INVALID));
+#endif
     e.accepted_count=3;
     const char *needles[]={"cp_aabbccddeeff","12345678-1234-4234-8234-123456789abc","address_summaries",
         "abcdef12-1234-4234-8234-123456789abc","ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","committed","2026-10-24T12:00:00.000Z"};

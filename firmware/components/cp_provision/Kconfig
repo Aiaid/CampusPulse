@@ -1,0 +1,8 @@
+menu "CampusPulse provisioning"
+config CP_PROVISION_USB_ONLY
+    bool
+    default y
+    help
+        Compatibility marker: provisioning is permanently physical USB only.
+        Collection BLE and normal network Wi-Fi remain independent.
+endmenu

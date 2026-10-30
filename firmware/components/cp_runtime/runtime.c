@@ -109,14 +109,14 @@ static void publish(void) {
         xSemaphoreGive(s_lock);
     }
 }
+static bool setup_mode_allowed(cp_provision_mode_t mode) {
+    return mode == CP_PROVISION_USB;
+}
 static void enter_setup(cp_provision_mode_t mode) {
-    cp_pipeline_snapshot_t pipe;
-    cp_pipeline_snapshot(&pipe);
-    if (mode == CP_PROVISION_BLE && pipe.radio_restart_required) {
-        reason("ble_restart_required");
-        publish();
+    /* Reject unsupported modes before changing the running network, lease or
+     * collector, including commands already queued by another caller. */
+    if (!setup_mode_allowed(mode))
         return;
-    }
     cp_core_set_setup_active(&s_core, true);
     if (cp_pipeline_stop() != ESP_OK || cp_network_stop() != ESP_OK) {
         reason("previous_owner_stop_failed");
@@ -359,14 +359,8 @@ static void runtime_task(void *arg) {
         cp_core_set_identity(&s_core, CP_IDENTITY_ENROLLED);
         if (cp_network_start(&s_settings) != ESP_OK)
             reason("network_start_failed");
-    } else if (s_core.profile->capabilities & CP_CAP_DISPLAY) {
-        enter_setup(CP_PROVISION_BLE);
-#if CONFIG_CP_NETWORK_MQTT_NATIVE_TLS
-        if(s_enrolled)reason("mqtt_setup_required");
-#endif
     } else {
-        /* A headless boot cannot present the wireless setup PIN. USB remains
-         * available, but only an explicit begin command opens its session. */
+        /* Every board waits for explicit physical USB setup. */
         cp_core_set_setup_active(&s_core, true);
         reason("awaiting_usb_setup");
         publish();
@@ -430,6 +424,8 @@ esp_err_t cp_runtime_prepare(const char *node, const cp_board_profile_t *profile
         return err;
     }
     s_saved_generation=s_enrolled?1:0;
+    err=cp_provision_bind_board(profile->board_id,profile->target_chip);
+    if(err!=ESP_OK){reason("board_profile_failed");return err;}
     err=cp_provision_bind_context(s_node,s_boot,(uint32_t)esp_reset_reason(),resolve_saved_credential,NULL);
     if(err!=ESP_OK)return err;
     s_history_error=cp_network_attempt_load(&s_previous_attempt);
@@ -456,7 +452,7 @@ esp_err_t cp_runtime_start(void) {
 }
 bool cp_runtime_request_setup(cp_provision_mode_t mode) {
     if (!s_prepared || __atomic_load_n(&s_candidate_pending, __ATOMIC_ACQUIRE) ||
-        (mode != CP_PROVISION_BLE && mode != CP_PROVISION_SOFTAP && mode != CP_PROVISION_USB))
+        !setup_mode_allowed(mode))
         return false;
     command_t cmd = {.kind = CMD_MODE, .mode = mode};
     return xQueueSend(s_commands, &cmd, 0) == pdTRUE;

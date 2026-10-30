@@ -327,8 +327,6 @@ static void test_bounded_status(void)
     cp_status_view_t view;
     memset(&view, 0xff, sizeof view); // Every text field is deliberately unterminated.
     view.setup_active = false;
-    view.setup_softap = false;
-    view.setup_usb = false;
     view.battery_percent = -1;
     memset(&view.debug, 0, sizeof view.debug);
     ui_owner = status_render = true;
@@ -339,23 +337,17 @@ static void test_bounded_status(void)
     const unsigned calls = render_calls;
     status_page_render(NULL);
     assert(render_calls == calls);
-    // Setup fields are bounded: an 8-digit PIN, 12-character AP password, and USB view.
+    // Unterminated setup state is bounded, and setup offers only USB.
     view.setup_active = true;
     status_page_render(&view);
-    assert(!strcmp(text_at(6), "Bluetooth setup"));
-    assert(!strcmp(text_at(116), "Setup PIN (5 min)"));
-    assert(strlen(text_at(136)) == 8);
-    assert(!text_at(4)[0]);
-    view.setup_softap = true;
-    status_page_render(&view);
-    assert(!strcmp(text_at(6), "Wi-Fi hotspot setup"));
-    assert(!strcmp(text_at(176), "Wi-Fi password"));
-    assert(strlen(text_at(196)) == 12);
-    view.setup_usb = true;
-    status_page_render(&view);
     assert(!strcmp(text_at(6), "USB setup"));
-    assert(!text_at(136)[0] && !strcmp(text_at(176), "State"));
-    assert(render_calls == calls + 3);
+    assert(!strcmp(text_at(92), "Connect USB cable"));
+    assert(!strcmp(text_at(120), "Open setup in admin"));
+    assert(!strcmp(text_at(176), "State"));
+    assert(strlen(text_at(196)) > 0 && strlen(text_at(196)) <= sizeof view.setup_state);
+    assert(!strcmp(text_at(282), "Hold OK: resume"));
+    assert(!text_at(136)[0]);
+    assert(render_calls == calls + 1);
     ui_owner = status_render = false;
 }
 
@@ -365,8 +357,6 @@ static void test_debug_dashboard(void)
     cp_debug_snapshot_t *d = &view.debug;
     strcpy(view.authentication, "ready");
     strcpy(view.collection, "collecting");
-    strcpy(view.setup_proof, "secret-proof");
-    strcpy(view.setup_password, "secret-password");
     d->wifi_connected = d->wifi_rssi_known = d->wifi_phy_known = true;
     strcpy(d->wifi_ssid, "Synthetic Debug Wi-Fi");
     strcpy(d->wifi_phy, "11n/20");
@@ -523,7 +513,7 @@ static void test_domain_pages(void)
     status_page_render(&view);
     assert(!strcmp(text_at(92), "-- / -- / --"));
     assert(!strcmp(text_at(114), "Samples --"));
-    view.setup_active = view.setup_usb = true;
+    view.setup_active = true;
     for (view.page = CP_DEVICE_PAGE_DEBUG; view.page < CP_DEVICE_PAGE_COUNT; view.page++) {
         status_page_render(&view);
         assert(!strcmp(text_at(6), "USB setup") && !text_at(4)[0]);

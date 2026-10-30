@@ -1,5 +1,10 @@
 # Passport provisioning, policy and durable upload chain
 
+> **Transport update, 2026-10-29:** current setup is
+> [USB only](usb-only-provisioning.md). Bluetooth and device-hotspot transport
+> descriptions and their original tests below are historical. Normal Wi-Fi
+> networking, BLE observation and durable upload remain independent.
+
 > Field update, 2026-10-25: `cp-0b77ccc58257` now has one-board/current-PEAP
 > acceptance for saved-network boot, desired policy, exact current-boot
 > window/address-summary/status receipts and automatic RAM-pressure stop/recovery.

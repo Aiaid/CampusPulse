@@ -9,6 +9,7 @@
 #define CP_PROTOCOL "campuspulse/2"
 #define CP_NETWORK_ADAPTER "cp-nimble-v2"
 #ifdef ESP_PLATFORM
+#include "sdkconfig.h"
 #include "esp_app_desc.h"
 #define CP_NETWORK_FIRMWARE (esp_app_get_description()->version)
 #else
@@ -16,7 +17,14 @@
 #define CP_NETWORK_FIRMWARE "campuspulse-passport-v2"
 #endif
 #define CP_NETWORK_BODY_MAX 8192u
+#ifdef CONFIG_CP_NETWORK_MAX_BATCH_ITEMS
+#define CP_NETWORK_ITEMS_MAX (CONFIG_CP_NETWORK_MAX_BATCH_ITEMS + 0u)
+#else
 #define CP_NETWORK_ITEMS_MAX 16u
+#endif
+#if CP_NETWORK_ITEMS_MAX < 4 || CP_NETWORK_ITEMS_MAX > 128
+#error "Network batch build limit must be between 4 and 128 items"
+#endif
 #define CP_NETWORK_LEASE_MS 120000u
 #define CP_NETWORK_UUID_SIZE 37u
 /* Validated complete collector policy. Values unsupported by this firmware are

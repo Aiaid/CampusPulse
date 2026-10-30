@@ -13,18 +13,13 @@ static inline bool cp_display_urgent(const cp_status_view_t *current,
 {
     if (current->page != previous->page ||
         current->setup_active != previous->setup_active ||
-        current->setup_softap != previous->setup_softap ||
-        current->setup_usb != previous->setup_usb ||
         memcmp(current->authentication, previous->authentication,
                sizeof current->authentication) ||
         memcmp(current->collection, previous->collection,
                sizeof current->collection))
         return true;
     if ((current->setup_active || previous->setup_active) &&
-        (memcmp(current->setup_name, previous->setup_name, sizeof current->setup_name) ||
-         memcmp(current->setup_proof, previous->setup_proof, sizeof current->setup_proof) ||
-         memcmp(current->setup_password, previous->setup_password, sizeof current->setup_password) ||
-         memcmp(current->setup_state, previous->setup_state, sizeof current->setup_state)))
+        (memcmp(current->setup_state, previous->setup_state, sizeof current->setup_state)))
         return true;
     return current->debug.upload.failures > previous->debug.upload.failures ||
         current->debug.storage_drops > previous->debug.storage_drops ||

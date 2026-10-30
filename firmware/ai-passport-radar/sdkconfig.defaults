@@ -66,19 +66,20 @@ CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 CONFIG_BT_NIMBLE_HOST_BASED_PRIVACY=n
 CONFIG_BT_NIMBLE_NVS_PERSIST=n
-# Bound preallocated pools for an observer or one provisioning connection.
+# Bound preallocated pools for the BLE collection observer.
 # Keep packet sizes/MTU and all eight advertising-report event buffers intact.
-# Reduced counts still require real scan-burst and Security 2 acceptance.
+# Reduced counts still require real scan-burst acceptance.
 CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=6
 CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=8
 CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=6
 CONFIG_BT_NIMBLE_TRANSPORT_EVT_COUNT=12
 CONFIG_BT_NIMBLE_TRANSPORT_EVT_DISCARD_COUNT=8
-# At most one scan, or one peripheral connection plus advertising.
+# Collection uses the observer; provisioning is physical USB only.
 CONFIG_BT_CTRL_BLE_MAX_ACT=3
 CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_0=n
 CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1=n
-CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2=y
+CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2=n
+CONFIG_CP_PROVISION_USB_ONLY=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_HAVE_TIME=y
 CONFIG_MBEDTLS_HAVE_TIME_DATE=y

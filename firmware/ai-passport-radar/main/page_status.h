@@ -12,8 +12,8 @@ typedef struct {
     char policy[24];
     char collection[24];
     int battery_percent; // -1 = unavailable; 0..100 otherwise
-    bool setup_active,setup_softap,setup_usb;
-    char setup_name[32],setup_proof[33],setup_password[33],setup_state[24];
+    bool setup_active;
+    char setup_state[24];
     cp_debug_snapshot_t debug;
     cp_device_page_t page;
 } cp_status_view_t;

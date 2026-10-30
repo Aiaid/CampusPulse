@@ -23,11 +23,9 @@ for CP_PART in collect journal; do
         -o "$CP_BUILD/test_${CP_PART}"
     "$CP_BUILD/test_${CP_PART}"
 done
+bash "$CP_FW/tests/run-capacity.sh"
 bash "$CP_FW/tests/run-vehicle.sh"
-"$CP_CC" "${CP_FLAGS[@]}" -I"$CP_FW/components/cp_pipeline/include" \
-    -I"$CP_FW/components/cp_journal/include" "$CP_FW/tests/test_scheduler.c" \
-    "$CP_FW/components/cp_pipeline/scheduler.c" -o "$CP_BUILD/test_scheduler"
-"$CP_BUILD/test_scheduler"
+CC="$CP_CC" bash "$CP_FW/tests/run-scheduler.sh"
 bash "$CP_FW/tests/run-memory-guard.sh"
 bash "$CP_FW/tests/run-domain-debug.sh"
 bash "$CP_FW/tests/run-perf-profile.sh"
@@ -50,8 +48,7 @@ bash "$CP_FW/components/cp_network/tests/run-host.sh"
 bash "$CP_FW/components/cp_usb/tests/run-host.sh"
 bash "$CP_FW/tests/runtime/run-host.sh"
 bash tests/provisioning/host/run.sh
-bash "$CP_FW/components/cp_provision/tests/build-sdk-peer.sh" "$CP_BUILD/sdk-security2"
-node "$CP_FW/components/cp_provision/tests/sdk-interop.mjs" "$CP_BUILD/sdk-security2/sdk-peer"
+bash "$CP_FW/components/cp_usb/tests/run-provision-host.sh"
 mkdir "$CP_BUILD/fixtures"
 "$CP_BUILD/generate_fixtures" "$CP_BUILD/fixtures"
 node --input-type=module - "$CP_BUILD/fixtures" <<'JS'

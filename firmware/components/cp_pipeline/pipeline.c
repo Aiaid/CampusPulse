@@ -10,6 +10,9 @@
 #include "esp_bt.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#if CONFIG_CP_PIPELINE_PSRAM_BANKS
+#include "esp_memory_utils.h"
+#endif
 #include "esp_partition.h"
 #include "esp_random.h"
 #include "esp_system.h"
@@ -46,14 +49,19 @@
 static const char *TAG = "cp_pipeline";
 static cp_journal_t s_journal;
 static cp_collect_compact_t s_window;
-/* Keep long-lived cores out of the runtime heap. With 64 addresses and six
+/* Default/C3 keeps long-lived cores out of the runtime heap. With 64 addresses and six
  * bins, an 11 KiB combined allocation fragmented the C3 heap despite enough
  * total free memory for TLS. Static typed cores leave only policy-sized bins
  * to allocate (3 KiB at 64 x 6 or 128 x 3; 768 B at 16 x 6). The 128-address
  * ceiling reserves 16 KiB of static cores, including at smaller policy sizes.
  * Device validation, not these sizes alone, establishes whether the remaining
  * largest block and complete upload working set are sufficient. */
+#if CONFIG_CP_PIPELINE_PSRAM_BANKS
+static cp_address_core_t *s_collect_cores[2];
+static void *s_collect_bank_owner;
+#else
 static cp_address_core_t s_collect_cores[2][CP_COLLECT_ADDRESSES];
+#endif
 static uint32_t *s_collect_storage;
 /* Single producer (collector), single persistence owner (uploader or stop).
  * Publication is release/acquire; no allocator, Flash or network wait on ingress.
@@ -116,6 +124,40 @@ static loss_bucket_t s_losses[LOSS_BUCKETS];
 #define CP_PIPELINE_SEAL_ALLOC malloc
 #define CP_PIPELINE_SEAL_FREE free
 #endif
+#if CONFIG_CP_PIPELINE_PSRAM_BANKS
+/* Explicit external allocations have no internal fallback. A placement failure
+ * retains the previous bank; it never becomes an assertion/reset or silent
+ * pressure on the TLS, DMA and task-stack internal pools. */
+static void *external_alloc(size_t bytes) {
+    void *p = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (p && !esp_ptr_external_ram(p)) {
+        heap_caps_free(p);
+        p = NULL;
+    }
+    return p;
+}
+static void log_bank_memory(unsigned capacity, unsigned bins, bool reused) {
+    unsigned external = s_collect_bank_owner && esp_ptr_external_ram(s_collect_bank_owner) &&
+        esp_ptr_external_ram(s_window.addresses) && esp_ptr_external_ram(s_sealed.addresses) &&
+        esp_ptr_external_ram(s_window.bins) && esp_ptr_external_ram(s_sealed.bins);
+    const unsigned caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    const unsigned internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    ESP_LOGI(TAG, "psram_banks capacity=%u bins=%u reused=%u external=%u core_bytes=%u bin_bytes=%u "
+                 "psram_free=%u psram_min=%u psram_largest=%u internal_free=%u internal_min=%u internal_largest=%u",
+             capacity, bins, (unsigned)reused, external,
+             (unsigned)(2 * capacity * sizeof(cp_address_core_t)),
+             (unsigned)(2 * capacity * bins * sizeof(uint32_t)),
+             (unsigned)heap_caps_get_free_size(caps), (unsigned)heap_caps_get_minimum_free_size(caps),
+             (unsigned)heap_caps_get_largest_free_block(caps),
+             (unsigned)heap_caps_get_free_size(internal), (unsigned)heap_caps_get_minimum_free_size(internal),
+             (unsigned)heap_caps_get_largest_free_block(internal));
+}
+#define UPLOAD_ALLOC external_alloc
+#define UPLOAD_FREE heap_caps_free
+#else
+#define UPLOAD_ALLOC CP_PIPELINE_UPLOAD_ALLOC
+#define UPLOAD_FREE CP_PIPELINE_UPLOAD_FREE
+#endif
 static uint64_t mono_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }
 static void bump(uint32_t *p) { __atomic_add_fetch(p, 1u, __ATOMIC_RELAXED); }
 static uint32_t load(const uint32_t *p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
@@ -162,6 +204,8 @@ static bool store_body(void *context, const char *body, size_t length, const cha
         if (ok) {
             int i = stream_index(stream);
             (void)cp_upload_scheduler_bind(&s_upload_scheduler, slot, (unsigned)i);
+            /* The codec context for every append uses this boot's s_boot. */
+            cp_upload_scheduler_set_current(&s_upload_scheduler, slot, true);
             if (i >= 0)
                 bump(&s_stream_pending[i]);
         }
@@ -277,16 +321,32 @@ static bool reserve_seal_bank(unsigned capacity, unsigned bin_count) {
     if (s_initialized || persistence_pending() || !cp_collect_bank_bytes(capacity, bin_count))
         return false;
     if (s_collect_storage && s_sealed.address_capacity == capacity &&
-        s_sealed.bin_count == bin_count)
+        s_sealed.bin_count == bin_count) {
+#if CONFIG_CP_PIPELINE_PSRAM_BANKS
+        log_bank_memory(capacity, bin_count, true);
+#endif
         return true;
-    /* One bin allocation keeps replacement transactional: an OOM retains the
-     * old bins and both core bindings, including banks swapped by a prior seal.
-     * No clearing or rebinding occurs until the replacement has succeeded. */
+    }
+    /* One allocation keeps replacement transactional: PSRAM includes both core
+     * and bin pairs; the default keeps its static cores and allocates bins only.
+     * An OOM retains the old owner and swapped bindings without clearing. */
     size_t bytes = 2 * capacity * bin_count * sizeof(uint32_t);
+#if CONFIG_CP_PIPELINE_PSRAM_BANKS
+    size_t core_bytes = 2 * capacity * sizeof(cp_address_core_t);
+    void *owner = external_alloc(core_bytes + bytes);
+    if (!owner)
+        return false;
+    uint32_t *storage = (uint32_t *)((unsigned char *)owner + core_bytes);
+    heap_caps_free(s_collect_bank_owner);
+    s_collect_bank_owner = owner;
+    s_collect_cores[0] = owner;
+    s_collect_cores[1] = s_collect_cores[0] + capacity;
+#else
     uint32_t *storage = CP_PIPELINE_SEAL_ALLOC(bytes);
     if (!storage)
         return false;
     CP_PIPELINE_SEAL_FREE(s_collect_storage);
+#endif
     s_collect_storage = storage;
     s_window.addresses = s_collect_cores[0];
     s_window.bins = storage;
@@ -298,10 +358,19 @@ static bool reserve_seal_bank(unsigned capacity, unsigned bin_count) {
     s_sealed.bin_count = bin_count;
     s_sealed.window.cores = NULL;
     s_sealed.window.bins = NULL;
+#if CONFIG_CP_PIPELINE_PSRAM_BANKS
+    log_bank_memory(capacity, bin_count, false);
+#endif
     return true;
 }
 static void release_seal_bank(void) {
+#if CONFIG_CP_PIPELINE_PSRAM_BANKS
+    heap_caps_free(s_collect_bank_owner);
+    s_collect_bank_owner = NULL;
+    s_collect_cores[0] = s_collect_cores[1] = NULL;
+#else
     CP_PIPELINE_SEAL_FREE(s_collect_storage);
+#endif
     s_collect_storage = NULL;
     s_window.addresses = NULL;
     s_window.bins = NULL;
@@ -809,7 +878,13 @@ static unsigned char *read_upload_body(uint16_t slot, size_t *length) {
         return NULL;
     }
     if(reserve>=2&&reserve<=CP_JOURNAL_MAX_BODY+1)
-        body=CP_PIPELINE_UPLOAD_ALLOC(reserve);
+        body=UPLOAD_ALLOC(reserve);
+#if CONFIG_CP_PIPELINE_PSRAM_BANKS
+    ESP_LOGI(TAG, "psram_upload bytes=%u external=%u psram_free=%u internal_free=%u",
+             (unsigned)reserve, (unsigned)(body && esp_ptr_external_ram(body)),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+#endif
     bool ready=cp_network_upload_memory_ready(body!=NULL);
     if (xSemaphoreTake(s_store_lock, pdMS_TO_TICKS(5000)) == pdTRUE) {
         size_t capacity=slot<s_journal.count?s_journal.slots[slot].length:0;
@@ -820,19 +895,19 @@ static unsigned char *read_upload_body(uint16_t slot, size_t *length) {
             if (read == CP_JOURNAL_OK)
                 body[*length] = 0;
             else {
-                CP_PIPELINE_UPLOAD_FREE(body);
+                UPLOAD_FREE(body);
                 body = NULL;
                 upload_read_failed(slot, read);
                 update_store_health();
             }
         } else {
-            CP_PIPELINE_UPLOAD_FREE(body);body=NULL;
+            UPLOAD_FREE(body);body=NULL;
             cp_upload_scheduler_retry(&s_upload_scheduler, slot, mono_ms(), esp_random());
             bump(&s_health.upload_failures);
         }
         xSemaphoreGive(s_store_lock);
     } else {
-        CP_PIPELINE_UPLOAD_FREE(body);body=NULL;
+        UPLOAD_FREE(body);body=NULL;
         bump(&s_health.upload_failures);
     }
     if(!body)(void)cp_network_upload_memory_ready(false);
@@ -841,7 +916,7 @@ static unsigned char *read_upload_body(uint16_t slot, size_t *length) {
 }
 /* The network idle floor is meaningful only after the caller's body is gone. */
 static void release_upload_body(unsigned char *body) {
-    CP_PIPELINE_UPLOAD_FREE(body);
+    UPLOAD_FREE(body);
     cp_network_finalize_upload_body();
 }
 static void uploader_task(void *arg) {
@@ -907,6 +982,8 @@ static void uploader_task(void *arg) {
                 __atomic_sub_fetch(&s_stream_pending[old_stream], 1u, __ATOMIC_RELAXED);
             if (cp_upload_scheduler_bind(&s_upload_scheduler, selected, stream))
                 bump(&s_stream_pending[stream]);
+            cp_upload_scheduler_set_current(&s_upload_scheduler, selected,
+                                            !strcmp(meta.boot_id, s_boot));
             discovered = true;
         }
         xSemaphoreGive(s_store_lock);
@@ -1027,6 +1104,8 @@ esp_err_t cp_pipeline_init(const char *node, const char *boot) {
                     unsigned index = (unsigned)stream_index(meta.stream);
                     if (cp_upload_scheduler_bind(&s_upload_scheduler, (uint16_t)i, index))
                         bump(&s_stream_pending[index]);
+                    cp_upload_scheduler_set_current(&s_upload_scheduler, (uint16_t)i,
+                                                    !strcmp(meta.boot_id, s_boot));
                 } else {
                     /* Unknown metadata stays discoverable after transient OOM. */
                     cp_upload_scheduler_retry(&s_upload_scheduler, (uint16_t)i, mono_ms(),

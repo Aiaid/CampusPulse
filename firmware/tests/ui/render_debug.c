@@ -73,11 +73,8 @@ int main(int argc, char **argv)
     slice->vehicle_malformed_reports = 2;
     if (argc == 3) {
         if (!strcmp(argv[2], "setup")) {
-            view.setup_active = view.setup_softap = true;
+            view.setup_active = true;
             strcpy(view.node_id, "synthetic-node");
-            strcpy(view.setup_name, "Synthetic Setup AP");
-            strcpy(view.setup_proof, "12345678");
-            strcpy(view.setup_password, "example12345");
             strcpy(view.setup_state, "waiting");
         } else if (!strcmp(argv[2], "activity")) view.page = CP_DEVICE_PAGE_ACTIVITY;
         else if (!strcmp(argv[2], "vehicle")) view.page = CP_DEVICE_PAGE_VEHICLE;

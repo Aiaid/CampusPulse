@@ -1,4 +1,4 @@
-/* Compile the actual provisioning implementation with host transport shims. */
+/* Compile the actual USB provisioning implementation with host IO shims. */
 #include "../cp_provision.c"
 #include <assert.h>
 #include <pthread.h>
@@ -6,12 +6,6 @@
 #include <sched.h>
 int64_t cp_test_time_us=1000;
 void esp_fill_random(void *p,size_t n){arc4random_buf(p,n);}
-protocomm_t *protocomm_new(void){return (protocomm_t *)calloc(1,1);}
-void protocomm_delete(protocomm_t *p){free(p);}
-esp_err_t protocomm_ble_start(protocomm_t *p,const protocomm_ble_config_t *c){(void)p;(void)c;return ESP_OK;}
-esp_err_t protocomm_ble_stop(protocomm_t *p){(void)p;return ESP_OK;}
-esp_err_t protocomm_set_security(protocomm_t *p,const char *n,const protocomm_security_t *s,const void *v){(void)p;(void)n;(void)s;(void)v;return ESP_OK;}
-esp_err_t protocomm_add_endpoint(protocomm_t *p,const char *n,protocomm_req_handler_t h,void *ctx){(void)p;(void)n;(void)h;(void)ctx;return ESP_OK;}
 #define MQTT_JSON "{\"uri\":\"" CP_MQTT_PRODUCTION_URI "\",\"username\":\"fixture_pool\",\"password\":\"synthetic-mqtt-password\",\"namespace\":\"fixture_pool\"}"
 static const char *master="00112233445566778899aabbccddeeff";
 static const char *node="cp_001122aabbcc";
@@ -62,30 +56,6 @@ static void test_mqtt_candidates(void)
     new_usb_session();accepted(request("wpa2","test-password"));q=request("wpa2","test-password");m=cJSON_GetObjectItem(q,"mqtt");cJSON_ReplaceItemInObject(m,"password",cJSON_CreateString("different-secret"));expect_reason(send_request(q),"attempt_payload_changed");
     assert(cp_provision_stop()==ESP_OK);
 }
-static cJSON *ble_request(cJSON *q)
-{
-    char *body=cJSON_PrintUnformatted(q);cJSON_Delete(q);assert(body&&strlen(body)<=496);uint8_t *out=NULL;ssize_t n=0;
-    assert(app_handler(0,(uint8_t *)body,strlen(body),&out,&n,NULL)==ESP_OK);free(body);assert(out&&n>0&&n<=496);
-    cJSON *r=cJSON_ParseWithLength((char *)out,(size_t)n);free(out);assert(r);return r;
-}
-static cJSON *chunk(const char *data,bool reset)
-{cJSON *q=cJSON_CreateObject();cJSON_AddNumberToObject(q,"v",1);cJSON_AddStringToObject(q,"op","configure_chunk");cJSON_AddStringToObject(q,"data",data);if(reset)cJSON_AddTrueToObject(q,"reset");return q;}
-static void test_ble_chunks(void)
-{
-    assert(cp_provision_start(CP_PROVISION_BLE,node,master,submit_test,NULL)==ESP_OK);
-    cJSON *q=cJSON_CreateObject();cJSON_AddNumberToObject(q,"v",1);cJSON_AddStringToObject(q,"op","info");cJSON *r=ble_request(q);assert(cJSON_IsTrue(cJSON_GetObjectItem(r,"mqtt_required"))&&cJSON_IsTrue(cJSON_GetObjectItem(r,"has_saved_mqtt")));safe_status(r);cJSON_Delete(r);
-    expect_reason(ble_request(chunk("{}",false)),"chunk_reset_required");
-    q=request("enterprise","");cJSON_AddStringToObject(q,"eap_username","synthetic-enterprise-username");cJSON_AddStringToObject(q,"eap_password","synthetic-enterprise-password");
-    char *body=cJSON_PrintUnformatted(q);cJSON_Delete(q);assert(body&&strlen(body)>496);size_t total=strlen(body);
-    unsigned before=submitted;
-    for(size_t offset=0;offset<total;){char fragment[201];size_t n=total-offset;if(n>200)n=200;memcpy(fragment,body+offset,n);fragment[n]=0;
-        r=ble_request(chunk(fragment,offset==0));assert(cJSON_IsTrue(cJSON_GetObjectItem(r,"ok"))&&cJSON_GetObjectItem(r,"received_bytes")->valueint==(int)(offset+n));cJSON_Delete(r);offset+=n;}
-    free(body);assert(submitted==before);
-    q=cJSON_CreateObject();cJSON_AddNumberToObject(q,"v",1);cJSON_AddStringToObject(q,"op","configure_commit");r=ble_request(q);assert(cJSON_IsTrue(cJSON_GetObjectItem(r,"ok")));safe_status(r);cJSON_Delete(r);
-    assert(submitted==before+1&&!chunk_json&&!strcmp(submitted_candidate.mqtt_namespace,"fixture_pool"));
-    for(unsigned i=0;i<8;++i){char fragment[201];memset(fragment,'a',200);fragment[200]=0;r=ble_request(chunk(fragment,i==0));if(i<7){assert(cJSON_IsTrue(cJSON_GetObjectItem(r,"ok")));cJSON_Delete(r);}else expect_reason(r,"settings_too_large");}
-    assert(!chunk_json);r=ble_request(chunk("{",true));cJSON_Delete(r);assert(chunk_json);assert(cp_provision_stop()==ESP_OK&&!chunk_json);
-}
 static void test_network_and_context(void)
 {
     assert(cp_provision_bind_context(node,boot,7,resolve_credential,&credential_generation)==ESP_OK);
@@ -117,10 +87,36 @@ static void test_network_and_context(void)
     char *encoded=cJSON_PrintUnformatted(r);assert(encoded&&!strstr(encoded,saved_token)&&!strstr(encoded,"synthetic-eap-password")&&!strstr(encoded,"synthetic-user"));free(encoded);cJSON_Delete(r);
     old.version=99;cp_provision_set_previous_attempt(&old,ESP_OK);r=exchange("{\"v\":1,\"op\":\"status\"}");assert(!cJSON_GetObjectItem(r,"previous_attempt"));cJSON_Delete(r);
 }
+static void test_board_metadata(void) {
+    assert(cp_provision_bind_board(NULL,"esp32s3")==ESP_ERR_INVALID_ARG);
+    assert(cp_provision_bind_board("","esp32s3")==ESP_ERR_INVALID_ARG);
+    assert(cp_provision_bind_board("tenergy_s3","ESP32-S3")==ESP_ERR_INVALID_ARG);
+    assert(cp_provision_bind_board("board / injected","esp32s3")==ESP_ERR_INVALID_ARG);
+    assert(cp_provision_bind_board("abcdefghijklmnopqrstuvwx","esp32s3")==ESP_ERR_INVALID_ARG);
+    const char *boards[]={"passport","tenergy_s3"},*chips[]={"esp32c3","esp32s3"};
+    const char *expected[]={"passport / esp32c3","tenergy_s3 / esp32s3"};
+    for(unsigned i=0;i<2;i++) {
+        assert(cp_provision_bind_board(boards[i],chips[i])==ESP_OK);
+        new_usb_session();
+        assert(cp_provision_bind_board("other","esp32s3")==ESP_ERR_INVALID_STATE);
+        cJSON *r=exchange("{\"v\":1,\"op\":\"info\"}");
+        assert(!strcmp(str(r,"board"),expected[i]));cJSON_Delete(r);
+        assert(cp_provision_stop()==ESP_OK);
+    }
+}
 int main(void){
+    test_board_metadata();
+    assert(cp_provision_start(CP_PROVISION_BLE,node,master,submit_test,NULL)==ESP_ERR_NOT_SUPPORTED);
+    assert(cp_provision_start(CP_PROVISION_SOFTAP,node,master,submit_test,NULL)==ESP_ERR_NOT_SUPPORTED);
+    assert(!state.active);
+    assert(cp_provision_start((cp_provision_mode_t)3,node,master,submit_test,NULL)==ESP_ERR_INVALID_ARG);
     assert(cp_provision_start(CP_PROVISION_USB,node,master,submit_test,NULL)==ESP_OK);
     cJSON *info=exchange("{\"v\":1,\"op\":\"info\"}");assert(!strcmp(str(info,"transport"),"usb"));assert(!strcmp(str(info,"security"),"physical-usb"));assert(!strcmp(str(info,"firmware_version"),"synthetic-sdk-test"));char old_nonce[33];strcpy(old_nonce,str(info,"nonce"));cJSON_Delete(info);
-    cp_provision_snapshot_t view;cp_provision_snapshot(&view);assert(view.proof[0]==0&&view.ap_password[0]==0);
+    cp_provision_snapshot_t view;cp_provision_snapshot(&view);assert(view.active&&view.mode==CP_PROVISION_USB);
+    assert(cp_provision_start(CP_PROVISION_BLE,node,master,submit_test,NULL)==ESP_ERR_NOT_SUPPORTED);
+    cp_provision_snapshot_t unchanged;cp_provision_snapshot(&unchanged);assert(!memcmp(&view,&unchanged,sizeof view));
+    cJSON *removed=request("wpa2","test-password");cJSON_ReplaceItemInObject(removed,"op",cJSON_CreateString("configure_chunk"));expect_reason(send_request(removed),"invalid_operation");
+    removed=request("wpa2","test-password");cJSON_ReplaceItemInObject(removed,"op",cJSON_CreateString("configure_commit"));expect_reason(send_request(removed),"invalid_operation");
     const char *bad[]={"{\"v\":1,\"op\":\"info\",\"op\":\"status\"}","{\"v\":1,\"op\":\"info\\u0000x\"}","{\"v\":1,\"op\":[]}","{\"v\":1,\"op\":{}}"};for(unsigned i=0;i<4;i++)expect_reason(exchange(bad[i]),"invalid_json");
     char body[1025];candidate(body,old_nonce,"test-password");
     atomic_store(&hold_submit,true);pthread_t thread;assert(!pthread_create(&thread,NULL,configure_thread,body));while(!atomic_load(&entered))sched_yield();
@@ -133,9 +129,7 @@ int main(void){
     expect_reason(exchange("{\"v\":1,\"op\":\"info\"}"),"setup_not_ready");
     cp_test_time_us+=1000;assert(cp_provision_start(CP_PROVISION_USB,node,master,submit_test,NULL)==ESP_OK);candidate(body,old_nonce,"test-password");expect_reason(exchange(body),"invalid_session_nonce");assert(submitted==1);
     cp_test_time_us+=SESSION_US;expect_reason(exchange("{\"v\":1,\"op\":\"info\"}"),"setup_expired");assert(cp_provision_stop()==ESP_OK);
-    assert(cp_provision_start(CP_PROVISION_SOFTAP,node,master,submit_test,NULL)==ESP_OK);cp_provision_snapshot(&view);assert(strlen(view.proof)==8&&strlen(view.ap_password)==12);
-    for(unsigned i=0;i<5;i++){cJSON *request=cJSON_CreateObject();cJSON_AddNumberToObject(request,"v",1);cJSON_AddStringToObject(request,"op","info");cJSON_AddStringToObject(request,"nonce",nonce);cJSON_AddStringToObject(request,"proof","wrongpin");assert(take_session());r=handle(request,CP_PROVISION_SOFTAP);give_session();expect_reason(r,i==4?"setup_locked":"invalid_setup_pin");cJSON_Delete(request);}
-    assert(proof_failures==5);cp_provision_snapshot(&view);assert(!strcmp(view.state,"locked")&&!view.proof[0]);assert(cp_provision_stop()==ESP_OK);
-    test_network_and_context();test_mqtt_candidates();test_ble_chunks();
-    puts("Actual provisioning module: USB guards/concurrency, expiry/lock, open/PEAP validation, saved credential mode/generation, boot context, MQTT migration, BLE chunks and safe retained diagnostics passed.");return 0;
+    test_network_and_context();test_mqtt_candidates();
+    puts("Actual USB-only provisioning: wireless modes rejected; board metadata, nonce/expiry, concurrency, saved credential/MQTT migration and safe status passed.");
+    return 0;
 }

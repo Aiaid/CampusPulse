@@ -16,6 +16,24 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
+- [ ] Physically validate the new Waveshare V2 TF-only raw recorder: card
+      compatibility, controlled radio load, USB detach/reconnect, safe stop and
+      power-loss tails, PWR/BOOT pressing, battery power and RTC backup supply.
+      User selected raw-to-TF first on 2026-10-29. Independent code is in
+      firmware/waveshare-raw;0.1.3 with four pages, RTC and read-only export is
+      installed. Raw sample/capacity/MCU-reset RTC acceptance is archived below;
+      upload and inference remain later work.
+      See [Waveshare firmware redesign](waveshare-firmware-redesign.md).
+
+- [ ] Extend the bounded T-Energy-S3 USB-only/MQTT acceptance with saturated
+      address loads, long interruptions and power-loss recovery. Deliberately
+      resolve retained historical rejects without rewriting bodies or faking
+      ACKs, calibrate the battery estimate and validate the physical placement
+      before returning bench tests to public field summaries. The512 PSRAM banks
+      are now installed/tested below; establish full512 sustained radio/receipt
+      load before raising capacity further. See
+      [512 PSRAM acceptance](../notes/tenergy-512-psram-acceptance.md).
+
 - [ ] Extend the bounded C3 size-optimized128-address acceptance with20+ full
       windows, controlled known-transmission rate ramps and long interruption/
       reconnect recovery. Keep per-window address identity distinct from physical
@@ -112,9 +130,10 @@ collection and durable upload. Final local software verification passed on
       the production Safari/Touch ID workflow after the optional-extension fix;
       controlled local browser acceptance is archived below.
 
-- [ ] Physically validate the implemented Passport ownership and provisioning
-      design: real-browser BLE, iPhone device-hosted SoftAP, wrong proof, interrupted
-      candidate validation/save, and failed transport teardown. Verify the board
+- [ ] Physically validate the USB-only Passport ownership and provisioning
+      design: interrupted candidate validation/save and failed transport teardown.
+      Bluetooth and device-hosted SoftAP setup were retired on 2026-10-29.
+      Verify the board
       profile and keep registration, network contact and applied config distinct.
       Native USB exchange is verified on one Passport; other-board drivers remain planned.
 
@@ -251,6 +270,13 @@ collection and durable upload. Final local software verification passed on
 
 ## P3 — Research and expansion
 
+- [ ] Implement and calibrate the [BLE device inference plan](ble-device-inference.md):
+      keep ESP32 collection and bounded features independent of backend
+      fingerprinting, trends and total estimates; first cover selected phone and
+      vehicle families, freeze missing input contracts, preserve unknown/conflicts,
+      and validate effective coverage with fixed-point ground truth before
+      publishing totals. Native Chimera replay is an offline baseline only.
+
 - [ ] Measure sustained BLE/Wi-Fi coexistence, power draw, and battery life.
 - [ ] Study node-to-node comparability, identifier randomization, and sampling bias.
 - [ ] Explore calibrated vehicle candidates and richer parking observations
@@ -282,6 +308,49 @@ collection and durable upload. Final local software verification passed on
 
 ## Completed archive
 
+- [x] 2026-10-30: Design the [ESP32/backend BLE inference split](ble-device-inference.md),
+      including current code/input limits, protocol fingerprints, phone/vehicle
+      candidate units, partial-brand calibration, quality gates and phased
+      acceptance. Documentation only; new firmware rules, online classifier
+      integration and calibrated totals remain pending above.
+
+- [x] 2026-10-29: Install Waveshare0.1.4 byte-aligned partial refresh, keeping
+      panel RAM baseline and independent raw writer. Steady2s updates measure
+      704–720ms partial vs1909–1910ms full; observed20-update cleanup and all
+      four pages,9,644 reports received/written/synced and zero reported queue
+      drops in the bounded trial. User confirms display/navigation looks normal;
+      long-run ghosting, temperature and power remain separate. Reinserted TF
+      has about10.84GB free after user cleanup. See
+      [partial refresh acceptance](../notes/waveshare-partial-refresh.md).
+
+- [x] 2026-10-29: Read TF raw files through a bounded read-only USB interface.
+      Two samples contain8,315 reports with complete CRC-valid files and no
+      observed sequence gaps/repeats or monotonic-time regressions. Existing
+      non-raw space accounts for about15.79GB; raw used only about30MB at the
+      snapshot. Install0.1.3 with PWR safe-off, BOOT pages, checked RTC calibration
+      and UTC anchors. MCU-reset UTC probes agree with host within0–1s and a
+      new504-report file has an RTC anchor. Physical key pressing, battery/off
+      retention, full-history CRC and long-run/radio completeness remain separate.
+      See [raw file audit](../notes/waveshare-raw-file-audit.md).
+
+- [x] 2026-10-29: Implement the independent Waveshare TF-only raw recorder
+      with bounded preallocated reception, CRC segments, a privacy-default
+      decoder, persistent stop reasons and USB safe stop. A fresh ESP-IDF5.5.3
+      build/image verification and13 host format/storage cases plus STOP-stream
+      parsing pass. No flash or physical card/radio acceptance is implied;
+      the remaining board acceptance stays in P0 above.
+
+- [x] 2026-10-29: Build/flash the T-Energy512 PSRAM profile, retaining C3's128
+      default, frozen bodies, TLS guards and actual NVS/Flash layout. Physical
+      logs prove112KiB core/bin banks and frozen-upload workspace external.
+      Stable601.981s sampling has internal free≥87071B, largest≥31744B and
+      queue36→4 without observed software loss/ACK failure. Later same-boot
+      atomic reconciliation covers15 full120s windows/1630 summaries; actual
+      occupancy reaches142, not512 saturation. API512 commitc808f4a is pushed and
+      CI/deploy passed; an older-CI rollback caused42 retryable failures before
+      recovery, recorded separately. Host512 saturation/513overflow, PSRAM
+      failure ownership, mixed batch ACK and1046/1049 backend regressions pass.
+
 - [x] 2026-10-29: Repair Chrome existing-device Wi-Fi setup's503
       `storage_unavailable`: replace whole-history materialization with indexed
       per-node latest probes and additive0008 indexes. Production query0.871ms/
@@ -298,6 +367,27 @@ collection and durable upload. Final local software verification passed on
       preserving existing policies. Publish only metadata-checked aggregate
       charts/data; radio completeness, full-load ceilings and long outages remain
       separate acceptance. See [full evidence](../notes/mqtt-capacity-and-wifi-recovery.md).
+
+- [x] 2026-10-29: Remove Bluetooth and device-hotspot provisioning from the
+      administrator wizard and shared firmware, including wireless transports,
+      SRP/HTTP setup and Passport button/display paths. Retain physical USB
+      setup, normal Wi-Fi networking and BLE observation. USB browser regression,
+      native provisioning/controller/guard/runtime/UI tests, web build and fresh
+      C3/S3 separate-image checks pass. Deployment and hardware rollout remain
+      separate. See [USB-only setup](../notes/usb-only-provisioning.md).
+
+- [x] 2026-10-29: Implement selected-board provisioning metadata and optional
+      USB-only setup; migrate the identified T-Energy's own v2 settings to
+      independent native MQTT/TLS, then repeat USB configuration using saved
+      MQTT credentials after reboot/update. Verify complete16MiB backups and
+      application-only writes preserving NVS/queues. S3-only current-boot
+      scheduling prevents retained history delaying fresh summaries; C3 defaults
+      retain their memory layout/order. R2 collects301.030s with sampled
+      queue301→271, zero observed software losses, five full60s windows and405
+      summary rows reconciled against exact durable receipts. Normal/USB-only
+      provisioning,142runtime scenarios,23scheduler groups, both pipeline modes
+      and15S3 image checks pass. Bounded80–83-address controlled workload, not
+      saturated128 or long-run acceptance.
 
 - [x] 2026-10-29: Deploy transactional incremental backend public caches for
       field v2 windows and active manual records. Equal-time/backfill changes,
@@ -324,6 +414,13 @@ collection and durable upload. Final local software verification passed on
       tests and production build pass locally. Preview PNG metadata stripped and
       checked. Production rollout is tracked separately; no backend/default
       changes or hardware use.
+
+- [x] 2026-10-29: Consolidate selected `feat/tenergy-s3-port` source at
+      `ca7bc9e` into `firmware/t-energy-s3/`, using the current shared core and
+      a project-local board adapter. Preserve the separate bring-up diagnostic;
+      align collector128 and native MQTT/TLS defaults. ESP-IDF5.5.3 S3 build,
+      resolved board/config/partition checks and12 synthetic image-validator
+      tests pass. No device update or current-image physical acceptance implied.
 
 - [x] 2026-10-29: Deploy indexed v2 public reads, bounded server-side snapshot
       caching and visibility-aware, independent frontend polling. Production

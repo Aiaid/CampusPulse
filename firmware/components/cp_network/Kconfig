@@ -1,4 +1,12 @@
 menu "CampusPulse network transport"
+config CP_NETWORK_MAX_BATCH_ITEMS
+    int "Compiled maximum upload batch items"
+    range 4 128
+    default 16
+    help
+        Local item/ACK workspace ceiling. Policy values are clamped to this
+        build limit, while the protocol limit remains 128 and bodies stay
+        bounded to 8192 bytes. Default C3 workspaces retain 16 items.
 config CP_NETWORK_MQTT_WSS
     bool "Use MQTT RPC transport (Cloudflare WSS or native TLS)"
     default y

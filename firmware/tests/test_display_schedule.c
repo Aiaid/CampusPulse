@@ -31,8 +31,6 @@ static void test_immediate_controls_and_failure_edges(void)
 } while (0)
     URGENT_CHANGE(page, CP_DEVICE_PAGE_ACTIVITY);
     URGENT_CHANGE(setup_active, true);
-    URGENT_CHANGE(setup_softap, true);
-    URGENT_CHANGE(setup_usb, true);
     URGENT_CHANGE(authentication[0], 'A');
     URGENT_CHANGE(collection[0], 'E');
     URGENT_CHANGE(debug.upload.failures, 1);
@@ -40,9 +38,6 @@ static void test_immediate_controls_and_failure_edges(void)
     URGENT_CHANGE(debug.windows_dropped, 1);
     URGENT_CHANGE(debug.queue_quarantined, 1);
     shown.setup_active = true;
-    URGENT_CHANGE(setup_name[0], 'N');
-    URGENT_CHANGE(setup_proof[0], '9');
-    URGENT_CHANGE(setup_password[0], 'P');
     URGENT_CHANGE(setup_state[0], 'S');
 #undef URGENT_CHANGE
     shown.debug.upload.failures = 8;
@@ -77,8 +72,6 @@ static void test_upload_and_sensor_updates_cannot_drive_fps(void)
     NORMAL_CHANGE(debug.summary_drops, 13);
     NORMAL_CHANGE(debug.aggregation_drops, 14);
     // Hidden setup fields cannot defeat normal cadence outside setup.
-    NORMAL_CHANGE(setup_proof[0], '9');
-    NORMAL_CHANGE(setup_password[0], 'P');
 #undef NORMAL_CHANGE
     // A continuing upload toggles every 500 ms. Normal changed frames remain
     // exactly two seconds apart, rather than following those transitions.

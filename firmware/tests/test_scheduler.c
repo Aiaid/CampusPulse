@@ -136,6 +136,87 @@ static void test_bounds_and_overflow(void) {
     assert(cp_upload_scheduler_select(&scheduler, NULL, 1, 0) == CP_UPLOAD_NO_SLOT);
 }
 
+static void test_current_boot_preference_or_default_layout(void) {
+    cp_upload_scheduler_t scheduler;
+    cp_journal_slot_t slots[8] = {0};
+    cp_upload_scheduler_init(&scheduler);
+    for (unsigned i = 0; i < 8; ++i) {
+        pending(&scheduler, slots, i, i % 4, i + 1);
+        cp_upload_scheduler_set_current(&scheduler, (uint16_t)i, i >= 4);
+    }
+#if CONFIG_CP_UPLOAD_PREFER_CURRENT_BOOT
+    for (unsigned i = 4; i < 8; ++i) {
+        assert(cp_upload_scheduler_select(&scheduler, slots, 8, 0) == i);
+        slots[i].state = CP_SLOT_ACKED;
+    }
+#else
+    /* No per-slot classification storage, or ordering change, in C3/default. */
+    typedef struct {
+        uint64_t retry_at[CP_JOURNAL_MAX_SLOTS];
+        uint8_t retry_exp[CP_JOURNAL_MAX_SLOTS], stream[CP_JOURNAL_MAX_SLOTS];
+        bool blocked[CP_JOURNAL_MAX_SLOTS];
+        uint8_t next_stream;
+    } original_scheduler_t;
+    _Static_assert(sizeof(cp_upload_scheduler_t) == sizeof(original_scheduler_t),
+                   "Default scheduler memory layout changed");
+#endif
+    for (unsigned i = 0; i < 4; ++i) {
+        assert(cp_upload_scheduler_select(&scheduler, slots, 8, 0) == i);
+        slots[i].state = CP_SLOT_ACKED;
+    }
+    cp_upload_scheduler_set_current(NULL, 0, true);
+    cp_upload_scheduler_set_current(&scheduler, CP_JOURNAL_MAX_SLOTS, true);
+}
+
+#if CONFIG_CP_UPLOAD_PREFER_CURRENT_BOOT
+static void test_current_boot_retry_and_historical_idle_capacity(void) {
+    cp_upload_scheduler_t scheduler;
+    cp_journal_slot_t slots[5] = {0};
+    cp_upload_scheduler_init(&scheduler);
+    pending(&scheduler, slots, 0, 0, 1);
+    pending(&scheduler, slots, 1, 0, 2);
+    pending(&scheduler, slots, 2, 0, 10);
+    pending(&scheduler, slots, 3, 0, 11);
+    pending(&scheduler, slots, 4, 1, 12);
+    for (uint16_t i = 2; i < 5; ++i)
+        cp_upload_scheduler_set_current(&scheduler, i, true);
+    assert(cp_upload_scheduler_select(&scheduler, slots, 5, 0) == 2);
+    assert(cp_upload_scheduler_retry(&scheduler, 2, 0, 0) == 1000);
+    assert(cp_upload_scheduler_select(&scheduler, slots, 5, 0) == 4);
+    slots[4].state = CP_SLOT_ACKED;
+    /* History can upload while current's head is delayed. Neither lane's
+     * later record may overtake its own delayed head. */
+    assert(cp_upload_scheduler_select(&scheduler, slots, 5, 0) == 0);
+    assert(cp_upload_scheduler_retry(&scheduler, 0, 0, 0) == 1000);
+    assert(cp_upload_scheduler_select(&scheduler, slots, 5, 999) == CP_UPLOAD_NO_SLOT);
+    assert(cp_upload_scheduler_select(&scheduler, slots, 5, 1000) == 2);
+    slots[2].state = CP_SLOT_ACKED;
+    assert(cp_upload_scheduler_select(&scheduler, slots, 5, 1000) == 3);
+    slots[3].state = CP_SLOT_ACKED;
+    assert(cp_upload_scheduler_select(&scheduler, slots, 5, 1000) == 0);
+    slots[0].state = CP_SLOT_ACKED;
+    assert(cp_upload_scheduler_select(&scheduler, slots, 5, 1000) == 1);
+}
+
+static void test_current_boot_blocked_preservation_and_reuse(void) {
+    cp_upload_scheduler_t scheduler;
+    cp_journal_slot_t slots[3] = {0};
+    cp_upload_scheduler_init(&scheduler);
+    for (unsigned i = 0; i < 3; ++i)
+        pending(&scheduler, slots, i, 0, i + 1);
+    cp_upload_scheduler_set_current(&scheduler, 1, true);
+    cp_upload_scheduler_set_current(&scheduler, 2, true);
+    cp_upload_scheduler_block(&scheduler, 0);
+    cp_upload_scheduler_block(&scheduler, 1);
+    assert(cp_upload_scheduler_select(&scheduler, slots, 3, 0) == 2);
+    assert(slots[0].state == CP_SLOT_PENDING && slots[1].state == CP_SLOT_PENDING);
+    assert(scheduler.blocked[0] && scheduler.blocked[1]);
+    pending(&scheduler, slots, 2, 1, 100);
+    assert(!scheduler.current[2]);
+    assert(cp_upload_scheduler_select(&scheduler, slots, 3, 0) == 2);
+}
+#endif
+
 int main(void) {
     test_stream_fairness();
     test_retry_head_prevents_same_stream_overtaking();
@@ -143,6 +224,13 @@ int main(void) {
     test_exponential_backoff_and_reset();
     test_bounds_and_overflow();
     test_unknown_metadata_discovery_lane();
-    puts("upload scheduler: 6 fairness, ordering, backoff, reuse and boundary groups passed");
+    test_current_boot_preference_or_default_layout();
+#if CONFIG_CP_UPLOAD_PREFER_CURRENT_BOOT
+    test_current_boot_retry_and_historical_idle_capacity();
+    test_current_boot_blocked_preservation_and_reuse();
+    puts("upload scheduler: 9 groups passed, current-boot preference enabled");
+#else
+    puts("upload scheduler: 7 groups passed, original layout and ordering preserved");
+#endif
     return 0;
 }

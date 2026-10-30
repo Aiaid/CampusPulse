@@ -190,7 +190,7 @@ void cp_runtime_snapshot(cp_runtime_snapshot_t *out)
 bool cp_runtime_request_setup(cp_provision_mode_t mode)
 {
     assert((task_running || usb_worker_running) && s_boot_ready);
-    assert(mode == CP_PROVISION_BLE || mode == CP_PROVISION_SOFTAP || mode == CP_PROVISION_USB);
+    assert(mode == CP_PROVISION_USB);
     requested_setup_mode = mode;
     runtime_setup_calls++;
     return true;
@@ -295,7 +295,7 @@ static void reset_fixture(void)
     runtime_setup_calls = runtime_resume_calls = 0;
     usb_start_calls = 0;usb_begin_handler = NULL;usb_begin_context = NULL;usb_worker_running = false;
     runtime_prepare_error = runtime_start_error = ESP_OK;
-    requested_setup_mode = CP_PROVISION_BLE;
+    requested_setup_mode = CP_PROVISION_USB;
     memset(&runtime_view, 0, sizeof runtime_view);
     runtime_view.prepared = true;
     runtime_view.pipeline.storage_ready = true;
@@ -452,25 +452,22 @@ static void test_runtime_setup_and_resume_input_routes(void)
     cp_input_event_t event = {.button = CP_BUTTON_OK, .kind = CP_INPUT_LONG, .monotonic_ms = 100};
     input_handler(&event, input_context);
     run_one_supervisor_round(false);
-    assert(runtime_setup_calls == 1 && requested_setup_mode == CP_PROVISION_BLE && !runtime_resume_calls);
+    assert(runtime_setup_calls == 1 && requested_setup_mode == CP_PROVISION_USB && !runtime_resume_calls);
     runtime_view.provision.active = true;
-    runtime_view.provision.mode = CP_PROVISION_SOFTAP;
-    strcpy(runtime_view.provision.service_name, "synthetic-setup");
-    strcpy(runtime_view.provision.proof, "test-only-proof");
-    strcpy(runtime_view.provision.ap_password, "test-only-password");
+    runtime_view.provision.mode = CP_PROVISION_USB;
     event.button = CP_BUTTON_DOWN; event.kind = CP_INPUT_CLICK;
     input_handler(&event, input_context);
     run_one_supervisor_round(false);
-    assert(runtime_setup_calls == 2 && requested_setup_mode == CP_PROVISION_SOFTAP);
-    assert(last_view.setup_active && last_view.setup_softap && !strcmp(last_view.setup_name, "synthetic-setup"));
+    assert(runtime_setup_calls == 1 && requested_setup_mode == CP_PROVISION_USB);
+    assert(last_view.setup_active);
     event.button = CP_BUTTON_OK; event.kind = CP_INPUT_LONG;
     input_handler(&event, input_context);
     run_one_supervisor_round(false);
-    assert(runtime_resume_calls == 1 && runtime_setup_calls == 2);
+    assert(runtime_resume_calls == 1 && runtime_setup_calls == 1);
     event.button = CP_BUTTON_UP; event.kind = CP_INPUT_CLICK;
     input_handler(&event, input_context);
     run_one_supervisor_round(false);
-    assert(runtime_setup_calls == 3 && requested_setup_mode == CP_PROVISION_BLE);
+    assert(runtime_setup_calls == 1 && requested_setup_mode == CP_PROVISION_USB);
     assert(!strcmp(last_view.collection, "needs_setup"));
 #else
     assert(!runtime_prepare_calls && !runtime_start_calls && !runtime_setup_calls && !runtime_resume_calls);
@@ -527,7 +524,7 @@ static void test_usb_console_is_explicit_and_separate(void)
     assert(runtime_setup_calls == 1 && requested_setup_mode == CP_PROVISION_USB);
     runtime_view.provision.active = true;runtime_view.provision.mode = CP_PROVISION_USB;
     run_one_supervisor_round(false);
-    assert(last_view.setup_usb && !last_view.setup_softap && !last_view.setup_proof[0]);
+    assert(last_view.setup_active);
 #else
     assert(!usb_start_calls && !usb_begin_handler);
 #endif
@@ -608,17 +605,17 @@ static void test_device_paging_preserves_setup_and_domain_samples(void)
     assert(last_view.page == CP_DEVICE_PAGE_ELEVATOR && !runtime_setup_calls);
     event.button = CP_BUTTON_OK;
     input_handler(&event, input_context); run_one_supervisor_round(false);
-    assert(runtime_setup_calls == 1 && requested_setup_mode == CP_PROVISION_BLE);
+    assert(runtime_setup_calls == 1 && requested_setup_mode == CP_PROVISION_USB);
     assert(last_view.page == CP_DEVICE_PAGE_ELEVATOR);
     runtime_view.provision.active = true;
     runtime_view.provision.mode = CP_PROVISION_USB;
     event.kind = CP_INPUT_CLICK; event.button = CP_BUTTON_DOWN;
     input_handler(&event, input_context); run_one_supervisor_round(false);
-    assert(runtime_setup_calls == 2 && requested_setup_mode == CP_PROVISION_SOFTAP);
-    assert(last_view.page == CP_DEVICE_PAGE_ELEVATOR && last_view.setup_usb);
+    assert(runtime_setup_calls == 1 && requested_setup_mode == CP_PROVISION_USB);
+    assert(last_view.page == CP_DEVICE_PAGE_ELEVATOR && last_view.setup_active);
     event.button = CP_BUTTON_UP;
     input_handler(&event, input_context); run_one_supervisor_round(false);
-    assert(runtime_setup_calls == 3 && requested_setup_mode == CP_PROVISION_BLE);
+    assert(runtime_setup_calls == 1 && requested_setup_mode == CP_PROVISION_USB);
     event.button = CP_BUTTON_OK; event.kind = CP_INPUT_LONG;
     input_handler(&event, input_context); run_one_supervisor_round(false);
     assert(runtime_resume_calls == 1 && last_view.page == CP_DEVICE_PAGE_ELEVATOR);

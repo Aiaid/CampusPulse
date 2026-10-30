@@ -32,7 +32,11 @@ static void summary_policy_matrix(void)
 {
     const unsigned windows[]={1000,10000,30000,60000,80000,300000,60000,120000};
     const unsigned bins[]={1000,5000,5000,5000,5000,300000,20000,40000};
-    const unsigned capacities[]={16,32,64,128};
+    const unsigned capacities[]={16,32,64,128
+#if CONFIG_CP_COLLECT_MAX_ADDRESSES == 512
+        ,256,512
+#endif
+    };
     for (unsigned w=0;w<sizeof(windows)/sizeof(windows[0]);++w)
         for (unsigned a=0;a<sizeof(capacities)/sizeof(capacities[0]);++a) {
             cJSON *o=cJSON_Parse(policy_json);assert(o);
@@ -58,7 +62,7 @@ int main(void)
 {
     cp_network_policy_t p;bool present,expired;
     assert(cp_network_parse_policy(policy_json,strlen(policy_json),"cp_aabbccddeeff",&p,&present,&expired));
-    assert(present&&!expired&&p.max_items==16&&p.max_body_bytes==8192&&p.max_addresses==64&&p.lease_ms==120000);
+    assert(present&&!expired&&p.max_items==CP_NETWORK_ITEMS_MAX&&p.max_body_bytes==8192&&p.max_addresses==64&&p.lease_ms==120000);
     assert(!strcmp(p.core.config_id,"test-v2")&&!p.raw_enabled&&p.core.ingress_queue_bytes==8192);
     assert(!cp_network_parse_policy(policy_json,strlen(policy_json),"cp_000000000000",&p,&present,&expired));
     mutate_reject(NULL,"protocol",cJSON_CreateString("campuspulse/1"));
@@ -66,8 +70,13 @@ int main(void)
     mutate_reject("scan","interval_ms",cJSON_CreateNumber(5.5));
     mutate_reject("scan","window_ms",cJSON_CreateNumber(101));
     mutate_reject("raw_capture","mode",cJSON_CreateString("all"));
+#if CONFIG_CP_COLLECT_MAX_ADDRESSES == 512
+    mutate_reject("summary","max_addresses",cJSON_CreateNumber(513));
+#else
     mutate_reject("summary","max_addresses",cJSON_CreateNumber(129));
     mutate_reject("summary","max_addresses",cJSON_CreateNumber(256));
+    mutate_reject("summary","max_addresses",cJSON_CreateNumber(512));
+#endif
     summary_policy_matrix();
     mutate_reject("summary","window_ms",cJSON_CreateNumber(999));
     mutate_reject("summary","window_ms",cJSON_CreateNumber(300001));
@@ -81,6 +90,7 @@ int main(void)
     mutate_reject("summary","bin_ms",cJSON_CreateNumber(1000));
     mutate_reject("control","lease_ms",cJSON_CreateNumber(120001));
     mutate_reject("upload_policy","max_items",cJSON_CreateNumber(3));
+    mutate_reject("upload_policy","max_items",cJSON_CreateNumber(129));
     mutate_reject("upload_policy","max_body_bytes",cJSON_CreateNumber(4095));
     mutate_reject("upload_policy","resume_pct",cJSON_CreateNumber(60));
     mutate_reject(NULL,"accept_until",cJSON_CreateString("2026-02-30T00:00:00.000Z"));

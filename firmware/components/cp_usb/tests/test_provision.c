@@ -26,10 +26,16 @@ static void reject(cJSON *q,const char *reason,bool reaches_provision)
 }
 int main(void)
 {
+    assert(cp_provision_bind_board("tenergy_s3","esp32s3")==ESP_OK);
+    assert(cp_provision_start(CP_PROVISION_BLE,node,master,submit_test,NULL)==ESP_ERR_NOT_SUPPORTED);
+    assert(cp_provision_start(CP_PROVISION_SOFTAP,node,master,submit_test,NULL)==ESP_ERR_NOT_SUPPORTED);
+    assert(!state.active);
     new_usb_session();
     cJSON *q=cJSON_CreateObject();cJSON_AddNumberToObject(q,"v",1);cJSON_AddStringToObject(q,"op","info");
     cJSON *info=usb_request(q);assert(cJSON_IsTrue(cJSON_GetObjectItem(info,"ok")));
-    assert(!strcmp(str(info,"nonce"),nonce));cJSON_Delete(info);
+    assert(!strcmp(str(info,"nonce"),nonce));
+    assert(!strcmp(str(info,"board"),"tenergy_s3 / esp32s3"));cJSON_Delete(info);
+    assert(cp_provision_bind_board("passport","esp32c3")==ESP_ERR_INVALID_STATE);
 
     q=request("wpa2","test-password");unsigned before=submitted;
     cJSON *r=usb_request(q);assert(cJSON_IsTrue(cJSON_GetObjectItem(r,"ok")));cJSON_Delete(r);

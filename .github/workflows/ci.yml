@@ -51,6 +51,7 @@ jobs:
         run: |
           bash firmware/components/cp_settings/tests/run-host.sh
           bash firmware/components/cp_network/tests/run-host.sh
+          bash firmware/tests/run-capacity.sh
           bash firmware/tests/runtime/run-host.sh
       - name: Install browser
         run: npx playwright install --with-deps chromium webkit

@@ -6,13 +6,15 @@ trap 'rm -rf "$CP_TEST_DIR"' EXIT
 for CP_MQTT in 0 1; do
 clang -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-omit-frame-pointer \
   -DCONFIG_CP_NETWORK_MQTT_WSS="$CP_MQTT" -DCONFIG_CP_NETWORK_MQTT_NATIVE_TLS="$CP_MQTT" \
+  -DCONFIG_CP_PROVISION_USB_ONLY=1 \
   -I"$CP_FW/tests/runtime" -I"$CP_FW/components/cp_runtime/include" \
   -I"$CP_FW/components/cp_core/include" -I"$CP_FW/components/cp_settings/include" \
   -I"$CP_FW/components/cp_network/include" -I"$CP_FW/components/cp_pipeline/include" \
   -I"$CP_FW/components/cp_provision/include" \
   "$CP_FW/tests/test_runtime.c" "$CP_FW/components/cp_core/cp_core.c" \
   "$CP_FW/components/cp_settings/settings_validate.c" "$CP_FW/components/cp_network/diagnostic.c" -o "$CP_TEST_DIR/test-runtime"
-for CP_CASE in enrolled_boot unassigned_boot headless_explicit_usb headless_usb_begin usb_candidate_commit usb_candidate_failure headless_usb_save_failure candidate_commit candidate_failure_ap candidate_save_failure \
+"$CP_TEST_DIR/test-runtime" board_bind_failure
+for CP_CASE in enrolled_boot usb_only_unassigned_display usb_only_wireless_rejected headless_explicit_usb headless_usb_begin usb_candidate_commit usb_candidate_failure headless_usb_save_failure candidate_commit candidate_retry_failure candidate_save_failure \
   network_stop_failure pipeline_stop_failure fresh_policy_age same_policy_lease_renewal same_policy_busy_renewal \
   same_policy_busy_semantic_rejection same_policy_busy_expired same_policy_busy_revoked same_policy_busy_cached_expiry \
   staged_policy_http_deferral changed_policy_http_deferral \
@@ -23,5 +25,5 @@ for CP_CASE in enrolled_boot unassigned_boot headless_explicit_usb headless_usb_
   radio_start_deferral radio_deferred_expiry radio_deferred_rejection radio_claim_rechecks_policy radio_recovery_deferral radio_apply_error_releases no_false_activation; do
   "$CP_TEST_DIR/test-runtime" "$CP_CASE"
 done
-if [[ "$CP_MQTT" == 1 ]]; then "$CP_TEST_DIR/test-runtime" legacy_mqtt_setup; fi
+if [[ "$CP_MQTT" == 1 ]]; then "$CP_TEST_DIR/test-runtime" usb_only_legacy_mqtt; fi
 done
