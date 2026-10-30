@@ -16,7 +16,7 @@ if [[ "$RAW_SDK_VERSION" != "ESP-IDF v5.5.3" ]]; then
     exit 1
 fi
 RAW_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/campuspulse-waveshare-raw.XXXXXX")"
-RAW_VERSION="${RAW_VERSION:-0.1.4-raw-partial}"
+RAW_VERSION="${RAW_VERSION:-0.1.5-battery}"
 if [[ ! "$RAW_VERSION" =~ ^[A-Za-z0-9._-]{1,31}$ ]]; then
     echo "RAW_VERSION must contain 1-31 ASCII version characters" >&2
     exit 2

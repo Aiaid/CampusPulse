@@ -1,6 +1,6 @@
 import type { BatchV2, V2Stream } from './device-v2-validation';
 import type { AuthAssertion } from './admin-auth';
-import { IngestStoreError } from './ingest-store';
+import { findV3NamespaceConflict, IngestStoreError } from './ingest-store';
 export interface AckV2 {
  node_id: string; boot_id: string; stream: V2Stream; batch_id: string; body_sha256: string;
  accepted_count: number; durability: 'committed'; receipt_id: string; received_at: string;
@@ -38,6 +38,8 @@ export async function commitBatchV2(db: D1Database, batch: BatchV2, hash: string
  catch (error) {
   const winner = await findReceiptV2(db,batch.node_id,batch.batch_id);
   if (winner) { if (winner.body_sha256 !== hash) throw new IngestStoreError(409,'batch_conflict'); return winner; }
+  const v3Conflict = await findV3NamespaceConflict(db,batch.node_id,batch.batch_id,batch.boot_id,batch.stream,seqFirst,seqLast);
+  if(v3Conflict) throw new IngestStoreError(409,v3Conflict);
   const conflicting = await db.prepare(`SELECT batch_id FROM ingestion_batches WHERE node_id=? AND batch_id=?`).bind(batch.node_id,batch.batch_id).first();
   if (conflicting) throw new IngestStoreError(409,'batch_conflict');
   const overlap = await db.prepare(`SELECT 1 FROM (SELECT node_id,boot_id,stream,seq_first,seq_last FROM ingestion_batches UNION ALL SELECT node_id,boot_id,stream,seq_first,seq_last FROM ingestion_batches_v2) WHERE node_id=? AND boot_id=? AND stream=? AND seq_first<=? AND seq_last>=? LIMIT 1`)

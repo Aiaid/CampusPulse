@@ -77,6 +77,16 @@ export async function findReceipt(db: D1Database, nodeId: string, batchId: strin
   return row ? receiptFromRow(row) : null;
 }
 
+/** Additive v3 may not have been migrated on an older deployment. Only probe
+ * its committed namespace after a failed write, and never query absent tables. */
+export async function findV3NamespaceConflict(db: D1Database, node: string, batch: string, boot: string, stream: string, first: number, last: number): Promise<string | null> {
+  if (!await db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ingestion_batches_v3'").first()) return null;
+  if (await db.prepare('SELECT 1 FROM ingestion_batches_v3 WHERE node_id=? AND batch_id=?').bind(node, batch).first()) return 'batch_conflict';
+  if (await db.prepare('SELECT 1 FROM ingestion_batches_v3 WHERE node_id=? AND boot_id=? AND stream=? AND seq_first<=? AND seq_last>=? LIMIT 1')
+    .bind(node, boot, stream, last, first).first()) return 'seq_range_overlap';
+  return null;
+}
+
 /** The registry is server-owned. Device payloads cannot create or update it. */
 export async function findNodeByCredentialHash(db: D1Database, hash: string): Promise<{ id: string; enabled: number } | null> {
   return db.prepare('SELECT id, enabled FROM device_nodes WHERE credential_sha256 = ?')
@@ -164,6 +174,8 @@ export async function commitBatch(
       if (winner.body_sha256 !== bodyHash) throw new IngestStoreError(409, 'batch_conflict');
       return { ack: ackFromReceipt(winner), duplicate: true };
     }
+    const v3Conflict = await findV3NamespaceConflict(db, batch.node_id, batch.batch_id, batch.boot_id, batch.stream, seqFirst, seqLast);
+    if (v3Conflict) throw new IngestStoreError(409, v3Conflict);
     // D1 may wrap SQLite trigger failures and omit their message from the
     // top-level Error. The committed interval is the durable source of truth.
     const crossVersionBatch = await db.prepare('SELECT 1 FROM ingestion_batches_v2 WHERE node_id = ? AND batch_id = ?').bind(batch.node_id, batch.batch_id).first();

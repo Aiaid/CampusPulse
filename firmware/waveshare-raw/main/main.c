@@ -1,4 +1,4 @@
-/* Waveshare V2 offline raw BLE recorder. No network or old cp_* runtime. */
+/* Offline raw BLE recorder; optional stopped-recorder USB-v2 setup is explicit. */
 #include "raw_board.h"
 #include "raw_display.h"
 #include "raw_format.h"
@@ -7,6 +7,14 @@
 #include "raw_clock.h"
 #include "raw_power.h"
 #include "raw_export.h"
+#include "raw_battery.h"
+#include "raw_usb_stream.h"
+#include "raw_boot_button.h"
+#include "sdkconfig.h"
+#if CONFIG_RAW_USB_PROVISION_V2
+#include "raw_setup_adapter.h"
+#include "raw_setup_radio.h"
+#endif
 
 #include <errno.h>
 #include <inttypes.h>
@@ -69,6 +77,51 @@ static StaticSemaphore_t s_clock_ctl, s_export_ctl;
 static uint32_t s_clock_generation;
 static uint8_t s_clock_source = RAW_CLOCK_RTC;
 
+#if CONFIG_RAW_USB_PROVISION_V2
+static bool s_setup_available;
+static bool setup_request_entry(void *unused);
+static raw_setup_entry_t setup_poll_entry(void *unused, esp_err_t *error);
+static bool setup_can_begin(void *unused) {
+    (void)unused;
+    return __atomic_load_n(&s_writer_done, __ATOMIC_ACQUIRE) &&
+        __atomic_load_n(&s_storage_safe, __ATOMIC_ACQUIRE) &&
+        __atomic_load_n(&s_stop, __ATOMIC_ACQUIRE) &&
+        !__atomic_load_n(&s_power_requested, __ATOMIC_ACQUIRE);
+}
+static esp_err_t setup_quiesce(void *unused) {
+    (void)unused;
+    if (!setup_can_begin(NULL)) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_lifecycle, portMAX_DELAY);
+    const raw_setup_radio_state_t snapshot = {
+        .writer_done = __atomic_load_n(&s_writer_done, __ATOMIC_ACQUIRE),
+        .storage_safe = __atomic_load_n(&s_storage_safe, __ATOMIC_ACQUIRE),
+        .stop_requested = __atomic_load_n(&s_stop, __ATOMIC_ACQUIRE),
+        .accepting_reports = __atomic_load_n(&s_accept, __ATOMIC_ACQUIRE),
+        .scanning = __atomic_load_n(&s_ble_ready, __ATOMIC_ACQUIRE) && ble_gap_disc_active(),
+        .callbacks = __atomic_load_n(&s_callbacks, __ATOMIC_ACQUIRE),
+        .power_requested = __atomic_load_n(&s_power_requested, __ATOMIC_ACQUIRE),
+    };
+    /* Keep the idle observer host alive. IDF 5.5.3's observer-only host deinit
+     * unconditionally frees an RX queue event initialized only for connection
+     * roles; that asserts before setup can open. USB needs no BLE transport.
+     * s_stop prevents on_sync from restarting scanning; callbacks are drained
+     * before admission, and shared network memory checks remain in force. */
+    esp_err_t result = raw_setup_radio_admit(&snapshot);
+    xSemaphoreGive(s_lifecycle);
+    ESP_LOGI(TAG, "USB radio admission=%ld idle_host=1 callbacks=%lu scan=%u accept=%u safe=%u",
+        (long)result, (unsigned long)snapshot.callbacks, snapshot.scanning,
+        snapshot.accepting_reports, snapshot.storage_safe);
+    return result;
+}
+static esp_err_t setup_remain_stopped(void *unused) {
+    (void)unused;
+    /* User STOP already closed the file. Never restart a writer or scanner
+     * implicitly after credentials are saved or rejected. */
+    return __atomic_load_n(&s_writer_done, __ATOMIC_ACQUIRE) ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+static void setup_status(void *unused, raw_setup_state_t phase, esp_err_t result);
+#endif
+
 static esp_err_t clock_read(uint64_t *epoch) {
     xSemaphoreTake(s_clock_lock, portMAX_DELAY);
     esp_err_t result = raw_clock_get(epoch);
@@ -82,6 +135,20 @@ static void state(const char *name) {
     portEXIT_CRITICAL(&s_mux);
     if (s_display_task) xTaskNotifyGive(s_display_task);
 }
+
+#if CONFIG_RAW_USB_PROVISION_V2
+static void setup_status(void *unused, raw_setup_state_t phase, esp_err_t result) {
+    (void)unused;
+    const char *label = "RAW STOPPED; USB V2";
+    if (phase == RAW_SETUP_TESTING) label = "USB TESTING";
+    if (phase == RAW_SETUP_SAVING) label = "USB SAVING";
+    if (phase == RAW_SETUP_SAVED) label = "USB SAVED; RAW STOPPED";
+    if (phase == RAW_SETUP_FAILED || phase == RAW_SETUP_FAULT) label = "USB SETUP FAILED";
+    state(label);
+    ESP_LOGI(TAG, "USB v2 setup phase=%u result=%ld; raw remains stopped",
+             (unsigned)phase, (long)result);
+}
+#endif
 
 static void stop_reason(uint32_t event, int32_t detail) {
     portENTER_CRITICAL(&s_mux);
@@ -107,6 +174,36 @@ static void request_stop(void) {
     }
     xSemaphoreGive(s_lifecycle);
 }
+
+#if CONFIG_RAW_USB_PROVISION_V2
+static bool setup_request_entry(void *unused) {
+    (void)unused;
+    if (!s_setup_available || __atomic_load_n(&s_power_requested, __ATOMIC_ACQUIRE) ||
+        (__atomic_load_n(&s_writer_done, __ATOMIC_ACQUIRE) &&
+         !__atomic_load_n(&s_storage_safe, __ATOMIC_ACQUIRE))) return false;
+    /* Called from physical BOOT or a framed begin. It does no storage/radio I/O.
+     * USB open/cable connection never invokes this request. */
+    __atomic_store_n(&s_page, 4u, __ATOMIC_RELEASE);
+    if (s_display_task) xTaskNotifyGive(s_display_task);
+    return true;
+}
+static raw_setup_entry_t setup_poll_entry(void *unused, esp_err_t *error) {
+    (void)unused;
+    if (__atomic_load_n(&s_power_requested, __ATOMIC_ACQUIRE)) {
+        *error = ESP_ERR_INVALID_STATE; return RAW_SETUP_ENTRY_FAILED;
+    }
+    if (!__atomic_load_n(&s_stop, __ATOMIC_ACQUIRE)) {
+        stop_reason(RAW_EVENT_USER_STOP, 0);
+        state("USB SETUP; STOPPING");
+        request_stop();
+    }
+    if (!__atomic_load_n(&s_writer_done, __ATOMIC_ACQUIRE)) return RAW_SETUP_ENTRY_WAIT;
+    if (!__atomic_load_n(&s_storage_safe, __ATOMIC_ACQUIRE)) {
+        *error = ESP_FAIL; return RAW_SETUP_ENTRY_FAILED;
+    }
+    return RAW_SETUP_ENTRY_READY;
+}
+#endif
 
 static int process_gap(struct ble_gap_event *event, void *unused) {
     (void)unused;
@@ -442,6 +539,8 @@ static void writer_task(void *unused) {
 static void display_task(void *unused) {
     (void)unused;
     bool display = raw_display_init() == ESP_OK;
+    esp_err_t battery = raw_battery_init();
+    if (battery != ESP_OK) ESP_LOGW(TAG, "battery calibration unavailable: %s", esp_err_to_name(battery));
     if (!display) ESP_LOGW(TAG, "display unavailable; serial status remains active");
     for (;;) {
         const int64_t display_cycle_start = esp_timer_get_time();
@@ -451,6 +550,12 @@ static void display_task(void *unused) {
             continue;
         }
         raw_display_snapshot_t snap = {0};
+        raw_battery_sample_t battery_sample;
+        if (raw_battery_read(&battery_sample) == ESP_OK && battery_sample.known) {
+            snap.battery_known = true;
+            snap.battery_mv = battery_sample.millivolts;
+            snap.battery_percent = battery_sample.estimated_percent;
+        }
         raw_activity_view_t activity;
         int64_t now = esp_timer_get_time();
         portENTER_CRITICAL(&s_mux);
@@ -467,6 +572,15 @@ static void display_task(void *unused) {
             snap.dropped += s_stats.enqueued - s_stats.written;
         portEXIT_CRITICAL(&s_mux);
         snap.page = __atomic_load_n(&s_page, __ATOMIC_ACQUIRE);
+#if CONFIG_RAW_USB_PROVISION_V2
+        snap.setup_available = s_setup_available;
+        raw_setup_snapshot_t setup_view;
+        if (raw_setup_adapter_snapshot(&setup_view)) {
+            snap.setup_state = setup_view.state; snap.setup_error = setup_view.last_error;
+            snap.setup_stopping = setup_view.entry_pending;
+            snap.wifi_enabled = setup_view.state == RAW_SETUP_TESTING;
+        }
+#endif
         snap.uptime_s = now / 1000000;
         snap.reports_per_second = activity.rate;
         snap.recent_received = activity.received; snap.recent_written = activity.written;
@@ -508,6 +622,9 @@ static void display_task(void *unused) {
         if (__atomic_load_n(&s_power_requested, __ATOMIC_ACQUIRE) &&
             __atomic_load_n(&s_writer_done, __ATOMIC_ACQUIRE) &&
             __atomic_load_n(&s_storage_safe, __ATOMIC_ACQUIRE) &&
+#if CONFIG_RAW_USB_PROVISION_V2
+            raw_setup_adapter_power_safe() &&
+#endif
             !__atomic_load_n(&s_shutdown_display_done, __ATOMIC_ACQUIRE)) {
             state("POWER OFF");
             snprintf(snap.state, sizeof snap.state, "POWER OFF");
@@ -527,20 +644,35 @@ static void display_task(void *unused) {
 }
 
 static void next_page(void) {
-    uint8_t page = (__atomic_load_n(&s_page, __ATOMIC_RELAXED) + 1u) % 4u;
+    unsigned pages = 4;
+#if CONFIG_RAW_USB_PROVISION_V2
+    if (s_setup_available) pages = 5;
+#endif
+    uint8_t page = (__atomic_load_n(&s_page, __ATOMIC_RELAXED) + 1u) % pages;
     __atomic_store_n(&s_page, page, __ATOMIC_RELEASE);
     if (s_display_task) xTaskNotifyGive(s_display_task);
 }
 
 static void key_task(void *unused) {
     (void)unused;
-    bool boot_down = false, power_armed = false;
-    unsigned boot_samples = 0, power_samples = 0, released_samples = 0;
+    bool power_armed = false;
+    unsigned power_samples = 0, released_samples = 0;
+    raw_boot_button_t boot = {0};
     for (;;) {
-        if (raw_boot_pressed()) {
-            if (boot_samples < 3) boot_samples++;
-            if (boot_samples == 3 && !boot_down) { boot_down = true; next_page(); }
-        } else { boot_samples = 0; boot_down = false; }
+        bool setup_available = false;
+#if CONFIG_RAW_USB_PROVISION_V2
+        setup_available = s_setup_available;
+#endif
+        raw_boot_action_t action = raw_boot_button_poll(&boot, raw_boot_pressed(),
+            (uint64_t)esp_timer_get_time() / 1000u, setup_available);
+        if (action == RAW_BOOT_PAGE) next_page();
+#if CONFIG_RAW_USB_PROVISION_V2
+        if (action == RAW_BOOT_SETUP && !__atomic_load_n(&s_power_requested, __ATOMIC_ACQUIRE)) {
+            __atomic_store_n(&s_page, 4u, __ATOMIC_RELEASE);
+            (void)raw_setup_adapter_begin();
+            if (s_display_task) xTaskNotifyGive(s_display_task);
+        }
+#endif
         if (!raw_power_pressed()) {
             if (released_samples < 3) released_samples++;
             if (released_samples == 3) power_armed = true;
@@ -558,6 +690,9 @@ static void key_task(void *unused) {
         if (__atomic_load_n(&s_power_requested, __ATOMIC_ACQUIRE) &&
             __atomic_load_n(&s_writer_done, __ATOMIC_ACQUIRE) &&
             __atomic_load_n(&s_storage_safe, __ATOMIC_ACQUIRE) && !raw_power_pressed()) {
+#if CONFIG_RAW_USB_PROVISION_V2
+            if (!raw_setup_adapter_power_safe()) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
+#endif
             if (!s_display_task || __atomic_load_n(&s_shutdown_display_done, __ATOMIC_ACQUIRE)) {
                 xSemaphoreTake(s_export_lock, portMAX_DELAY);
                 esp_err_t closed = raw_export_close();
@@ -624,68 +759,89 @@ static void export_command(raw_command_t command, const raw_control_t *control) 
     xSemaphoreGive(s_export_lock);
 }
 
+static void console_command(void *unused, raw_command_t command, const raw_control_t *parser) {
+    (void)unused;
+    if (command == RAW_COMMAND_PAGE) next_page();
+    if (command == RAW_COMMAND_CLOCK) {
+        uint64_t epoch = 0; uint8_t control = 0, seconds = 0;
+        xSemaphoreTake(s_clock_lock, portMAX_DELAY);
+        esp_err_t result = __atomic_load_n(&s_power_requested, __ATOMIC_ACQUIRE)
+            ? ESP_ERR_INVALID_STATE : raw_clock_probe(&epoch, &control, &seconds);
+        xSemaphoreGive(s_clock_lock);
+        printf("RAW CLOCK %llu %ld %02x %02x\n", (unsigned long long)epoch,
+               (long)result, control, seconds);
+    }
+    if (command == RAW_COMMAND_FILES || command == RAW_COMMAND_READ || command == RAW_COMMAND_CLOSE)
+        export_command(command, parser);
+    if (command == RAW_COMMAND_TIME) {
+        xSemaphoreTake(s_lifecycle, portMAX_DELAY);
+        xSemaphoreTake(s_clock_lock, portMAX_DELAY);
+        bool stopping = __atomic_load_n(&s_stop, __ATOMIC_ACQUIRE) &&
+            !__atomic_load_n(&s_writer_done, __ATOMIC_ACQUIRE);
+        esp_err_t result = (__atomic_load_n(&s_power_requested, __ATOMIC_ACQUIRE) || stopping)
+            ? ESP_ERR_INVALID_STATE : raw_clock_set(parser->utc_epoch);
+        if (result == ESP_OK) {
+            struct timeval tv = {.tv_sec = (time_t)parser->utc_epoch};
+            settimeofday(&tv, NULL);
+            __atomic_store_n(&s_clock_source, RAW_CLOCK_HOST_CALIBRATED_RTC, __ATOMIC_RELEASE);
+            __atomic_add_fetch(&s_clock_generation, 1u, __ATOMIC_RELEASE);
+        }
+        xSemaphoreGive(s_clock_lock);
+        xSemaphoreGive(s_lifecycle);
+        printf("RAW TIME %llu %ld\n", (unsigned long long)parser->utc_epoch, (long)result);
+        if (s_display_task) xTaskNotifyGive(s_display_task);
+    }
+    if (command == RAW_COMMAND_STOP &&
+        !__atomic_load_n(&s_stop, __ATOMIC_ACQUIRE)) {
+        stop_reason(RAW_EVENT_USER_STOP, 0);
+        state("STOPPING");
+        request_stop();
+    }
+}
+
 static void console_task(void *unused) {
     (void)unused;
-    raw_control_t parser;
-    raw_control_init(&parser);
+    raw_usb_stream_t parser;
+    raw_usb_stream_init(&parser);
+#if CONFIG_RAW_USB_PROVISION_V2
+    cp_usb_frame_fn setup_receive = raw_setup_adapter_receive;
+#else
+    cp_usb_frame_fn setup_receive = NULL;
+#endif
+    int64_t last_input = 0;
     uint8_t bytes[32];
     for (;;) {
         if (!usb_serial_jtag_is_connected()) {
-            raw_control_init(&parser);
+            raw_usb_stream_clear(&parser);
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
         errno = 0;
+#if CONFIG_RAW_USB_PROVISION_V2
+        ssize_t count = usb_serial_jtag_is_driver_installed()
+            ? usb_serial_jtag_read_bytes(bytes, sizeof bytes, pdMS_TO_TICKS(100))
+            : read(STDIN_FILENO, bytes, sizeof bytes);
+#else
         ssize_t count = read(STDIN_FILENO, bytes, sizeof bytes);
+#endif
         if (count > 0) {
-            for (ssize_t i = 0; i < count; i++) {
-                raw_command_t command = raw_control_command(&parser, bytes[i]);
-                if (command == RAW_COMMAND_PAGE) next_page();
-                if (command == RAW_COMMAND_CLOCK) {
-                    uint64_t epoch = 0; uint8_t control = 0, seconds = 0;
-                    xSemaphoreTake(s_clock_lock, portMAX_DELAY);
-                    esp_err_t result = __atomic_load_n(&s_power_requested, __ATOMIC_ACQUIRE)
-                        ? ESP_ERR_INVALID_STATE : raw_clock_probe(&epoch, &control, &seconds);
-                    xSemaphoreGive(s_clock_lock);
-                    printf("RAW CLOCK %llu %ld %02x %02x\n", (unsigned long long)epoch,
-                           (long)result, control, seconds);
-                }
-                if (command == RAW_COMMAND_FILES || command == RAW_COMMAND_READ || command == RAW_COMMAND_CLOSE)
-                    export_command(command, &parser);
-                if (command == RAW_COMMAND_TIME) {
-                    xSemaphoreTake(s_lifecycle, portMAX_DELAY);
-                    xSemaphoreTake(s_clock_lock, portMAX_DELAY);
-                    bool stopping = __atomic_load_n(&s_stop, __ATOMIC_ACQUIRE) &&
-                        !__atomic_load_n(&s_writer_done, __ATOMIC_ACQUIRE);
-                    esp_err_t result = (__atomic_load_n(&s_power_requested, __ATOMIC_ACQUIRE) || stopping)
-                        ? ESP_ERR_INVALID_STATE : raw_clock_set(parser.utc_epoch);
-                    if (result == ESP_OK) {
-                        struct timeval tv = {.tv_sec = (time_t)parser.utc_epoch};
-                        settimeofday(&tv, NULL);
-                        __atomic_store_n(&s_clock_source, RAW_CLOCK_HOST_CALIBRATED_RTC, __ATOMIC_RELEASE);
-                        __atomic_add_fetch(&s_clock_generation, 1u, __ATOMIC_RELEASE);
-                    }
-                    xSemaphoreGive(s_clock_lock);
-                    xSemaphoreGive(s_lifecycle);
-                    printf("RAW TIME %llu %ld\n", (unsigned long long)parser.utc_epoch, (long)result);
-                    if (s_display_task) xTaskNotifyGive(s_display_task);
-                }
-                if (command == RAW_COMMAND_STOP &&
-                    !__atomic_load_n(&s_stop, __ATOMIC_ACQUIRE)) {
-                    stop_reason(RAW_EVENT_USER_STOP, 0);
-                    state("STOPPING");
-                    request_stop();
-                }
-            }
+            last_input = esp_timer_get_time();
+            raw_usb_stream_feed(&parser, bytes, (size_t)count, console_command, setup_receive, NULL);
+            cp_usb_secure_clear(bytes, sizeof bytes);
         } else if (count < 0 && (!errno || !usb_serial_jtag_is_connected())) {
-            raw_control_init(&parser);
+            raw_usb_stream_clear(&parser);
             vTaskDelay(pdMS_TO_TICKS(100));
         } else if (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
             ESP_LOGE(TAG, "USB control read failed: %d; stopping recorder", errno);
             stop_reason(RAW_EVENT_USER_STOP, errno);
             request_stop();
             vTaskDelete(NULL);
-        } else vTaskDelay(pdMS_TO_TICKS(50));
+        } else {
+            if (last_input && esp_timer_get_time() - last_input > 2000000) {
+                raw_usb_stream_clear(&parser); last_input = 0;
+            }
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
     }
 }
 
@@ -709,6 +865,17 @@ void app_main(void) {
     } else ESP_LOGW(TAG, "RTC time unknown: %s; await trusted USB TIME calibration", esp_err_to_name(clock));
     esp_err_t err = nvs_flash_init(); /* Never erase a pre-existing NVS partition. */
     if (err != ESP_OK) { state("NVS ERROR"); goto failed; }
+#if CONFIG_RAW_USB_PROVISION_V2
+    /* Proof entropy precedes ADC/RF. The optional adapter starts no network;
+     * only an explicit framed begin/long BOOT queues safe STOP before setup. */
+    raw_setup_board_t setup_board = {.request_entry = setup_request_entry, .poll_entry = setup_poll_entry,
+        .can_begin = setup_can_begin,
+        .quiesce_radio = setup_quiesce, .remain_stopped = setup_remain_stopped,
+        .status = setup_status};
+    esp_err_t setup = raw_setup_adapter_prepare(&setup_board);
+    s_setup_available = setup == ESP_OK;
+    if (setup != ESP_OK) ESP_LOGW(TAG, "experimental USB v2 unavailable: %ld", (long)setup);
+#endif
     esp_fill_random(s_session, sizeof s_session);
     err = raw_storage_mount();
     if (err == ESP_OK) err = raw_storage_capacity(&s_stats.total_bytes, &s_stats.free_bytes);
@@ -732,7 +899,12 @@ void app_main(void) {
     ble_hs_cfg.sync_cb = on_sync;
     ble_hs_cfg.reset_cb = on_reset;
     TaskHandle_t console = NULL;
-    if (xTaskCreate(console_task, "raw_console", 3072, NULL, 1, &console) != pdPASS) {
+#if CONFIG_RAW_USB_PROVISION_V2
+    const unsigned console_stack = 6144;
+#else
+    const unsigned console_stack = 4096; /* Includes the bounded mixed-stream parser. */
+#endif
+    if (xTaskCreate(console_task, "raw_console", console_stack, NULL, 1, &console) != pdPASS) {
         err = ESP_ERR_NO_MEM; state("CONTROL ERROR");
         (void)nimble_port_deinit();
         __atomic_store_n(&s_ble_ready, false, __ATOMIC_RELEASE);

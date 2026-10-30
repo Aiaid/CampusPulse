@@ -49,6 +49,8 @@ export interface Env extends Pick<WorkerBindings, 'DB'> {
   OPERATOR_TOKEN?: string;
   RAW_BUCKET?: WorkerBindings['RAW_BUCKET'];
   RESEARCH_TOKEN?: string;
+  /** Disabled unless explicitly enabled after CPRAW runtime/retention acceptance. */
+  CPRAW_ARCHIVE_ENABLED?: string;
   /** Bootstrap/cookie-signing secret; token login is disabled after account setup. */
   ADMIN_TOKEN?: string;
   /** Base64url 32-byte AES-GCM key for independent MQTT provisioning secrets. */

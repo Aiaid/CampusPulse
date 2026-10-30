@@ -9,6 +9,9 @@ instructions take precedence.
 
 ### Collaboration
 
+- Before hardware work, consult the official documentation, schematic and
+  examples for the actual board model and revision. Verify task-relevant power,
+  battery, pins and peripherals; identify facts that remain unconfirmed.
 - Work in the current directory. Do not create worktrees unless the user
   explicitly requests a worktree, including for background work.
 - For substantial implementation, prefer an agent team for independent tasks

@@ -19,6 +19,9 @@
 #include "freertos/task.h"
 #include <stdio.h>
 #include <string.h>
+#ifdef RAW_DISPLAY_EXTERNAL_RENDER
+#include "esp_heap_caps.h"
+#endif
 
 #define PIN_PWR 6
 #define PIN_BUSY 8
@@ -37,9 +40,16 @@ static const char *TAG = "epaper";
 static spi_device_handle_t s_spi;
 static bool s_ready;
 static uint8_t s_fb[FB_BYTES];
+#ifdef RAW_DISPLAY_EXTERNAL_RENDER
+/* Trial option: CPU-only render/history buffers use verified PSRAM. The actual
+ * SPI framebuffer remains internal; no external buffer is passed to DMA. */
+static uint8_t *s_draw;
+static uint8_t *s_previous;
+#else
 static uint8_t s_draw[PANEL_W * PANEL_H];
-static lv_display_t *s_display;
 static uint8_t s_previous[FB_BYTES];
+#endif
+static lv_display_t *s_display;
 static raw_refresh_state_t s_refresh;
 static char s_previous_state[24];
 static esp_err_t s_io_error;
@@ -62,12 +72,17 @@ static void collect_frame(lv_display_t *display, const lv_area_t *area, uint8_t 
 static uint32_t tick_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 
 static esp_err_t ui_init(void) {
+#ifdef RAW_DISPLAY_EXTERNAL_RENDER
+    s_draw=heap_caps_calloc(1,PANEL_W*PANEL_H,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    s_previous=heap_caps_calloc(1,FB_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if(!s_draw||!s_previous)return ESP_ERR_NO_MEM;
+#endif
     lv_init();
     lv_tick_set_cb(tick_ms);
     s_display = lv_display_create(PANEL_W, PANEL_H);
     if (!s_display) return ESP_ERR_NO_MEM;
     lv_display_set_color_format(s_display, LV_COLOR_FORMAT_L8);
-    lv_display_set_buffers(s_display, s_draw, NULL, sizeof(s_draw), LV_DISPLAY_RENDER_MODE_FULL);
+    lv_display_set_buffers(s_display, s_draw, NULL, PANEL_W * PANEL_H, LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(s_display, collect_frame);
     raw_ui_init(s_display);
     return ESP_OK;
@@ -207,7 +222,7 @@ esp_err_t raw_display_present(const raw_display_snapshot_t *snapshot) {
         : raw_panel_partial(&s_panel, s_fb, &plan);
     if (err == ESP_OK && s_io_error != ESP_OK) err = s_io_error;
     if (err == ESP_OK) {
-        memcpy(s_previous, s_fb, sizeof s_previous);
+        memcpy(s_previous, s_fb, FB_BYTES);
         memcpy(s_previous_state, snapshot->state, sizeof s_previous_state);
         raw_refresh_commit(&s_refresh, &plan, snapshot->page, (uint64_t)esp_timer_get_time() / 1000);
         ESP_LOGI(TAG, "refresh=%s x=%u..%u y=%u..%u elapsed_ms=%"PRId64,

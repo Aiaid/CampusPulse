@@ -1,4 +1,4 @@
-# 微雪 BLE raw 记录固件 0.1.4
+# 微雪 BLE raw 记录固件
 
 独立的 ESP-IDF 5.5.3 工程，目标为 ESP32-S3-ePaper-1.54 V2（8 MB Flash、
 8 MB OPI PSRAM）。这是重新设计后的首版软件，不使用旧 Passport 的采集管线。
@@ -33,7 +33,10 @@ TF 控制器的写缓存也影响实际持久性。一次7,258条 raw 和一次�
    `LOW SPACE; CARD SAFE` 表示空间预警后收尾完成；`BLE ERROR; CARD SAFE`
    表示扫描异常，但卡已正常卸载。`STORAGE ERROR` 不表示完整保存成功。
 4. 停止后重新启动开启新会话；没有恢复录制命令。
-5. BOOT（GPIO0）短按切换四页；USB `PAGE`也可切页。
+5. BOOT（GPIO0）短按切页；USB `PAGE`也可切页。可选 USB 配网实验版
+   增加第五页：长按 BOOT 约2秒先安全停录，再进入 USB 配网模式；电脑向导
+   显式开始配网时也会先执行安全停录。仅插线不会自动进入配网。配网结束后需
+   重启以开始新的录制会话。
 6. PWR（GPIO18）长按约1秒请求安全关机：先停止/排空/同步/卸载、显示关闭状态，
    松开后释放GPIO17电池保持并深睡眠。启动时先等待PWR松开，不把开机长按当关机。
    USB能继续给VSYS供电，因此USB下是软件睡眠；PWR低唤醒。存储/准备失败保持供电。
@@ -52,7 +55,11 @@ TF 控制器的写缓存也影响实际持久性。一次7,258条 raw 和一次�
 
 诊断页显示网络状态（本版关闭）、内部 RAM/PSRAM/TF/缓冲占用、运行时间及错误。
 BLE 页显示接收速率、近60秒接收/写入和分箱趋势；车辆页保留未分析状态与同步
-报告数；候梯页显示 RSSI 统计/趋势与未启用估计。电量仍未知；RTC有效时诊断页
+报告数；候梯页显示 RSSI 统计/趋势与未启用估计。电池经 V2 的 GPIO4/ADC1
+通道3、1:2 分压读取，仅在 ADC 校准和采样有效时显示电压。百分比是 3.0–4.2 V
+线性粗估，受负载和充电影响，并非电量计；该电路不能确认电池是否存在、USB
+供电或充电状态。容量和实际放电曲线未验证，剩余时间显示 `--`。电池实板测试
+尚未完成。RTC有效时诊断页
 显示UTC+8日期/时间。未经过当前boot主机校准的RTC时间不冒充本boot已校准状态。
 `written` 仅表示标准 I/O 接受的报告；`synced` 表示最近成功完成同步的报告数。
 屏幕是快照，常规目标每2秒更新，换页/关键状态通知显示任务立即处理。
@@ -66,7 +73,11 @@ BLE 页显示接收速率、近60秒接收/写入和分箱趋势；车辆页保�
 ## 构建与检查
 
 激活 ESP-IDF 5.5.3 的 S3 工具链及 Python 环境，执行 `bash build.sh`，
-默认版本为 `0.1.4-raw-partial`，可用 `RAW_VERSION` 指定版本。
+默认版本为 `0.1.5-battery`，可用 `RAW_VERSION` 指定版本。
+可选的 `0.1.8-usb-v2-experiment` 使用构建开关 `RAW_ENABLE_USB_PROVISION_V2`
+与 `CONFIG_RAW_USB_PROVISION_V2` 显式启用原有 v2 USB 配网；默认构建仍离线。
+长按 BOOT、安全停录和 USB begin/info 在实板通过；浏览器向导、真实 Wi-Fi/TLS、
+保存和恢复尚未实板验收。它不实现 v3 配置或任何上传，也不会自动联网。
 依赖由 `main/idf_component.yml` 固定为 LVGL 9.5.0；离线环境可用
 `RAW_LVGL_PATH` 指定同版本源码（例如本机已下载的官方 managed component）。
 脚本使用 `uv`、全新外部构建目录，并检查目标、依赖、分区和独立镜像；不操作设备。
@@ -81,6 +92,17 @@ UV_CACHE_DIR=/tmp/campuspulse-raw-uv uv run --no-project python tools/decode.py 
 解码默认只输出汇总；显式 `--records` 才包含地址和 payload。原始录制和详细解码
 结果应私有保存，不进入 Git。格式和截断处理见 [FORMAT.md](FORMAT.md)。
 
+`tools/archive_uploader.py` 可对已导出的单个文件准备私有、不可变的本机归档
+副本，并在明确执行上传时核对服务端持久回执；重试保留同一批次。它不会删除
+原件或本机副本，也不自行从 USB 读取。服务端当前默认关闭且未部署，工具仅完成
+合成和本地服务测试，不代表实机自动上传可用。接口见
+[CPRAW 归档契约](../../docs/specs/cpraw-archive-v1.md)。
+
+离线协议证据基线可运行 `uv run --no-project python tools/extract_evidence.py FILE`。
+输出按单个分段汇总 AD 类型、公司编号、服务和 Appearance，默认不输出地址、名称、
+原始载荷或 128 位 UUID；分片与异常分别计数，不推断设备类别或总量。容量超限时
+拒绝输出部分结果。它不改变设备采集，也不代表线上上传或识别已经完成。
+
 ## 驱动依据和许可
 
 TF 使用 SDMMC 1-bit：CLK39、CMD41、D0=40。依据为微雪官方
@@ -89,3 +111,5 @@ SSD1681 驱动源于本项目此前自写的墨水屏驱动；新录制代码为
 LVGL 9.5.0 是 MIT 依赖，许可与字体信息随其源码提供；未复制旧应用的网络、
 统计或身份逻辑。依赖许可副本位于 [licenses/](licenses/README.md)，随镜像保留。
 复用记录见 `docs/notes/reuse.md`。
+V2 电池电路参考[官方原理图](https://github.com/waveshareteam/ESP32-S3-ePaper-1.54/blob/aaf395c1bbd86f7c5b7a2f9f0401241ff5c44956/04_Hardware/Schematics/ESP32-S3-Touch-ePaper-1.54-Schematic.pdf)
+和[对应 ADC 示例](https://github.com/waveshareteam/ESP32-S3-ePaper-1.54/blob/aaf395c1bbd86f7c5b7a2f9f0401241ff5c44956/02_Example/ESP-IDF/V2/01_ADC_Test/components/adc_bsp/adc_bsp.c)。

@@ -27,18 +27,27 @@ def verify(build):
     desc = json.loads((build / 'project_description.json').read_text())
     require(desc['target'] == 'esp32s3', 'Wrong target')
     components = desc['build_components']
-    require(not any(name.startswith('cp_') for name in components),
-            'Old shared firmware components must not be linked')
+    experimental_usb_v2 = 'CONFIG_RAW_USB_PROVISION_V2=y' in lines
+    if experimental_usb_v2:
+        expected_shared = {'cp_core', 'cp_settings', 'cp_network', 'cp_provision'}
+        require({name for name in components if name.startswith('cp_')} == expected_shared,
+                'Unexpected shared runtime in experimental USB-v2 adapter')
+    else:
+        require(not any(name.startswith('cp_') for name in components),
+                'Shared firmware components must not be linked in default image')
     # IDF Bluetooth dependencies can register esp_wifi even when its client
     # routines are removed by the linker. Check the actual ELF as well.
-    require('mqtt' not in components, 'Unexpected MQTT dependency')
+    if not experimental_usb_v2:
+        require('mqtt' not in components, 'Unexpected MQTT dependency')
     nm = shutil.which('xtensa-esp32s3-elf-nm')
     require(nm is not None, 'Activate the ESP32-S3 toolchain to inspect the ELF')
     symbols = subprocess.check_output([nm, '--defined-only', str(build / 'waveshare_raw.elf')], text=True)
     names = {line.split()[-1] for line in symbols.splitlines() if line.split()}
-    require(not names.intersection({'esp_wifi_init', 'esp_wifi_start', 'esp_wifi_connect',
-            'esp_mqtt_client_init', 'esp_mqtt_client_start', 'esp_http_client_init'}),
-            'The offline recorder must not contain active network client entry points')
+    if not experimental_usb_v2:
+        require(not names.intersection({'esp_wifi_init', 'esp_wifi_start', 'esp_wifi_connect',
+                'esp_mqtt_client_init', 'esp_mqtt_client_start', 'esp_http_client_init'}),
+                'The default offline recorder must not contain network client entry points')
+    require('cp_usb_start' not in names, 'A second USB console reader must not be linked')
     lvgl_path = next((Path(path) for name, path in
                       zip(components, desc['build_component_paths'])
                       if name == 'lvgl__lvgl'), None)
@@ -47,7 +56,8 @@ def verify(build):
     args = json.loads((build / 'flasher_args.json').read_text())
     images = {int(offset, 0): name for offset, name in args['flash_files'].items()}
     require(set(images) == {0, 0x8000, 0x10000}, 'Only separate images may be delivered')
-    report = {'target': 'esp32s3', 'flash_bytes': 8 * 1024 * 1024, 'images': {}}
+    report = {'target': 'esp32s3', 'flash_bytes': 8 * 1024 * 1024,
+              'experimental_usb_v2': experimental_usb_v2, 'images': {}}
     for offset, name in images.items():
         path = (build / name).resolve()
         require(path.is_relative_to(build), 'Image path outside build directory')

@@ -952,3 +952,19 @@ MIT-licensed epd1in54_V2 implementation at commit
 the selected board V2 example. The full permission notice is retained in
 `licenses/Waveshare-ePaper-MIT.txt`. Frame differencing, mixed refresh policy,
 LVGL transport integration and failure-state tracking are authored here.
+
+The 2026-10-30 battery reader is newly authored using ESP-IDF ADC APIs; the
+GPIO4, divider and ADC configuration were checked against the official V2
+schematic and ADC example at `aaf395c1bbd86f7c5b7a2f9f0401241ff5c44956`.
+The dormant USB stream adapter builds the existing in-repository
+`firmware/components/cp_usb/framing.c` directly; it does not activate the
+provisioning controller or a second USB reader.
+
+The 2026-10-30 `firmware/waveshare-v3-trial` image reuses this repository's V2
+power, TF, RTC, battery and ePaper/LVGL/font code by reference, retaining the
+notices already described here. Its optional CPU-only render/history buffers
+use PSRAM; the default raw image and SPI framebuffer retain their original
+placement. The new v3 control/evidence/queue/transport and physical bootstrap
+are authored here. ESP-IDF/NimBLE/mbedTLS, SDK HTTP parser and existing pinned
+LVGL/OFL fonts remain dependencies under their existing notices; no new vendor
+application or binary capture is imported.

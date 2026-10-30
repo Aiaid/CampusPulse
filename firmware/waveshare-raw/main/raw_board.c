@@ -139,3 +139,5 @@ uint64_t raw_storage_card_bytes(void) {
     if (!s_card || s_card->csd.sector_size <= 0) return 0;
     return (uint64_t)s_card->csd.capacity * (uint64_t)s_card->csd.sector_size;
 }
+
+void *raw_storage_card_handle(void) { return s_card; }

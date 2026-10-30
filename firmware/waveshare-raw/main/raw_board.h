@@ -18,3 +18,6 @@ esp_err_t raw_storage_capacity(uint64_t *total_bytes, uint64_t *free_bytes);
 uint64_t raw_storage_free_bytes(void);
 const char *raw_storage_path(void);
 uint64_t raw_storage_card_bytes(void);
+/* Borrowed mounted SDMMC handle for the trial queue's serialized media check.
+ * Invalid after unmount; caller must not own/mutate the card or mount twice. */
+void *raw_storage_card_handle(void);

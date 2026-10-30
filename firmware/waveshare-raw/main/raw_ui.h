@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "lvgl.h"
+#include "raw_setup_view.h"
 
 typedef struct {
     char state[24];
@@ -14,6 +15,7 @@ typedef struct {
     uint32_t buffer_used, buffer_capacity, storage_errors;
     bool memory_known, psram_known, battery_known;
     int battery_percent;
+    uint16_t battery_mv;
     bool wifi_enabled, wifi_connected, wifi_rssi_known;
     int wifi_rssi;
     char wifi_ssid[33], ip[16];
@@ -24,6 +26,9 @@ typedef struct {
     bool clock_known;
     bool clock_calibrated;
     uint64_t utc_epoch;
+    bool setup_available, setup_stopping;
+    raw_setup_state_t setup_state;
+    int32_t setup_error;
 } raw_display_snapshot_t;
 
 /* Caller owns LVGL and invokes these from its sole LVGL task. */

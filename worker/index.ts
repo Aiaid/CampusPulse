@@ -2,6 +2,9 @@ import type { CreateObservation, Env, Observation, Place, PlaceSummary } from '.
 import { handleDocs } from './docs';
 import { handleIngestion } from './ingest';
 import { handleDeviceV2 } from './device-v2';
+import { handleDeviceV3Control } from './device-v3-control';
+import { handleDeviceV3Ingest, expireDeviceV3Ingest } from './device-v3-ingest';
+import { handleCprawArchive, expireCprawArchives } from './cpraw-archive';
 import { readLastReportedSensor, readPublicWindows } from './sensors';
 import { expireIngestion } from './retention';
 import { handleAdmin, readPublicSettings, readRuntimeSettings } from './admin';
@@ -116,8 +119,14 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return null;
   try {
+    const deviceV3Control = await handleDeviceV3Control(request, env);
+    if (deviceV3Control) return deviceV3Control;
+    const deviceV3Ingest = await handleDeviceV3Ingest(request, env);
+    if (deviceV3Ingest) return deviceV3Ingest;
     const admin = await handleAdmin(request, env);
     if (admin) return admin;
+    const cpraw = await handleCprawArchive(request, env);
+    if (cpraw) return cpraw;
     const ingestion = await handleIngestion(request, env);
     if (ingestion) return ingestion;
     const deviceV2 = await handleDeviceV2(request, env);
@@ -207,7 +216,15 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
 
 export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    await expireIngestion(env);
+    try {
+      await expireIngestion(env);
+    } finally {
+      try {
+        await expireCprawArchives(env);
+      } finally {
+        await expireDeviceV3Ingest(env);
+      }
+    }
   },
   async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     return cachePublicRead(request, async () => handleDocs(request) ?? await handleApi(request, env)

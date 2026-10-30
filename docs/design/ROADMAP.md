@@ -16,13 +16,56 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
+- [ ] Connect the Waveshare raw recorder to physical USB provisioning and a
+      private, durable CPRAW upload path, retaining TF evidence through retries
+      and validating BLE/Wi-Fi/storage coexistence on the board. The existing
+      legacy and sampled raw contracts cannot represent whole CPRAW segments.
+      Add inference evidence without compromising the independent raw writer.
+      Separate collection and upload from optional TF and display adapters:
+      Waveshare is primarily a debugging board; headless T-Energy without TF is
+      the intended main collector and needs its own bounded durable buffering.
+      [Device v3 configuration](../specs/device-v3.md) has a locally tested
+      pure capability/configuration core. The separate
+      [control service](../specs/device-v3-control.md) is default-off with local
+      D1/workerd synthetic tests and a bounded physical trial; production
+      enrollment, heartbeat and pending-batch reboot recovery remain outstanding.
+      [Private v3 ingestion](../specs/device-v3-ingest.md) is implemented and
+      synthetically tested locally for HTTPS feature/status, but double-gated
+      and disabled in production; bounded device integration passed, while
+      production deployment and cleanup acceptance remain open.
+      Its present experimental scope requires local_raw=off, so simultaneous
+      TF raw recording and v3 feature upload needs a separate contract change;
+      offline TF raw remains independent of any upload.
+      A shared [bounded evidence component](../../firmware/components/cp_v3_evidence/README.md)
+      now passes host and validator parity tests for company and Appearance
+      features; its narrow Waveshare trial integration is accepted below.
+      [CPRAW archive](../specs/cpraw-archive-v1.md) has local synthetic server
+      coverage including 257 chunks; a host uploader for exported files also has
+      synthetic workerd tests. The service is disabled and undeployed; USB
+      acquisition, production resource checks and device integration remain.
+      The separate [Waveshare v3 trial](../../firmware/waveshare-v3-trial/README.md)
+      passed direct capability/config ACK, live feature/status, TF frozen queue
+      and exact HTTPS receipt/retry checks against an isolated controlled-test
+      service. It advertises eight identifiers so the whole window fits before
+      any upload. Continuous operation, ordinary onboarding, device retention,
+      pending-boot recovery and production remain open; this is not a
+      production capacity claim. See [physical acceptance](../notes/waveshare-v3-acceptance-2026-10-30.md).
+- [ ] Measure the Waveshare battery using its verified board circuit; display
+      voltage and a clearly qualified charge estimate. Estimate remaining time
+      only when battery capacity, power source and discharge behavior support it;
+      validate on battery with the actual recording and network workload.
+
 - [ ] Physically validate the new Waveshare V2 TF-only raw recorder: card
       compatibility, controlled radio load, USB detach/reconnect, safe stop and
       power-loss tails, PWR/BOOT pressing, battery power and RTC backup supply.
       User selected raw-to-TF first on 2026-10-29. Independent code is in
-      firmware/waveshare-raw;0.1.3 with four pages, RTC and read-only export is
-      installed. Raw sample/capacity/MCU-reset RTC acceptance is archived below;
-      upload and inference remain later work.
+      firmware/waveshare-raw; the 0.1.8 USB-v2 experimental app was accepted
+      with RTC, read-only export, partial refresh and battery display. BOOT
+      setup entry and USB begin/info passed, but real provisioning did not.
+      The board now runs the separate 0.2.4 v3 trial described above, stopped
+      after its bounded test; it is not currently recording raw.
+      Raw sample/capacity/MCU-reset RTC acceptance
+      is archived below; upload and inference work is tracked separately above.
       See [Waveshare firmware redesign](waveshare-firmware-redesign.md).
 
 - [ ] Extend the bounded T-Energy-S3 USB-only/MQTT acceptance with saturated
@@ -270,6 +313,13 @@ collection and durable upload. Final local software verification passed on
 
 ## P3 — Research and expansion
 
+- [ ] Evaluate online raw-first binary segments with private R2 detail and
+      small per-window D1 statistics. Keep the online segment/receipt contract
+      distinct from offline CPRAW import. For the main T-Energy collector,
+      budget bounded PSRAM, explicit overflow/reboot loss and any optional
+      Flash journal/write endurance; PSRAM is not durable storage. The bounded
+      eight-identifier feature trial does not decide the long-term format.
+
 - [ ] Implement and calibrate the [BLE device inference plan](ble-device-inference.md):
       keep ESP32 collection and bounded features independent of backend
       fingerprinting, trends and total estimates; first cover selected phone and
@@ -307,6 +357,17 @@ collection and durable upload. Final local software verification passed on
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] 2026-10-30: Connect the Waveshare board-owned v3 controlled-test loop:
+      actual capability/config ACK, live BLE worker evidence, complete-window
+      TF frozen queues, public-CA HTTPS, exact durable receipts and duplicate
+      replay. Three live windows produced 24 feature + 3 status batches,
+      independently matched in the isolated backend. A real response timeout
+      recovered via unchanged retry; clean reboot reopened an empty queue and
+      final pending counts, network stop and TF unmount passed. The temporary
+      test entry is closed. Eight-identifier trial limits and remaining
+      continuous/production/power-loss work are recorded in the
+      [physical acceptance](../notes/waveshare-v3-acceptance-2026-10-30.md).
 
 - [x] 2026-10-30: Design the [ESP32/backend BLE inference split](ble-device-inference.md),
       including current code/input limits, protocol fingerprints, phone/vehicle

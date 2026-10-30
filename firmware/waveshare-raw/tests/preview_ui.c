@@ -9,6 +9,13 @@
 #define HEIGHT 200
 static uint8_t frame[WIDTH * HEIGHT];
 static unsigned flush_count;
+static bool has_label(lv_obj_t *screen, const char *text) {
+    for (uint32_t i = 0; i < lv_obj_get_child_count(screen); i++) {
+        lv_obj_t *o = lv_obj_get_child(screen, i);
+        if (lv_obj_check_type(o, &lv_label_class) && !strcmp(lv_label_get_text(o), text)) return true;
+    }
+    return false;
+}
 static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *pixels) {
     if (a->x1 != 0 || a->y1 != 0 || a->x2 != 199 || a->y2 != 199 || pixels != frame) {
         fputs("unexpected frame area\n", stderr); exit(1);
@@ -63,11 +70,13 @@ int main(int argc, char **argv) {
             .internal_total = 400000, .internal_free = 248000, .memory_known = true,
             .psram_total = 8000000, .psram_free = 6240000, .psram_known = true,
             .buffer_used = 80, .buffer_capacity = 1000, .rssi_known = true,
+            .battery_known = true, .battery_mv = 3800, .battery_percent = 66,
             .rssi_min = -88, .rssi_mean = -63, .rssi_max = -42, .rssi_samples = 7680};
         strcpy(s.state, "RECORDING");
         if (variant == 0) { s.clock_known = s.clock_calibrated = true; s.utc_epoch = 1793270000; }
         for (unsigned i = 0; i < 10; i++) {s.report_bins[i] = (uint32_t[]){40,55,80,128,100,80,70,55,75,95}[i]; s.rssi_bins[i] = -88 + i * 4; s.rssi_bin_known[i] = true;}
         if (variant == 1) {
+            s.battery_known = false;
             s.free_known = s.memory_known = s.psram_known = s.rssi_known = false;
             s.total_bytes = s.buffer_capacity = s.rssi_samples = 0;
             memset(s.rssi_bin_known, 0, sizeof(s.rssi_bin_known)); memset(s.report_bins, 0, sizeof(s.report_bins));
@@ -77,7 +86,7 @@ int main(int argc, char **argv) {
             s.free_bytes = UINT64_MAX - 1024; s.total_bytes = UINT64_MAX;
             s.wifi_enabled = s.wifi_connected = s.wifi_rssi_known = true; s.wifi_rssi = -127;
             memset(s.wifi_ssid, 'W', sizeof(s.wifi_ssid) - 1); strcpy(s.ip, "255.255.255.255");
-            s.battery_known = true; s.battery_percent = 100;
+            s.battery_known = true; s.battery_mv = 4500; s.battery_percent = 100;
         } else if (variant == 3) {
             strcpy(s.state, "STORAGE ERROR"); s.storage_errors = 42; s.free_known = false;
             s.wifi_enabled = true; s.rssi_bin_known[4] = s.rssi_bin_known[5] = false;
@@ -85,6 +94,15 @@ int main(int argc, char **argv) {
         for (unsigned page = 0; page < 4; page++) {
             s.page = page; char name[64]; snprintf(name, sizeof(name), "%s-page-%u", (const char *[]) {"normal", "unknown", "large", "error"}[variant], page + 1);
             if (render(d, &s, argv[1], name)) return 1;
+            if (page == 0) {
+                lv_obj_t *screen = lv_display_get_screen_active(d);
+                const char *battery = variant == 1 ? "BAT --" : variant == 2 ? "BAT 4.500V" : "BAT 3.800V";
+                const char *estimate = variant == 1 ? "估计 --" : variant == 2 ? "估计 100%" : "估计 66%";
+                if (!has_label(screen, battery) || !has_label(screen, estimate) ||
+                    !has_label(screen, "ETA --") || !has_label(screen, "BOOT | USB/CHG ?")) {
+                    fputs("battery/unknown-source/runtime labels are missing\n", stderr); return 1;
+                }
+            }
             /* Repeat updates without rebuilding to cover the live-update path. */
             raw_ui_update(&s); check_layout(lv_display_get_screen_active(d));
         }
@@ -102,5 +120,28 @@ int main(int argc, char **argv) {
         }
         if (!found) {fprintf(stderr, "missing state text for %s\n", states[i]); return 1;}
     }
+    const raw_setup_state_t setup_states[] = {RAW_SETUP_IDLE, RAW_SETUP_ENTERING, RAW_SETUP_READY,
+        RAW_SETUP_AWAIT_REPLY, RAW_SETUP_TESTING, RAW_SETUP_SAVING, RAW_SETUP_SAVED,
+        RAW_SETUP_FAILED, RAW_SETUP_FAULT, RAW_SETUP_CANCELLING};
+    const char *setup_text[] = {"Hold BOOT 2s to enter", "Opening USB setup...", "Waiting for credentials",
+        "Credentials received", "Testing Wi-Fi and cloud", "Saving local settings...", "Local settings saved",
+        "Setup failed", "Setup handoff failed", "Closing USB setup..."};
+    for (unsigned i = 0; i < sizeof setup_states / sizeof *setup_states; ++i) {
+        raw_display_snapshot_t s = {.setup_available = true, .page = 4,
+            .setup_state = setup_states[i], .battery_known = true, .battery_mv = 3800};
+        if (setup_states[i] == RAW_SETUP_FAULT) s.setup_error = 0x103;
+        char name[64]; snprintf(name, sizeof name, "setup-%u", i);
+        if (render(d, &s, argv[1], name)) return 1;
+        lv_obj_t *screen = lv_display_get_screen_active(d);
+        if (!has_label(screen, setup_text[i]) || !has_label(screen, "BAT 3.800V") ||
+            !has_label(screen, "5/5")) {fputs("missing setup progress/battery labels\n", stderr); return 1;}
+    }
+    raw_display_snapshot_t stopping = {.setup_available = true, .page = 4, .setup_stopping = true};
+    if (render(d, &stopping, argv[1], "setup-stopping")) return 1;
+    if (!has_label(lv_display_get_screen_active(d), "Draining and syncing TF")) return 1;
+    raw_display_snapshot_t testing = {.setup_available = true, .setup_state = RAW_SETUP_TESTING,
+        .wifi_enabled = true, .battery_known = true, .battery_mv = 3800};
+    if (render(d, &testing, argv[1], "setup-testing-diagnostics")) return 1;
+    if (!has_label(lv_display_get_screen_active(d), "Wi-Fi testing")) return 1;
     return 0;
 }
