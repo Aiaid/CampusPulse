@@ -968,3 +968,22 @@ placement. The new v3 control/evidence/queue/transport and physical bootstrap
 are authored here. ESP-IDF/NimBLE/mbedTLS, SDK HTTP parser and existing pinned
 LVGL/OFL fonts remain dependencies under their existing notices; no new vendor
 application or binary capture is imported.
+
+The 2026-10-30 `firmware/waveshare-v3/` small-statistics application reuses the
+same board/power/TF/battery/RTC/display and CPRAW framing adapters by reference,
+including their existing MIT/OFL notices. Its USB bootstrap derives from the
+in-repository bounded V3 trial. The statistics, temporal history, capture worker,
+compact serialization, logical-budget and independent local-raw modules are
+authored for CampusPulse; no additional vendor application or private capture
+is imported. Tests use the installed SDK cJSON and existing OpenSSL solely as
+host dependencies.
+
+The 2026-10-31 V3 Chinese UI adapts the existing raw UI's geometry, compact
+number/byte formatters and actual-LVGL host preview pipeline. Its board-local
+`edge_font_12/14/16` subsets are reproducibly rasterized from the same reviewed
+Noto Sans CJK SC Bold2.004 source; the source and original-generator hashes,
+327-codepoint coverage and derived font identities are in
+`firmware/waveshare-v3/fonts/manifest.json`. Original OFL/copyright notice bytes
+are preserved. The old raw image's fonts and generator are unchanged; no font
+binary is copied into the repository. Synthetic host previews remain outside
+the repository and their final PNG metadata was inspected.

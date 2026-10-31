@@ -1,0 +1,13 @@
+Upstream font: Noto Sans CJK SC Bold, Version 2.004.
+Copyright © 2014-2021 Adobe (http://www.adobe.com/).
+
+The copyright line is transcribed from the reviewed source font's OpenType name
+table. The pinned upstream SIL Open Font License 1.1 is reproduced in OFL.txt.
+Source revision, URL, SHA-256 and rasterizer versions are in manifest.json.
+
+CampusPulse V3 UI 12 / CampusPulse V3 UI 14 / CampusPulse V3 UI 16 are modified
+bitmap subsets created in 2026 from this open font. Each is rasterized directly
+at its own requested pixel size, with a native LVGL 9.5 fmt_txt descriptor. The
+generated font software remains under SIL OFL 1.1. These names do not use an
+upstream reserved font name. This notice acknowledges the upstream authors and
+does not imply their endorsement.
