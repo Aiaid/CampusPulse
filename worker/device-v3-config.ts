@@ -3,7 +3,7 @@ import { parseIngestJson } from './ingest-validation';
 
 export const V3_POLICY_SCHEMA = 'device-config/3' as const;
 export const V3_CAPABILITY_SCHEMA = 'device-capabilities/1' as const;
-export const V3_STREAMS = ['ble_windows', 'address_summaries', 'feature_summaries', 'node_status', 'ble_reports'] as const;
+export const V3_STREAMS = ['ble_windows', 'address_summaries', 'feature_summaries', 'node_status', 'ble_reports', 'window_statistics', 'candidate_events'] as const;
 export const V3_FEATURE_FIELDS = ['service_uuids', 'company_ids', 'appearance', 'name_pattern_ids', 'template_ids'] as const;
 type Stream = typeof V3_STREAMS[number];
 type FeatureField = typeof V3_FEATURE_FIELDS[number];
@@ -32,11 +32,17 @@ export interface DeviceConfigV3 {
     min_free_bytes: number; sync_interval_ms: number; full_behavior: 'stop_recording';
   };
   evidence: { mode: 'off' } | {
+    mode: 'statistics'; schema: 'window-statistics/1'; extractor_version: string; ruleset_version: string;
+  } | {
     mode: 'features'; schema: 'ble-feature-evidence/1'; extractor_version: string;
     population: Population; sample_every_n: number | null;
     fields: { kind: FeatureField; max_values_per_identifier: number }[];
     max_reports_per_window: number; max_bytes_per_window: number;
     overflow: 'count_and_mark_partial';
+  };
+  temporal?: { mode: 'off' } | {
+    mode: 'rolling'; slice_ms: number; history_ms: number; max_tracks: number; max_open_events: number;
+    max_event_ms: number; gap_ms: number; report_mode: 'off' | 'terminal_only' | 'revisions'; min_update_ms: number;
   };
   uplink: { enabled: false } | {
     enabled: true; transport: Transport; streams: Stream[]; max_batch_items: number; max_body_bytes: number;
@@ -78,6 +84,9 @@ export interface DeviceCapabilitiesV3 {
   summary?: { max_addresses: number; max_bins: number; max_window_ms: number } | null;
   features?: { schemas: string[]; extractor_versions: string[]; fields: FeatureField[];
     populations: Population[]; max_reports_per_window: number; max_bytes_per_window: number } | null;
+  statistics?: { schemas: string[]; extractor_versions: string[]; ruleset_versions: string[] } | null;
+  temporal?: { slice_ms: number[]; max_history_ms: number; max_tracks: number; max_open_events: number;
+    max_event_ms: number; event_schemas: string[]; report_modes: ('off' | 'terminal_only' | 'revisions')[] } | null;
   local_raw?: { formats: string[]; max_segment_bytes: number; min_sync_interval_ms: number } | null;
   uplink?: { transports: Transport[]; streams: Stream[]; max_batch_items: number; max_body_bytes: number;
     max_sample_reports_per_window: number; cpraw_archive: boolean } | null;
@@ -131,7 +140,7 @@ const bytes = (v: unknown, p: string, min = 1) => num(v, p, min, 2 ** 40);
 
 export function validateDeviceConfigV3(value: unknown): DeviceConfigV3 {
   const o = obj(value, 'config', ['schema', 'protocol', 'policy_id', 'node_id', 'revision', 'assignment_generation',
-    'collection', 'local_raw', 'evidence', 'uplink', 'local_queue', 'resources', 'custody', 'control']);
+    'collection', 'local_raw', 'evidence', 'uplink', 'local_queue', 'resources', 'custody', 'control'], ['temporal']);
   const c = obj(o.collection, 'collection', ['enabled', 'mode', 'scan', 'summary']);
   const scan = obj(c.scan, 'collection.scan', ['mode', 'interval_units', 'window_units', 'duplicate_filter', 'phys']);
   const s = obj(c.summary, 'collection.summary', ['enabled'], ['window_ms', 'bin_ms', 'max_addresses']);
@@ -166,11 +175,16 @@ export function validateDeviceConfigV3(value: unknown): DeviceConfigV3 {
       full_behavior: pick(raw.full_behavior, 'local_raw.full_behavior', ['stop_recording']) };
     if (local_raw.max_segment_bytes > local_raw.max_total_bytes) fail('local_raw.max_segment_bytes');
   }
-  const e = obj(o.evidence, 'evidence', ['mode'], ['schema', 'extractor_version', 'population', 'sample_every_n', 'fields', 'max_reports_per_window', 'max_bytes_per_window', 'overflow']);
-  const evidenceMode = pick(e.mode, 'evidence.mode', ['off', 'features']);
+  const e = obj(o.evidence, 'evidence', ['mode'], ['schema', 'extractor_version', 'ruleset_version', 'population', 'sample_every_n', 'fields', 'max_reports_per_window', 'max_bytes_per_window', 'overflow']);
+  const evidenceMode = pick(e.mode, 'evidence.mode', ['off', 'features', 'statistics']);
   let evidence: DeviceConfigV3['evidence'];
   if (evidenceMode === 'off') { obj(e, 'evidence', ['mode']); evidence = { mode: 'off' }; }
-  else {
+  else if (evidenceMode === 'statistics') {
+    obj(e, 'evidence', ['mode', 'schema', 'extractor_version', 'ruleset_version']);
+    evidence = { mode: evidenceMode, schema: pick(e.schema, 'evidence.schema', ['window-statistics/1']),
+      extractor_version: str(e.extractor_version, 'evidence.extractor_version'), ruleset_version: str(e.ruleset_version, 'evidence.ruleset_version') };
+    if (!summary.enabled || !Object.hasOwn(o, 'temporal')) fail('evidence');
+  } else {
     obj(e, 'evidence', ['mode', 'schema', 'extractor_version', 'population', 'sample_every_n', 'fields', 'max_reports_per_window', 'max_bytes_per_window', 'overflow']);
     const population = pick(e.population, 'evidence.population', ['all_worker_reports', 'deterministic_sample']);
     if (population === 'all_worker_reports' && e.sample_every_n !== null) fail('evidence.sample_every_n');
@@ -186,6 +200,25 @@ export function validateDeviceConfigV3(value: unknown): DeviceConfigV3 {
       max_bytes_per_window: bytes(e.max_bytes_per_window, 'evidence.max_bytes_per_window'),
       overflow: pick(e.overflow, 'evidence.overflow', ['count_and_mark_partial']) };
     if (!summary.enabled) fail('evidence');
+  }
+  let temporal: DeviceConfigV3['temporal'];
+  if (Object.hasOwn(o, 'temporal')) {
+    const t = obj(o.temporal, 'temporal', ['mode'], ['slice_ms', 'history_ms', 'max_tracks', 'max_open_events', 'max_event_ms', 'gap_ms', 'report_mode', 'min_update_ms']);
+    const mode = pick(t.mode, 'temporal.mode', ['off', 'rolling']);
+    if (mode === 'off') { obj(t, 'temporal', ['mode']); temporal = { mode }; }
+    else {
+      obj(t, 'temporal', ['mode', 'slice_ms', 'history_ms', 'max_tracks', 'max_open_events', 'max_event_ms', 'gap_ms', 'report_mode', 'min_update_ms']);
+      const slice_ms = num(t.slice_ms, 'temporal.slice_ms', 1000, 5000);
+      if (![1000, 2000, 5000].includes(slice_ms)) fail('temporal.slice_ms');
+      const history_ms = num(t.history_ms, 'temporal.history_ms', slice_ms, 600000);
+      if (history_ms % slice_ms) fail('temporal.history_ms');
+      const max_event_ms = num(t.max_event_ms, 'temporal.max_event_ms', slice_ms, 86400000);
+      temporal = { mode, slice_ms, history_ms, max_event_ms, max_tracks: num(t.max_tracks, 'temporal.max_tracks', 1, 512),
+        max_open_events: num(t.max_open_events, 'temporal.max_open_events', 1, 512), gap_ms: num(t.gap_ms, 'temporal.gap_ms', slice_ms, max_event_ms),
+        report_mode: pick(t.report_mode, 'temporal.report_mode', ['off', 'terminal_only', 'revisions']),
+        min_update_ms: num(t.min_update_ms, 'temporal.min_update_ms', slice_ms, 86400000) };
+      if (evidence.mode !== 'statistics' || temporal.max_open_events > temporal.max_tracks) fail('temporal');
+    }
   }
   const u = obj(o.uplink, 'uplink', ['enabled'], ['transport', 'streams', 'max_batch_items', 'max_body_bytes', 'retry', 'raw_sample', 'archive']);
   let uplink: DeviceConfigV3['uplink'];
@@ -219,6 +252,12 @@ export function validateDeviceConfigV3(value: unknown): DeviceConfigV3 {
     if (uplink.streams.includes('feature_summaries') && evidence.mode !== 'features') fail('uplink.streams');
     if (uplink.streams.some(s => s !== 'node_status') && !summary.enabled) fail('uplink.streams');
     if (!uplink.streams.includes('node_status')) fail('uplink.streams');
+    if (uplink.streams.includes('window_statistics') && evidence.mode !== 'statistics') fail('uplink.streams');
+    if (uplink.streams.includes('candidate_events') && (evidence.mode !== 'statistics' || temporal?.mode !== 'rolling' || temporal.report_mode === 'off')) fail('uplink.streams');
+    if (evidence.mode === 'statistics' && (!uplink.streams.includes('window_statistics') ||
+        uplink.streams.some(s => !['window_statistics', 'candidate_events', 'node_status'].includes(s)) ||
+        uplink.raw_sample.mode !== 'off' || uplink.archive.mode !== 'off' || uplink.max_body_bytes > 8192)) fail('uplink');
+    if (temporal?.mode === 'rolling' && temporal.report_mode !== 'off' && !uplink.streams.includes('candidate_events')) fail('temporal.report_mode');
   }
   const q = obj(o.local_queue, 'local_queue', ['mode'], ['medium', 'max_bytes', 'max_items', 'control_reserve_bytes', 'control_reserve_items', 'stream_reserves', 'high_water_percent', 'full_behavior', 'recovery']);
   const queueMode = pick(q.mode, 'local_queue.mode', ['disabled', 'durable', 'best_effort_research']);
@@ -280,7 +319,7 @@ export function validateDeviceConfigV3(value: unknown): DeviceConfigV3 {
     schema: pick(o.schema, 'config.schema', [V3_POLICY_SCHEMA]), protocol: pick(o.protocol, 'config.protocol', ['campuspulse/3']),
     policy_id: str(o.policy_id, 'config.policy_id', ID), node_id: str(o.node_id, 'config.node_id', ID),
     revision: num(o.revision, 'config.revision', 1), assignment_generation: num(o.assignment_generation, 'config.assignment_generation', 1),
-    collection, local_raw, evidence, uplink, local_queue, resources, custody,
+    collection, local_raw, evidence, ...(temporal === undefined ? {} : { temporal }), uplink, local_queue, resources, custody,
     control: { capability_sha256: str(control.capability_sha256, 'control.capability_sha256', SHA256),
       activation: { boot_id: str(a.boot_id, 'control.activation.boot_id', UUID),
         boundary: pick(a.boundary, 'control.activation.boundary', ['closed_window_and_segment']),
@@ -299,7 +338,7 @@ export function validateDeviceConfigV3(value: unknown): DeviceConfigV3 {
 
 export function validateDeviceCapabilitiesV3(value: unknown): DeviceCapabilitiesV3 {
   const o = obj(value, 'capabilities', ['schema', 'capability_id', 'node_id', 'boot_id', 'producer_version', 'policy_schemas', 'issued_at', 'expires_at'],
-    ['scanner', 'summary', 'features', 'local_raw', 'uplink', 'queue', 'resources']);
+    ['scanner', 'summary', 'features', 'statistics', 'temporal', 'local_raw', 'uplink', 'queue', 'resources']);
   const result: DeviceCapabilitiesV3 = {
     schema: pick(o.schema, 'capabilities.schema', [V3_CAPABILITY_SCHEMA]), capability_id: str(o.capability_id, 'capabilities.capability_id', ID),
     node_id: str(o.node_id, 'capabilities.node_id', ID), boot_id: str(o.boot_id, 'capabilities.boot_id', UUID),
@@ -335,6 +374,26 @@ export function validateDeviceCapabilitiesV3(value: unknown): DeviceCapabilities
         populations: enums(f.populations, 'capabilities.features.populations', ['all_worker_reports', 'deterministic_sample']),
         max_reports_per_window: num(f.max_reports_per_window, 'capabilities.features.max_reports_per_window', 1, 10000000),
         max_bytes_per_window: bytes(f.max_bytes_per_window, 'capabilities.features.max_bytes_per_window') };
+    }
+  }
+  if (Object.hasOwn(o, 'statistics')) {
+    if (o.statistics === null) result.statistics = null;
+    else {
+      const s = obj(o.statistics, 'capabilities.statistics', ['schemas', 'extractor_versions', 'ruleset_versions']);
+      result.statistics = { schemas: labels(s.schemas, 'capabilities.statistics.schemas'),
+        extractor_versions: labels(s.extractor_versions, 'capabilities.statistics.extractor_versions'), ruleset_versions: labels(s.ruleset_versions, 'capabilities.statistics.ruleset_versions') };
+    }
+  }
+  if (Object.hasOwn(o, 'temporal')) {
+    if (o.temporal === null) result.temporal = null;
+    else {
+      const t = obj(o.temporal, 'capabilities.temporal', ['slice_ms', 'max_history_ms', 'max_tracks', 'max_open_events', 'max_event_ms', 'event_schemas', 'report_modes']);
+      result.temporal = { slice_ms: unique(array(t.slice_ms, 'capabilities.temporal.slice_ms', (v, p) => {
+        const n = num(v, p); return [1000, 2000, 5000].includes(n) ? n : fail(p);
+      }, 0, 3), 'capabilities.temporal.slice_ms'), max_history_ms: num(t.max_history_ms, 'capabilities.temporal.max_history_ms', 1000, 600000),
+      max_tracks: num(t.max_tracks, 'capabilities.temporal.max_tracks', 1, 512), max_open_events: num(t.max_open_events, 'capabilities.temporal.max_open_events', 1, 512),
+      max_event_ms: num(t.max_event_ms, 'capabilities.temporal.max_event_ms', 1000, 86400000), event_schemas: labels(t.event_schemas, 'capabilities.temporal.event_schemas'),
+      report_modes: enums(t.report_modes, 'capabilities.temporal.report_modes', ['off', 'terminal_only', 'revisions']) };
     }
   }
   if (Object.hasOwn(o, 'local_raw')) {
@@ -436,7 +495,7 @@ export async function negotiateDeviceConfigV3(envelope: unknown, capabilityValue
   const issue = (code: V3IssueCode, path: string) => { if (!issues.some(i => i.code === code && i.path === path)) issues.push({ code, path }); };
   const unsupported = (ok: boolean, path: string) => { if (!ok) issue('unsupported_capability', path); };
   const limit = (ok: boolean, path: string) => { if (!ok) issue('resource_limit', path); };
-  function capability<K extends 'scanner' | 'summary' | 'features' | 'local_raw' | 'uplink' | 'queue' | 'resources'>(key: K): NonNullable<DeviceCapabilitiesV3[K]> | undefined {
+  function capability<K extends 'scanner' | 'summary' | 'features' | 'statistics' | 'temporal' | 'local_raw' | 'uplink' | 'queue' | 'resources'>(key: K): NonNullable<DeviceCapabilitiesV3[K]> | undefined {
     const cap = caps[key];
     if (cap === undefined || cap === null) { issue(cap === undefined ? 'undeclared_capability' : 'unsupported_capability', `capabilities.${key}`); return undefined; }
     return cap as NonNullable<DeviceCapabilitiesV3[K]>;
@@ -477,6 +536,31 @@ export async function negotiateDeviceConfigV3(envelope: unknown, capabilityValue
       limit(e.max_reports_per_window <= f.max_reports_per_window, 'evidence.max_reports_per_window');
       limit(e.max_bytes_per_window <= f.max_bytes_per_window, 'evidence.max_bytes_per_window');
     }
+  }
+  if (p.evidence.mode === 'statistics') {
+    const s = capability('statistics');
+    if (s) {
+      unsupported(s.schemas.includes(p.evidence.schema), 'evidence.schema');
+      unsupported(s.extractor_versions.includes(p.evidence.extractor_version), 'evidence.extractor_version');
+      unsupported(s.ruleset_versions.includes(p.evidence.ruleset_version), 'evidence.ruleset_version');
+    }
+  }
+  if (p.temporal?.mode === 'rolling') {
+    const t = capability('temporal'), temporal = p.temporal;
+    if (t) {
+      unsupported(t.slice_ms.includes(temporal.slice_ms), 'temporal.slice_ms');
+      unsupported(t.report_modes.includes(temporal.report_mode), 'temporal.report_mode');
+      if (temporal.report_mode !== 'off') unsupported(t.event_schemas.includes('candidate-event/1'), 'temporal.event_schema');
+      limit(temporal.history_ms <= t.max_history_ms, 'temporal.history_ms');
+      limit(temporal.max_tracks <= t.max_tracks, 'temporal.max_tracks');
+      limit(temporal.max_open_events <= t.max_open_events, 'temporal.max_open_events');
+      limit(temporal.max_event_ms <= t.max_event_ms, 'temporal.max_event_ms');
+    }
+    // Concrete lower bound for separately allocated rolling slices and open state.
+    // Firmware may declare a larger working budget, never a smaller one.
+    const temporalBytes = temporal.max_tracks * (Math.ceil(temporal.history_ms / temporal.slice_ms) * 24 + 64) + temporal.max_open_events * 128;
+    const queueBytes = p.local_queue.mode === 'best_effort_research' ? p.local_queue.max_bytes : 0;
+    limit(temporalBytes + queueBytes <= p.resources.working_bytes, 'resources.temporal_working_bytes');
   }
   if (p.local_raw.mode === 'tf_cpraw') {
     const r = capability('local_raw');

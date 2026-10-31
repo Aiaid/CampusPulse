@@ -4,6 +4,9 @@ import { handleIngestion } from './ingest';
 import { handleDeviceV2 } from './device-v2';
 import { handleDeviceV3Control } from './device-v3-control';
 import { handleDeviceV3Ingest, expireDeviceV3Ingest } from './device-v3-ingest';
+import { handleDeviceV3Statistics, expireDeviceV3Statistics } from './device-v3-statistics';
+import { cleanupStatisticsLeaseSpans } from './device-v3-statistics-policy';
+import { handlePublicStatistics } from './statistics-public';
 import { handleCprawArchive, expireCprawArchives } from './cpraw-archive';
 import { readLastReportedSensor, readPublicWindows } from './sensors';
 import { expireIngestion } from './retention';
@@ -121,6 +124,10 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
   try {
     const deviceV3Control = await handleDeviceV3Control(request, env);
     if (deviceV3Control) return deviceV3Control;
+    const statistics = await handleDeviceV3Statistics(request, env);
+    if (statistics) return statistics;
+    const publicStatistics = await handlePublicStatistics(request, env);
+    if (publicStatistics) return publicStatistics;
     const deviceV3Ingest = await handleDeviceV3Ingest(request, env);
     if (deviceV3Ingest) return deviceV3Ingest;
     const admin = await handleAdmin(request, env);
@@ -216,15 +223,15 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
 
 export default {
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    try {
-      await expireIngestion(env);
-    } finally {
-      try {
-        await expireCprawArchives(env);
-      } finally {
-        await expireDeviceV3Ingest(env);
-      }
+    let failed = false, firstFailure: unknown;
+    // Each retained stream must get its cleanup attempt even when another
+    // storage system fails; preserve the first operational failure for retry.
+    for (const cleanup of [expireIngestion, expireCprawArchives, expireDeviceV3Ingest,
+      expireDeviceV3Statistics, cleanupStatisticsLeaseSpans]) {
+      try { await cleanup(env); }
+      catch (error) { if (!failed) firstFailure = error; failed = true; }
     }
+    if (failed) throw firstFailure;
   },
   async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     return cachePublicRead(request, async () => handleDocs(request) ?? await handleApi(request, env)

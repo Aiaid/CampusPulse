@@ -1,6 +1,8 @@
 /** Opt-in private custody only. No public projection, inference, raw or MQTT. */
 import { device, json, readBytes, sha256 } from './ingest';
 import { IngestError, parseIngestJson } from './ingest-validation';
+import { findV3NamespaceConflict } from './ingest-store';
+import { supportsV3StatisticsPolicy } from './device-v3-statistics-policy';
 import { capabilityDigestV3, DeviceV3ConfigError, negotiateDeviceConfigV3, validateDeviceCapabilitiesV3, validateFrozenDeviceConfigV3,
   type DeviceConfigV3, type FrozenDeviceConfigV3, type DeviceCapabilitiesV3 } from './device-v3-config';
 import { DeviceV3EvidenceError } from './device-v3-evidence';
@@ -54,6 +56,11 @@ function timestamp(s: string) {
   if (!Number.isSafeInteger(n) || new Date(n).toISOString() !== s) throw new Error('Invalid registry time');
   return n;
 }
+function namespaceSeq(item: unknown): number {
+  if (!item || typeof item !== 'object' || !('seq' in item) || typeof item.seq !== 'number' ||
+      !Number.isSafeInteger(item.seq) || item.seq < 1 || item.seq > 0xffffffff) return rejectV3(422, 'invalid_v3_ingest');
+  return item.seq;
+}
 /** Immutable history is bounded by the control migration. Read it once and bind
  * current state_version at commit so a new applied policy cannot race the quota. */
 async function appliedHistory(env: DeviceV3IngestEnv, node: string): Promise<Applied[]> {
@@ -82,7 +89,7 @@ async function appliedHistory(env: DeviceV3IngestEnv, node: string): Promise<App
       const closed_window_seq = ack.closed_window_seq as number, closed_segment_seq = ack.closed_segment_seq as number;
       const negotiated = await negotiateDeviceConfigV3(frozen, caps, { node_id: node, boot_id: row.boot_id, now: new Date(at).toISOString(),
         last_assignment_generation: row.generation - 1, closed_window_seq, closed_segment_seq, window_open: false, segment_open: false });
-      if (negotiated.state !== 'compatible' || p.uplink.enabled && !supportsV3IngestPolicy(p)) throw new Error('Unsupported registry');
+      if (negotiated.state !== 'compatible' || p.uplink.enabled && !supportsV3IngestPolicy(p) && !supportsV3StatisticsPolicy(p)) throw new Error('Unsupported registry');
       history.push({ frozen, caps, at, deadline: Math.min(row.expires_at_ms, timestamp(p.custody.accept_until), row.capability_expires,
         at + p.control.lease.duration_ms), closed_window_seq, closed_segment_seq });
     }
@@ -155,6 +162,9 @@ export async function handleDeviceV3Ingest(request: Request, env: DeviceV3Ingest
     if (batch.node_id !== node) rejectV3(403, 'node_not_allowed');
     const prior = await receipt(env, node, batch.batch_id);
     if (prior) { await authorized(env, node, credential); return json(replay(prior, hash, await databaseNow(env))); }
+    const namespaceConflict = await findV3NamespaceConflict(env.DB, node, batch.batch_id, batch.boot_id,
+      batch.stream, namespaceSeq(batch.items[0]), namespaceSeq(batch.items[batch.items.length - 1]));
+    if (namespaceConflict) rejectV3(409, namespaceConflict === 'batch_conflict' ? 'v3_batch_conflict' : 'v3_evidence_conflict');
     const control = await env.DB.prepare('SELECT boot_id,state_version FROM device_control_v3 WHERE node_id=?').bind(node).first<Control>();
     if (!control || control.boot_id !== batch.boot_id) rejectV3(409, 'v3_current_boot_required');
     const history = await appliedHistory(env, node), active = history.find(h => h.frozen.policy.assignment_generation === batch.assignment_generation);
@@ -241,7 +251,7 @@ export async function handleDeviceV3Ingest(request: Request, env: DeviceV3Ingest
       let message = '';
       for (let e: unknown = error, n = 0; e instanceof Error && n < 5; e = e.cause, n++) message += e.message;
       if (/used_bytes\s*<=\s*limit_bytes/.test(message)) rejectV3(429, 'v3_quota_exhausted');
-      if (/v3_namespace_conflict|v3_status_order|UNIQUE constraint failed: ingestion_|CHECK constraint failed: (accepted_count|examined_reports|2\+evidence_bytes|seen_reports)/.test(message)) rejectV3(409, 'v3_evidence_conflict');
+      if (/v3_namespace_conflict|v3_statistics_namespace_conflict|v3_status_order|UNIQUE constraint failed: ingestion_|CHECK constraint failed: (accepted_count|examined_reports|2\+evidence_bytes|seen_reports)/.test(message)) rejectV3(409, 'v3_evidence_conflict');
       if (prepared.window) {
         const w = await env.DB.prepare('SELECT signature_sha256,expires_at_ms FROM ingestion_windows_v3 WHERE node_id=? AND boot_id=? AND window_seq=?')
           .bind(node, batch.boot_id, prepared.window.seq).first<{ signature_sha256: string; expires_at_ms: number }>();
