@@ -9,6 +9,38 @@ if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data
   throw new Error('Set CLOUDFLARE_D1_DATABASE_ID to a real D1 database UUID.');
 }
 const config = JSON.parse(readFileSync('wrangler.jsonc', 'utf8'));
+// Authorized small-statistics release. Local wrangler development stays opt-in.
+// Keep emergency shutdown explicit, and never expand this release into historical
+// feature/raw ingestion or an unreviewed producer via a deployment variable.
+const releaseDefaults = {
+  DEVICE_V3_CONTROL_ENABLED: 'true',
+  DEVICE_V3_STATISTICS_ENABLED: 'true',
+  DEVICE_V3_PRODUCER_VERSIONS: '["cp-v3-small/1"]',
+  DEVICE_V3_INGEST_ENABLED: 'false',
+  CPRAW_ARCHIVE_ENABLED: '0',
+};
+const releaseVars = { ...releaseDefaults };
+for (const key of ['DEVICE_V3_CONTROL_ENABLED', 'DEVICE_V3_STATISTICS_ENABLED']) {
+  const value = process.env[key] ?? releaseDefaults[key];
+  if (!['true', 'false'].includes(value)) throw new Error(`Set ${key} to exactly true or false.`);
+  releaseVars[key] = value;
+}
+if (releaseVars.DEVICE_V3_STATISTICS_ENABLED === 'true' && releaseVars.DEVICE_V3_CONTROL_ENABLED !== 'true') {
+  throw new Error('Statistics requires DEVICE_V3_CONTROL_ENABLED=true; disable both gates for shutdown.');
+}
+for (const key of ['DEVICE_V3_INGEST_ENABLED', 'CPRAW_ARCHIVE_ENABLED']) {
+  if (process.env[key] !== undefined && process.env[key] !== releaseDefaults[key]) {
+    throw new Error(`${key} must remain disabled for the small-statistics release.`);
+  }
+}
+if (process.env.DEVICE_V3_PRODUCER_VERSIONS !== undefined) {
+  let producers;
+  try { producers = JSON.parse(process.env.DEVICE_V3_PRODUCER_VERSIONS); } catch { /* reject below */ }
+  if (!Array.isArray(producers) || producers.length !== 1 || producers[0] !== 'cp-v3-small/1') {
+    throw new Error('The small-statistics release allows only the cp-v3-small/1 producer.');
+  }
+}
+config.vars = { ...config.vars, ...releaseVars };
 // This delivery includes raw ingestion: fail closed before a deployment could
 // remove its archive binding. Local metrics-only tests may still omit the binding.
 const rawBucket = process.env.CLOUDFLARE_R2_RAW_BUCKET;

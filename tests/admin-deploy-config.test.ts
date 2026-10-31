@@ -30,7 +30,7 @@ describe('trusted administrator deployment origin', () => {
   it('uses explicit trust configuration and preserves native crypto/private storage bindings', () => {
     const result = generate({ ADMIN_WEBAUTHN_ORIGIN: 'https://admin.example.test/', ADMIN_WEBAUTHN_RP_ID: 'admin.example.test', DEPLOYMENT_URL: 'https://other.example.test' });
     expect(result.status).toBe(0);
-    expect(result.config.vars).toEqual({ ADMIN_WEBAUTHN_ORIGIN: 'https://admin.example.test', ADMIN_WEBAUTHN_RP_ID: 'admin.example.test' });
+    expect(result.config.vars).toMatchObject({ ADMIN_WEBAUTHN_ORIGIN: 'https://admin.example.test', ADMIN_WEBAUTHN_RP_ID: 'admin.example.test' });
     expect(result.config.compatibility_flags).toContain('nodejs_compat');
     expect(result.config.r2_buckets).toEqual([{ binding: 'RAW_BUCKET', bucket_name: 'synthetic-private-auth-fixture' }]);
     // Secret names must be declared so Wrangler loads private local variables;
@@ -58,6 +58,51 @@ describe('trusted administrator deployment origin', () => {
     { ADMIN_WEBAUTHN_RP_ID: 'admin.example.test' },
   ])('rejects untrusted or mismatched origin configuration before producing deploy config', values => {
     const result = generate(Object.fromEntries(Object.entries(values).filter((entry): entry is [string, string] => typeof entry[1] === 'string')));
+    expect(result.status).not.toBe(0);
+    expect(result.config).toBeNull();
+  });
+});
+
+describe('small-statistics release configuration', () => {
+  it('enables only the reviewed small-statistics producer without external rollout variables', () => {
+    const result = generate({});
+    expect(result.status).toBe(0);
+    expect(result.config.vars).toEqual({ DEVICE_V3_CONTROL_ENABLED: 'true', DEVICE_V3_STATISTICS_ENABLED: 'true',
+      DEVICE_V3_PRODUCER_VERSIONS: '["cp-v3-small/1"]', DEVICE_V3_INGEST_ENABLED: 'false', CPRAW_ARCHIVE_ENABLED: '0' });
+    expect(result.config.triggers.crons).toEqual(['*/15 * * * *']);
+    expect(result.config.d1_databases[0].migrations_dir).toMatch(/migrations$/);
+    expect(JSON.parse(readFileSync(resolve('wrangler.jsonc'), 'utf8')).vars).toBeUndefined();
+  });
+  it.each<Record<string, string>>([
+    { DEVICE_V3_STATISTICS_ENABLED: 'false' },
+    { DEVICE_V3_CONTROL_ENABLED: 'false', DEVICE_V3_STATISTICS_ENABLED: 'false' },
+  ])('permits explicit shutdown gates: %j', extra => {
+    const result = generate(extra);
+    expect(result.status).toBe(0);
+    expect(result.config.vars).toMatchObject(extra);
+    expect(result.config.vars.DEVICE_V3_INGEST_ENABLED).toBe('false');
+    expect(result.config.vars.CPRAW_ARCHIVE_ENABLED).toBe('0');
+  });
+  it('canonicalizes an equivalent single reviewed producer list', () => {
+    const result = generate({ DEVICE_V3_PRODUCER_VERSIONS: '[ "cp-v3-small/1" ]' });
+    expect(result.status).toBe(0);
+    expect(result.config.vars.DEVICE_V3_PRODUCER_VERSIONS).toBe('["cp-v3-small/1"]');
+  });
+  it.each<Record<string, string>>([
+    { DEVICE_V3_CONTROL_ENABLED: 'false' },
+    { DEVICE_V3_CONTROL_ENABLED: 'TRUE' },
+    { DEVICE_V3_STATISTICS_ENABLED: '1' },
+    { DEVICE_V3_STATISTICS_ENABLED: '' },
+    { DEVICE_V3_INGEST_ENABLED: 'true' },
+    { CPRAW_ARCHIVE_ENABLED: '1' },
+    { DEVICE_V3_PRODUCER_VERSIONS: 'invalid' },
+    { DEVICE_V3_PRODUCER_VERSIONS: '"cp-v3-small/1"' },
+    { DEVICE_V3_PRODUCER_VERSIONS: '[]' },
+    { DEVICE_V3_PRODUCER_VERSIONS: '["cp-v3-small/1","cp-v3-producer/1"]' },
+    { DEVICE_V3_PRODUCER_VERSIONS: '["cp-v3-small/1","cp-v3-small/1"]' },
+    { DEVICE_V3_PRODUCER_VERSIONS: '["synthetic-statistics/1"]' },
+  ])('rejects invalid gates or release expansion before writing a config: %j', extra => {
+    const result = generate(extra);
     expect(result.status).not.toBe(0);
     expect(result.config).toBeNull();
   });

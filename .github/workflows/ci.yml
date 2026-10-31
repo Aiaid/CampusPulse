@@ -123,6 +123,13 @@ jobs:
       DEPLOYMENT_URL: ${{ vars.CLOUDFLARE_DEPLOYMENT_URL }}
       ADMIN_WEBAUTHN_ORIGIN: ${{ vars.ADMIN_WEBAUTHN_ORIGIN }}
       ADMIN_WEBAUTHN_RP_ID: ${{ vars.ADMIN_WEBAUTHN_RP_ID }}
+      # Reviewed release defaults also apply without new GitHub variables.
+      # Only the two strict boolean gates may be disabled for a shutdown.
+      DEVICE_V3_CONTROL_ENABLED: ${{ vars.DEVICE_V3_CONTROL_ENABLED || 'true' }}
+      DEVICE_V3_STATISTICS_ENABLED: ${{ vars.DEVICE_V3_STATISTICS_ENABLED || 'true' }}
+      DEVICE_V3_PRODUCER_VERSIONS: '["cp-v3-small/1"]'
+      DEVICE_V3_INGEST_ENABLED: 'false'
+      CPRAW_ARCHIVE_ENABLED: '0'
       WRANGLER_SEND_METRICS: 'false'
     steps:
       - uses: actions/checkout@v4
