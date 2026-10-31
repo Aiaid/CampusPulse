@@ -25,7 +25,7 @@ class RuntimeLogic(unittest.TestCase):
                             *['-I' + str(ROOT / 'firmware/components' / name / 'include')
                               for name in ('cp_v3_evidence', 'cp_v3_temporal')],
                             str(PROJECT / 'localtests/runtime_logic_test.c'), str(upstream),
-                            '-o', str(binary)], check=True)
+                            '-lm', '-o', str(binary)], check=True)
             subprocess.run([str(binary)], check=True)
 
 if __name__ == '__main__':

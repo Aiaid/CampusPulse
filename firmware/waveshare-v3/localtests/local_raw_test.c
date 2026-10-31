@@ -75,7 +75,14 @@ int main(int argc,char **argv){
         assert(local_raw_start(s,&config,boot,session)==ESP_OK);unsigned charged=b.calls;
         summary=(local_raw_verify_summary_t){1,2,3,4};assert(local_raw_verify_closed(s,&summary)==ESP_ERR_INVALID_STATE&&!summary.files&&!summary.reports&&!summary.bytes&&!summary.anchors&&b.calls==charged);
         cp_v3_stats_report_t r=report(1);assert(local_raw_hook(s,&r));assert(local_raw_stop(s,3000)==ESP_OK);b.remaining=0;
-        DIR *dir=opendir(test_dir);assert(dir);struct dirent *e;char path[192]={0};while((e=readdir(dir)))if(strcmp(e->d_name,".")&&strcmp(e->d_name,"..")){snprintf(path,sizeof path,"%s/%s",test_dir,e->d_name);break;}assert(!closedir(dir)&&path[0]);
+        DIR *dir=opendir(test_dir);assert(dir);struct dirent *e;
+        char path[sizeof(test_dir)+sizeof(e->d_name)+1]={0};
+        while((e=readdir(dir)))if(strcmp(e->d_name,".")&&strcmp(e->d_name,"..")){
+            int length=snprintf(path,sizeof path,"%s/%s",test_dir,e->d_name);
+            assert(length>=0&&(size_t)length<sizeof path);
+            break;
+        }
+        assert(!closedir(dir)&&path[0]);
         if(!strcmp(argv[2],"verify_crc")){FILE *f=fopen(path,"r+b");assert(f&&!fseek(f,40,SEEK_SET));int c=fgetc(f);assert(c!=EOF&&!fseek(f,40,SEEK_SET)&&fputc(c^1,f)!=EOF&&!fclose(f));}
         uint8_t original[2048],after[2048];FILE *f=fopen(path,"rb");assert(f);size_t bytes=fread(original,1,sizeof original,f);assert(bytes&&!fclose(f));
         charged=b.calls;local_raw_status_t previous;local_raw_snapshot(s,&previous);

@@ -33,7 +33,7 @@ class BootstrapOrigin(unittest.TestCase):
                                 str(PROJECT / 'localtests/bootstrap_origin_test.c'),
                                 str(ROOT / 'firmware/components/cp_settings/settings_validate.c'),
                                 str(component / 'protocol.c'), str(parser / 'http_parser.c'),
-                                str(upstream), '-o', str(binary)], check=True)
+                                str(upstream), '-lm', '-o', str(binary)], check=True)
                 subprocess.run([str(binary)], check=True)
 
 
