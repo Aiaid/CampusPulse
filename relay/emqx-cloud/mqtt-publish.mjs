@@ -128,15 +128,17 @@ class Acknowledgements {
  * `timeoutMs` bounds the entire operation including opening and final cleanup.
  * @param {{connect?: typeof import('cloudflare:sockets').connect, hostname?: string,
  * username?: string, password?: string, topic?: string, payload?: Uint8Array,
- * timeoutMs?: number}} options
+ * timeoutMs?: number, maxPayloadBytes?: number}} options
  */
 export async function publishMqttReply({
   connect, hostname, username, password, topic, payload, timeoutMs = MAX_TIMEOUT_MS,
+  maxPayloadBytes = MAX_PAYLOAD_BYTES,
 } = {}) {
   if (typeof connect !== 'function' || typeof hostname !== 'string' || hostname.length > 253
     || !hostname.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))
     || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS
-    || !(payload instanceof Uint8Array) || payload.length > MAX_PAYLOAD_BYTES
+    || (maxPayloadBytes !== MAX_PAYLOAD_BYTES && maxPayloadBytes !== 8194)
+    || !(payload instanceof Uint8Array) || payload.length > maxPayloadBytes
     || typeof topic !== 'string' || /[+#]/.test(topic)) fail('INVALID_INPUT');
   const topicField = mqttString(topic, 256);
   const userField = mqttString(username, 256);

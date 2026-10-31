@@ -1,3 +1,5 @@
+import {MAX_ORIGINAL_BODY, MAX_V3_WIRE, V3_HEADER_BYTES, validV3Metadata} from './v3-frame.mjs';
+
 const NODE = /^[a-z0-9_-]{1,64}$/;
 const BOOT = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
@@ -45,7 +47,7 @@ function validState(state) {
 
 /**
  * One instance's storage belongs to one allowlisted node. The caller computes
- * digest from the exact application bytes and supplies the current MQTT topic
+ * digest from the exact wire bytes (including the CPV3 header) and supplies the current MQTT topic
  * boot, which may differ from an old frozen ingest batch's body boot. The broker
  * supplies publishedAtMs; the authenticated webhook also checks its freshness.
  *
@@ -64,10 +66,14 @@ export class RpcGuard {
   }
 
   async begin(input) {
-    const {node, boot, op, rpc, digest, bytes, publishedAtMs} = input ?? {};
+    const {node, boot, op, rpc, digest, bytes, publishedAtMs, v3} = input ?? {};
+    const framed = v3 !== undefined;
     if (typeof node !== 'string' || !NODE.test(node) ||
         !validEntry({boot, op, rpc, digest}) ||
-        !Number.isInteger(bytes) || bytes < 0 || bytes > 8192 ||
+        (framed && (!validV3Metadata(v3) || op !== 'ingest')) ||
+        !Number.isInteger(bytes) || bytes < (framed ? V3_HEADER_BYTES : 0) ||
+        bytes > (framed ? MAX_V3_WIRE : MAX_ORIGINAL_BODY) ||
+        (framed && v3.subop === 2 && bytes !== V3_HEADER_BYTES) ||
         !Number.isSafeInteger(publishedAtMs) || publishedAtMs <= 0 ||
         (op === 'config' && bytes !== 0)) throw new RpcGuardError('invalid_rpc');
 

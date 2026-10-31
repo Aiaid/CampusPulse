@@ -148,6 +148,19 @@ test('accepts single-byte fragmented acknowledgements and maximum binary payload
   assertReleased(mock);
 });
 
+test('explicit V3 config cap publishes8194 exact bytes without changing legacy default',async()=>{
+  const mock=broker({fragmented:true});const payload=new Uint8Array(8194).fill(255);
+  await publishMqttReply(input(mock,{payload,maxPayloadBytes:8194}));
+  const publish=readPacket(mock.writes[1]);const topic=stringField(publish.body,0);
+  assert.deepEqual(publish.body.slice(topic.next+2),payload);assertReleased(mock);
+  for(const overrides of [{payload},{payload:new Uint8Array(8195),maxPayloadBytes:8194},
+    {maxPayloadBytes:8195},{maxPayloadBytes:Infinity},{maxPayloadBytes:'8194'},
+    {maxPayloadBytes:0},{maxPayloadBytes:2051}]){
+    const rejected=broker();await rejects(rejected,'INVALID_INPUT',overrides);
+    assert.equal(rejected.connections.length,0);
+  }
+});
+
 test('client IDs are fresh and payload is snapshotted before opening', async () => {
   const first = broker();
   const second = broker();

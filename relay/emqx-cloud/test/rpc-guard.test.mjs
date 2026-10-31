@@ -194,6 +194,25 @@ test('4 MiB per fixed minute counts exact body lengths and duplicate attempts', 
   assert.deepEqual(await f.restart().begin(request({rpc: 2, bytes: 1})), {duplicate: false});
 });
 
+test('CPV3 guard accepts only framed ingest and charges full wire lengths',async()=>{
+  const f=fixture();const v3={subop:5,receiptOnly:false};
+  await f.guard.begin(request({v3,bytes:8200}));
+  assert.equal(f.state().rate.bytes,8200);
+  assert.deepEqual(await f.restart().begin(request({v3,bytes:8200})),{duplicate:true});
+  assert.equal(f.state().rate.bytes,16400);
+  const invalid=[{v3,bytes:8201},{v3,bytes:7},{v3,op:'contact'},
+    {v3:{subop:2,receiptOnly:false},bytes:9},{v3:{subop:0,receiptOnly:false}},
+    {v3:{subop:6,receiptOnly:false}},{v3:{subop:1,receiptOnly:true}},
+    {v3:{subop:2,receiptOnly:true}},{v3:{subop:5,receiptOnly:true}},
+    {v3:{subop:3,receiptOnly:1}},{v3:{subop:3,receiptOnly:false,extra:true}},
+    {v3:null},{v3:true},{v3:[]}];
+  const before=f.state();
+  for(const overrides of invalid)await assert.rejects(f.guard.begin(request(overrides)),rejected('invalid_rpc',400));
+  assert.deepEqual(f.state(),before);
+  await f.guard.begin(request({rpc:2,v3:{subop:2,receiptOnly:false},bytes:8}));
+  for(const subop of [3,4])await f.guard.begin(request({rpc:subop,v3:{subop,receiptOnly:true},bytes:10}));
+});
+
 test('rejected replay attempts consume the persistent admission budget', async () => {
   const f = fixture();
   await f.guard.begin(request({rpc: 10, bytes: 0}));

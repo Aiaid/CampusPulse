@@ -21,7 +21,7 @@ export function supportsV3StatisticsPolicy(p: DeviceConfigV3): p is V3Statistics
   return p.evidence.mode === 'statistics' && p.evidence.schema === 'window-statistics/1' &&
     p.evidence.extractor_version === 'cp-v3-stats/1' && p.evidence.ruleset_version === 'unclassified-v1' &&
     p.collection.enabled && p.collection.summary.enabled && p.temporal !== undefined &&
-    p.uplink.enabled && p.uplink.transport === 'https' && p.uplink.max_body_bytes <= 8192 &&
+    p.uplink.enabled && ['https', 'mqtt_tls'].includes(p.uplink.transport) && p.uplink.max_body_bytes <= 8192 &&
     p.uplink.streams.includes('window_statistics') && p.uplink.streams.includes('node_status') &&
     p.uplink.streams.every(s => ['window_statistics', 'candidate_events', 'node_status'].includes(s)) &&
     p.uplink.raw_sample.mode === 'off' && p.uplink.archive.mode === 'off' &&

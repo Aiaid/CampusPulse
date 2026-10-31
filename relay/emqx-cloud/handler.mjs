@@ -1,8 +1,9 @@
 import { timingSafeEqual } from 'node:crypto';
+import {MAX_ORIGINAL_BODY, MAX_V3_WIRE, parseV3Frame} from './v3-frame.mjs';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', {fatal: true, ignoreBOM: true});
-const MAX_BODY = 8192;
+const MAX_BODY = MAX_ORIGINAL_BODY;
 const MAX_EVENT = 12288;
 const MAX_REPLY = 2048;
 const BOOT = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
@@ -54,21 +55,25 @@ function parseEvent(bytes) {
         !Number.isSafeInteger(event.published_at_ms) || event.published_at_ms<=0 ||
         event.published_at_ms<Date.now()-120000 || event.published_at_ms>Date.now()+10000 ||
         typeof event.username !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(event.username) ||
-        typeof event.payload_b64 !== 'string' || event.payload_b64.length > 10924 ||
+        typeof event.payload_b64 !== 'string' || event.payload_b64.length > Math.ceil(MAX_V3_WIRE / 3) * 4 ||
         !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(event.payload_b64)) throw new Error();
     const match = TOPIC.exec(event.topic);
     if (!match || Number(match[4]) > 0xffffffff) throw new Error();
     const [,namespace,boot,op,rpc] = match;
-    const body = Uint8Array.from(atob(event.payload_b64), char => char.charCodeAt(0));
-    if (btoa(String.fromCharCode(...body)) !== event.payload_b64 || body.length > MAX_BODY ||
-        (op === 'config' && body.length !== 0)) throw new Error();
-    if (op !== 'config') {
+    const wire = Uint8Array.from(atob(event.payload_b64), char => char.charCodeAt(0));
+    if (btoa(String.fromCharCode(...wire)) !== event.payload_b64) throw new Error();
+    const frame = parseV3Frame(wire);
+    if (frame && op !== 'ingest') throw new Error();
+    const body = frame ? frame.body : wire;
+    if (body.length > MAX_BODY || (!frame && op === 'config' && body.length !== 0)) throw new Error();
+    if (frame ? frame.v3.subop !== 2 : op !== 'config') {
       const payload = JSON.parse(decoder.decode(body));
       if (!payload || Array.isArray(payload) || typeof payload !== 'object' ||
-          (op !== 'ingest' && payload.boot_id !== boot) ||
-          (op === 'ingest' && (typeof payload.node_id !== 'string' || !/^[a-z0-9_-]{1,64}$/.test(payload.node_id)))) throw new Error();
+          (!frame && op !== 'ingest' && payload.boot_id !== boot) ||
+          (!frame && op === 'ingest' && (typeof payload.node_id !== 'string' || !/^[a-z0-9_-]{1,64}$/.test(payload.node_id)))) throw new Error();
     }
-    return {username:event.username, namespace, boot, op, rpc:Number(rpc), body,publishedAtMs:event.published_at_ms,
+    return {username:event.username, namespace, boot, op, rpc:Number(rpc), body, wire,
+      ...(frame ? {v3: frame.v3} : {}), publishedAtMs:event.published_at_ms,
       replyTopic: event.topic.replace('/req/', '/rep/')};
   } catch (error) {
     throw error instanceof Rejected ? error : new Rejected(400);
@@ -93,9 +98,11 @@ async function authorize(rpc, env) {
 async function forward(rpc, env) {
   try {
     const result=await within(()=>env.INGEST_SERVICE.dispatch({username:rpc.username,
-      namespace:rpc.namespace,boot:rpc.boot,op:rpc.op,rpc:rpc.rpc,body:rpc.body}),10000);
+      namespace:rpc.namespace,boot:rpc.boot,op:rpc.op,rpc:rpc.rpc,body:rpc.body,
+      ...(rpc.v3 ? {v3:rpc.v3} : {})}),10000);
+    const maxReply = rpc.v3?.subop === 2 ? MAX_ORIGINAL_BODY : MAX_REPLY;
     if(!result || !Number.isInteger(result.status) || result.status<100 || result.status>599 ||
-      !(result.body instanceof Uint8Array) || result.body.length>MAX_REPLY) throw new Error('invalid_response');
+      !(result.body instanceof Uint8Array) || result.body.length>maxReply) throw new Error('invalid_response');
     return result;
   } catch {
     // A timeout cannot prove rollback. Only the original retried CF receipt
@@ -135,11 +142,12 @@ export async function handleBrokerEvent(bytes, env, publishReply, beforeForward)
     const rpc = parseEvent(bytes);
     const node=await authorize(rpc,env);
     if (env.MQTT_PASSWORD === env.WEBHOOK_KEY) throw new Rejected(503);
-    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', rpc.body));
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', rpc.wire));
     const hash = Array.from(digest, b => b.toString(16).padStart(2, '0')).join('');
     if (beforeForward) {
       const status = await beforeForward({node, boot: rpc.boot, op: rpc.op,
-        rpc: rpc.rpc, digest: hash, bytes: rpc.body.length,publishedAtMs:rpc.publishedAtMs});
+        rpc: rpc.rpc, digest: hash, bytes: rpc.wire.length,publishedAtMs:rpc.publishedAtMs,
+        ...(rpc.v3 ? {v3:rpc.v3} : {})});
       if (status !== undefined) throw new Rejected(status);
     }
     const result = await forward(rpc, env);
@@ -148,7 +156,8 @@ export async function handleBrokerEvent(bytes, env, publishReply, beforeForward)
     // Wait for the broker's PUBACK for the response publication before the HTTP
     // action is considered delivered. Device application validation is separate.
     await publishReply({hostname: env.BROKER_HOST, username: env.MQTT_USERNAME,
-      password: env.MQTT_PASSWORD, topic: rpc.replyTopic, payload, timeoutMs: 6000});
+      password: env.MQTT_PASSWORD, topic: rpc.replyTopic, payload, timeoutMs: 6000,
+      ...(rpc.v3?.subop === 2 ? {maxPayloadBytes: MAX_ORIGINAL_BODY + 2} : {})});
     return 204;
   } catch (error) {
     // Provider retry is safe: exact bytes go through the API's own idempotency.

@@ -113,19 +113,35 @@ async function eventWrites(env: DeviceV3StatisticsEnv, batch: Extract<Statistics
 }
 
 export async function handleDeviceV3Statistics(request: Request, env: DeviceV3StatisticsEnv): Promise<Response | null> {
-  const url = new URL(request.url);
-  if (url.pathname !== '/api/v3/statistics/ingest') return null;
+  if (new URL(request.url).pathname !== '/api/v3/statistics/ingest') return null;
   try {
+    // Preserve public gate/method ordering before authenticating the bearer.
+    if (!v3StatisticsEnabled(env)) reject(503, 'v3_statistics_disabled');
+    if (new URL(request.url).protocol !== 'https:') reject(403, 'v3_https_required');
+    if (request.method !== 'POST') reject(405, 'method_not_allowed');
+    if (new URL(request.url).search) reject(422, 'invalid_v3_statistics');
+    const node = await device(request, env), credential = await sha256(encoder.encode(request.headers.get('Authorization')!.slice(7)));
+    return await handleAuthenticatedDeviceV3Statistics(request, env, node, auth(node, credential));
+  } catch (error) { return statisticsError(error); }
+}
+
+/** Service-binding callers authenticate their principal outside public headers.
+ * The mandatory assertion is checked again inside every final commit/replay. */
+export async function handleAuthenticatedDeviceV3Statistics(request: Request, env: DeviceV3StatisticsEnv,
+  node: string, authorization: AuthAssertion): Promise<Response> {
+  const url = new URL(request.url);
+  try {
+    if (url.pathname !== '/api/v3/statistics/ingest') reject(404, 'not_found');
     if (!v3StatisticsEnabled(env)) reject(503, 'v3_statistics_disabled');
     if (url.protocol !== 'https:') reject(403, 'v3_https_required');
     if (request.method !== 'POST') reject(405, 'method_not_allowed');
     if (url.search) reject(422, 'invalid_v3_statistics');
-    const node = await device(request, env), credential = await sha256(encoder.encode(request.headers.get('Authorization')!.slice(7)));
+    if (!await check(env, authorization)) reject(401, 'unauthorized');
     const bytes = await readBytes(request, 8192), hash = await sha256(bytes);
     if (request.headers.get('X-Body-SHA256') !== hash) reject(400, 'body_hash_mismatch');
     const value = parseStatisticsV3Json(bytes), envelope = validateStatisticsV3Envelope(value);
     if (envelope.node_id !== node) reject(403, 'node_not_allowed');
-    const authorization = auth(node, credential), prior = await receipt(env, node, envelope.batch_id);
+    const prior = await receipt(env, node, envelope.batch_id);
     if (prior) {
       if (!await check(env, authorization)) reject(401, 'unauthorized');
       return replay(prior, hash, await nowMs(env));
@@ -228,10 +244,13 @@ export async function handleDeviceV3Statistics(request: Request, env: DeviceV3St
     }
     return json(ack);
   } catch (error) {
+    return statisticsError(error);
+  }
+}
+function statisticsError(error: unknown): Response {
     if (error instanceof DeviceV3ConfigError) return json({ error: { code: 'invalid_v3_statistics', message: 'Invalid statistics policy.', retryable: false } }, 422);
     if (error instanceof IngestError) return json({ error: { code: error.code, message: error.message, retryable: error.status >= 500 || error.status === 429 } }, error.status);
     return json({ error: { code: 'storage_unavailable', message: 'Service temporarily unavailable.', retryable: true } }, 503);
-  }
 }
 
 /** Cleanup is independent of upload enablement, old raw cleanup and public reads. */

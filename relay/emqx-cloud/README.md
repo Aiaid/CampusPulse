@@ -35,6 +35,32 @@ public identity-bypass header or credential in a topic/URL. Namespaces are
 independent of factory node IDs; original body node/boot validation stays in the
 existing API. An older frozen ingest body boot remains legal.
 
+### V3 framing on the existing topic
+
+All V3 requests use `cp/v1/<namespace>/<currentboot>/req/ingest/<rpc>`;
+the broker rule and ACL topic shape are unchanged. The decoded MQTT payload is:
+
+| Byte | Value |
+| --- | --- |
+|0–3 |ASCII `CPV3` |
+|4 |Frame version `1` |
+|5 |Suboperation: `1` capabilities, `2` configuration, `3` ACK, `4` lease, `5` statistics |
+|6 |Flags: bit0 receipt-only, legal only for suboperations3/4; other bits zero |
+|7 |Reserved zero |
+|8 onward |Original frozen JSON bytes, at most8192; configuration body is empty |
+
+The gateway recognizes and validates this frame before the legacy JSON path.
+Malformed frames, unsupported operations/flags and V3 frames on other request
+topics fail before registry authorization or DO allocation. Nonconfiguration
+bodies must be UTF-8 JSON objects; application schema, canonical identity and
+current/frozen boot admission remain the private API's responsibility.
+
+The existing `dispatch` binding receives unchanged identity/topic fields,
+`op:'ingest'`, the untouched **unwrapped** `Uint8Array` body and
+`v3:{subop,receiptOnly}`. Legacy calls omit `v3`. Replay SHA256 and admission byte
+accounting include the entire original wire frame, so changing an operation or
+receipt flag under the same RPC conflicts even when JSON bytes are identical.
+
 ## Reply, replay and bounds
 
 The return MQTT3.1.1 publisher uses strict platform TLS on8883, a fresh random
@@ -51,7 +77,9 @@ cached.
 
 | Resource | Bound |
 | --- | --- |
-| Request / webhook / original API reply |8192 /12288 /2048 bytes |
+| Legacy request / webhook / original API reply |8192 /12288 /2048 bytes |
+| V3 original body / framed request |8192 /8200 bytes |
+| V3 configuration reply / other V3 replies |8192 /2048 bytes, plus2 status bytes |
 | In-flight ownership |1 per canonical registered node |
 | Admission |600 attempts/4MiB per minute per node |
 | Accepted broker event time |past120s through future10s |
@@ -94,6 +122,10 @@ never pass them as CLI arguments or commit export files.
 substitutions only. Host tests and real workerd RPC tests are separate from live
 broker, USB/BLE and sustained hardware acceptance. Keep exact raw evidence in
 ignored private captures and report software loss/queue pressure explicitly.
+V3 local tests include malformed/truncated framing, flags and size boundaries,
+byte-exact dispatch/replies, header-inclusive replay conflicts and real workerd
+service-binding/DO serialization. Their synthetic fixtures do not establish a
+deployed V3 gateway or production device acceptance.
 
 ## Provenance
 

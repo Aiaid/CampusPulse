@@ -20,14 +20,14 @@ test('real Worker/DO routes authenticate, serialize, persist replay and return e
     }}]});
   const runtime=require('workerd/package.json').version.match(/\d{8}/)[0];
   const date=`${runtime.slice(0,4)}-${runtime.slice(4,6)}-${runtime.slice(6,8)}`;
-  const calls=[];const replies=[];let release;let entered;let wait=false;
+  const calls=[];const replies=[];let release;let entered;let wait=false;let replyBody=original;
   const entry=new Promise(resolve=>{entered=resolve;});
   await build({entryPoints:[root+'test/backend-fixture.mjs'],outfile:root+'.wrangler/backend-fixture.mjs',
     bundle:true,format:'esm',platform:'browser',external:['cloudflare:workers']});
   const backend=async req=>{
-    calls.push({url:req.url,body:await req.text()});
+    calls.push({url:req.url,body:await req.text(),receiptOnly:req.headers.get('X-Synthetic-Receipt-Only')});
     if(wait){entered();await new Promise(resolve=>{release=resolve;});}
-    return new Response(original);
+    return new Response(replyBody);
   };
   const mf=new Miniflare(convertV4MiniflareOptions({workers:[{
     name:'emqx-test',modules:true,scriptPath:root+'.wrangler/test-worker.mjs',
@@ -66,5 +66,25 @@ test('real Worker/DO routes authenticate, serialize, persist replay and return e
     assert.equal(calls.length,3);
     assert.equal((await send(4)).status,204);
     assert.equal(calls.length,4);
+    const frame=(subop,body='',flags=0)=>Buffer.concat([Buffer.from([67,80,86,51,1,subop,flags,0]),Buffer.from(body)]);
+    const frozen=' {"synthetic":"测试", "boot_id":"old-frozen-body"}\n';
+    assert.equal((await send(5,'ingest',frame(3,frozen,1))).status,204);
+    assert.deepEqual(calls.at(-1),{url:'https://pulse.anend.net/api/v3/device/config/ack',body:frozen,receiptOnly:'true'});
+    assert.equal(replies.at(-1).bytes.subarray(2).toString(),original);
+    assert.equal((await send(5,'ingest',frame(3,frozen,1))).status,204);
+    assert.equal(calls.length,6); // identical retry reaches API again
+    assert.equal((await send(5,'ingest',frame(3,frozen))).status,409);
+    assert.equal((await send(5,'ingest',frame(4,frozen,1))).status,409);
+    assert.equal(calls.length,6);
+    assert.equal((await send(6,'ingest',frame(2))).status,204);
+    assert.deepEqual(calls.at(-1),{url:'https://pulse.anend.net/api/v3/device/config',body:'',receiptOnly:'false'});
+    replyBody='x'.repeat(8192);
+    assert.equal((await send(7,'ingest',frame(2))).status,204);
+    assert.equal(replies.at(-1).bytes.length,8194);
+    assert.equal(replies.at(-1).bytes.subarray(2).toString(),replyBody);
+    replyBody='x'.repeat(8193);
+    assert.equal((await send(8,'ingest',frame(2))).status,204);
+    assert.equal(replies.at(-1).bytes.readUInt16BE(),504);
+    assert.equal(replies.at(-1).bytes.subarray(2).toString(),'{"error":"gateway_outcome_unknown"}');
   } finally {release?.();await mf.dispose();}
 });

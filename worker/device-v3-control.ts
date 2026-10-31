@@ -471,14 +471,42 @@ export async function handleDeviceV3Control(request: Request, env: DeviceV3Contr
     }
     const node = await device(request, env);
     const hash = await sha256(new TextEncoder().encode(request.headers.get('Authorization')!.slice(7)));
-    const authorization = { sql: 'EXISTS(SELECT 1 FROM device_nodes WHERE id=? AND credential_sha256=? AND enabled=1)', bindings: [node, hash] };
+    return await handleAuthenticatedDeviceV3Control(request, env, node, {
+      sql: 'EXISTS(SELECT 1 FROM device_nodes WHERE id=? AND credential_sha256=? AND enabled=1)', bindings: [node, hash],
+    });
+  } catch (error) {
+    return controlError(error);
+  }
+}
+
+function controlError(error: unknown): Response {
+  if (error instanceof DeviceV3ConfigError) return json({ error: { code: error.code, message: error.message, retryable: false } }, 422);
+  if (error instanceof IngestError) return json({ error: { code: error.code === 'invalid_device_v2' ? 'invalid_device_v3' : error.code, message: error.message, retryable: error.status >= 500 } }, error.status);
+  return json({ error: { code: 'storage_unavailable', message: 'Service temporarily unavailable.', retryable: true } }, 503);
+}
+
+/** Module-only authenticated principal. Callers supply a storage-backed assertion;
+ * public HTTP always authenticates a device bearer before reaching this entry. */
+export async function handleAuthenticatedDeviceV3Control(request: Request, env: DeviceV3ControlEnv,
+  node: string, authorization: AuthAssertion): Promise<Response> {
+  const path = new URL(request.url).pathname;
+  try {
+    if (!['/api/v3/device/capabilities', '/api/v3/device/config', '/api/v3/device/config/ack', '/api/v3/device/lease'].includes(path)) {
+      throw new IngestError(404, 'not_found', 'Unknown device control route.');
+    }
+    if (env.DEVICE_V3_CONTROL_ENABLED !== 'true') throw new IngestError(503, 'v3_control_disabled', 'Experimental v3 control is disabled.');
+    const receiptOnly = request.headers.get('X-Receipt-Only');
+    if (receiptOnly !== null && (receiptOnly !== '1' || !['/api/v3/device/config/ack', '/api/v3/device/lease'].includes(path))) {
+      throw new IngestError(422, 'v3_invalid_receipt_only', 'Receipt-only mode is valid only for exact ACK or lease recovery.');
+    }
+    const method = path === '/api/v3/device/config' ? 'GET' : 'POST';
+    if (request.method !== method) throw new IngestError(405, 'method_not_allowed', `Use ${method}.`);
+    await assertAuthorized(env, authorization);
     if (path.endsWith('/capabilities')) return await register(request, env, node, authorization);
     if (path.endsWith('/ack')) return await acknowledge(request, env, node, authorization);
     if (path.endsWith('/lease')) return await renewStatisticsLease(request, env, node, authorization);
     return await getConfig(request, env, node, authorization);
   } catch (error) {
-    if (error instanceof DeviceV3ConfigError) return json({ error: { code: error.code, message: error.message, retryable: false } }, 422);
-    if (error instanceof IngestError) return json({ error: { code: error.code === 'invalid_device_v2' ? 'invalid_device_v3' : error.code, message: error.message, retryable: error.status >= 500 } }, error.status);
-    return json({ error: { code: 'storage_unavailable', message: 'Service temporarily unavailable.', retryable: true } }, 503);
+    return controlError(error);
   }
 }
