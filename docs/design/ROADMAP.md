@@ -16,6 +16,60 @@ collection and durable upload. Final local software verification passed on
 
 ## P0 — Deliver the core MVP
 
+- [ ] Publish the user-authorized V3 release (2026-10-31): review and group the
+      relevant source commits, push main, apply remote D1 migrations and deploy
+      the real Cloudflare Worker with small-statistics/control enabled. Preserve
+      legacy queues and disable historical V3 feature/raw upload. Verify strict
+      production-origin bootstrap, actual registration/ACK/leases, exact receipts
+      and retry/cleanup with both Waveshare and T-Energy on that remote service.
+      Keep local/synthetic checks distinct from remote two-board acceptance;
+      complete T-Energy's bounded runtime and real NVS admission before use.
+
+- [ ] Restore the Waveshare Chinese ePaper operational UI for collection, TF,
+      upload, USB and battery state. Bind displayed state to the actual runtime
+      and retained backlog/loss counters. Keep remaining-time ETA explicitly
+      unavailable/pending calibration until measured battery capacity and the
+      recording/network workload support it. Physical rendering, refresh and
+      battery calibration remain separate acceptance: the bounded V3 data-path
+      tests below do not establish that this UI is complete.
+      The user confirmed Chinese and4.07V but preferred the previous layout.
+      Original four-page geometry plus USB is restored in0.3.2;327-glyph font,
+      55actual-LVGL software frames and S3 checks passed, and app-only flash/
+      USB/full-refresh were verified on2026-10-31. Restored-page appearance and
+      battery workload calibration remain separate acceptance.
+
+- [ ] Implement the final user-confirmed V3 default (2026-10-30): bounded edge
+      aggregation and conservative classification, one small statistics record
+      per 30/60-second window, and only necessary candidate observation events.
+      Default cloud raw and per-address detail are off. Keep local TF research
+      recording independent. Add separate rolling history (initially 10 minutes)
+      and bounded open candidate state across upload windows, with censored
+      timeout/loss/config/clock boundaries. Negotiate actual capacity toward 512;
+      verify bytes, resources, retries, reboot recovery and isolated public reads.
+      Preserve manual elevator references; no unvalidated waiting-time output.
+      Backend compact reception, historical lease spans, revision/cleanup and
+      private/public separation are locally implemented and tested. Bounded
+      normal-profile [hardware acceptance](../notes/waveshare-small-statistics-acceptance-2026-10-30.md)
+      passed on 2026-10-31: three real 60s/5s windows, exact first-window retry,
+      status/lease receipts and safe stop. Historical rejected source stays on
+      TF; later original frozen windows were accepted under their original lease.
+      Independent local-TF coexistence passed one 60s window with final sync and
+      read-only CRC verification. Saturated capacity, long-run/power-loss
+      acceptance and T-Energy remain open. The user authorized isolated public
+      testing and cross-chat synchronization; production stays off.
+Historical context: the raw-first implementation direction was **superseded as
+      the default by the final small-statistics decision above** (2026-10-30). Waveshare
+      records raw locally on TF and uploads complete SDK-delivered reports;
+      T-Energy may use bounded volatile PSRAM to upload without a local durable
+      raw copy. Preserve all existing captures and pending v2 queues. Freeze
+      online binary segment/grant/receipt semantics jointly with the backend;
+      put raw and detailed reprocessable artifacts in private R2 and bounded
+      window statistics/quality/version/source references in D1. Verify actual
+      direct upload, backlog, losses, retries and backend processing on both
+      boards. The eight-identifier feature-JSON trial is historical acceptance,
+      not the main data path for this direction. See
+      [raw-first design](raw-first-backend.md).
+
 - [ ] Connect the Waveshare raw recorder to physical USB provisioning and a
       private, durable CPRAW upload path, retaining TF evidence through retries
       and validating BLE/Wi-Fi/storage coexistence on the board. The existing
@@ -62,8 +116,8 @@ collection and durable upload. Final local software verification passed on
       firmware/waveshare-raw; the 0.1.8 USB-v2 experimental app was accepted
       with RTC, read-only export, partial refresh and battery display. BOOT
       setup entry and USB begin/info passed, but real provisioning did not.
-      The board now runs the separate 0.2.4 v3 trial described above, stopped
-      after its bounded test; it is not currently recording raw.
+      The board now runs the separate0.3.2 V3 small-statistics/original-layout UI app,
+      in USB bootstrap standby; this historical TF-only app is not running.
       Raw sample/capacity/MCU-reset RTC acceptance
       is archived below; upload and inference work is tracked separately above.
       See [Waveshare firmware redesign](waveshare-firmware-redesign.md).
@@ -313,7 +367,7 @@ collection and durable upload. Final local software verification passed on
 
 ## P3 — Research and expansion
 
-- [ ] Evaluate online raw-first binary segments with private R2 detail and
+- [ ] Evaluate [online raw-first binary segments](raw-first-backend.md) with private R2 detail and
       small per-window D1 statistics. Keep the online segment/receipt contract
       distinct from offline CPRAW import. For the main T-Energy collector,
       budget bounded PSRAM, explicit overflow/reboot loss and any optional
@@ -357,6 +411,25 @@ collection and durable upload. Final local software verification passed on
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] 2026-10-31: Accept one independent local-TF/raw concurrent small-statistics
+      window: 6326 SDK reports, a 772-byte window and 487-byte status with strict
+      receipts/exact retry, no duplicate insertion and no cloud raw/public source.
+      Device final enqueue/write/sync counts all reached 6326; read-only CRC
+      verification passed for one 487877-byte file. Preserve the earlier rejected
+      frozen window separately. The uploaded raw-status snapshot precedes final
+      sync; do not substitute it for device-final evidence. Sustained TF endurance,
+      arbitrary power loss and saturated RF remain open.
+
+- [x] 2026-10-31: Accept the bounded Waveshare small-statistics path with actual
+      capability/configuration, three 60s/5s windows (767/768/768-byte bodies),
+      three status receipts, contiguous lease renewal and exact first-window
+      retry without duplicate insertion. Correct arena alignment and conservative
+      clock-boundary admission; preserve rejected original TF work and accept
+      eligible later historical windows under their original grant. Device safe
+      stop passed with zero current pending. Local-TF coexistence has separate
+      acceptance above; sustained capacity and production remain open. See
+      [backend verification](../notes/v3-small-statistics-backend-2026-10-30.md).
 
 - [x] 2026-10-30: Connect the Waveshare board-owned v3 controlled-test loop:
       actual capability/config ACK, live BLE worker evidence, complete-window

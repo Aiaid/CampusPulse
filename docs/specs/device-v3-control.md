@@ -16,6 +16,12 @@ never alters v1/v2 desired policies, credentials, receipts or ingestion routes.
 Existing administrator authentication remains under `/api/v1/admin` because
 that is the administrator cookie's scope.
 
+The final default statistics profile adds `DEVICE_V3_STATISTICS_ENABLED="true"`
+and [explicit renewable lease spans](v3-small-statistics.md). It accepts compact
+window/event data through its separate route, with historical applied-policy
+authorization for delayed frozen batches. Default cloud raw is off; TF local
+recording and small-statistics uplink can be enabled independently.
+
 ## Supported boundary
 
 This service authenticates registered devices, saves immutable capability

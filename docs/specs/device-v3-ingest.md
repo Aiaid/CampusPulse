@@ -1,5 +1,10 @@
 # Device v3 private HTTPS ingestion experiment
 
+**Historical per-identifier feature experiment.** The final normal V3 path is
+[compact window statistics and optional observation events](v3-small-statistics.md).
+This endpoint and its original receipts remain compatible; they are not the
+default long-term per-address database or upload format.
+
 Status: **local experimental server implementation with bounded physical trial
 acceptance, 2026-10-30; production default-off.** The implementation is
 `worker/device-v3-ingest*.ts` and migration `0015`. A narrow Waveshare producer

@@ -4,6 +4,10 @@ Status: **strict configuration core with bounded physical trial acceptance,
 2026-10-30; production remains disabled.** The implementation is
 [`worker/device-v3-config.ts`](../../worker/device-v3-config.ts), with synthetic
 fixtures in [`tests/device-v3-config.test.ts`](../../tests/device-v3-config.test.ts).
+The final default profile now uses [small statistics and optional candidate
+events](v3-small-statistics.md). Its additive statistics/temporal capabilities
+and explicit lease spans are independent of the historical feature experiment.
+Local TF raw recording remains separately configurable; normal cloud raw is off.
 The [Waveshare trial](../notes/waveshare-v3-acceptance-2026-10-30.md) exercised
 the supported subset on a real board through an isolated local backend. It does
 not establish general board support or production interoperability.
