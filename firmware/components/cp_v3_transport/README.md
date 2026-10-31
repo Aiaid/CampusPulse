@@ -1,5 +1,14 @@
 # Independent V3 native MQTT/TLS transport
 
+`CP_V3_NATIVE_MQTT` defaults off. Only the two standalone V3 applications opt in
+explicitly. Off builds compile `mqtt_disabled.c`, expose no MQTT SDK calls or
+global IO wrappers, and reject native mode before Wi-Fi starts. The inert SDK
+dependency declarations remain for ESP-IDF's pre-Kconfig requirements scan;
+they do not instantiate an owner. A selected legacy `cp_network` MQTT component
+and enabled V3 owner together are rejected explicitly instead of competing for
+the same linker wrappers. A macro without that component in the build graph
+does not trigger the guard.
+
 Current production mode (2026-10-31) is `CP_V3_TRANSPORT_MQTT_TLS`, with logical
 `CP_API_ORIGIN`, a current `active_boot` UUID and the existing settings' fixed
 `CP_MQTT_PRODUCTION_URI` plus independent broker credentials. It uses the system

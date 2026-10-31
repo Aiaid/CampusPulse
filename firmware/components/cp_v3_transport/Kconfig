@@ -1,6 +1,6 @@
 config CP_V3_NATIVE_MQTT
     bool "Build native MQTT/TLS for the independent V3 transport"
-    default y
+    default n
     select MQTT_PROTOCOL_311
     select MQTT_TRANSPORT_SSL
     help

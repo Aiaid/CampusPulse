@@ -196,6 +196,9 @@ esp_err_t cp_v3_transport_start(const cp_settings_t *settings, const cp_v3_trans
         config->request_timeout_ms < 1000 || config->request_timeout_ms > 30000 ||
         !config->server_clock_error_ms || config->server_clock_error_ms > 3000 ||
         !cp_v3_transport_anchor(&config->clock_seed, now_ms(), &current)) return ESP_ERR_INVALID_ARG;
+#if !defined(CONFIG_CP_V3_NATIVE_MQTT) || !CONFIG_CP_V3_NATIVE_MQTT
+    if(config->mode==CP_V3_TRANSPORT_MQTT_TLS)return ESP_ERR_NOT_SUPPORTED;
+#endif
     memset(&origin,0,sizeof origin);
     if(config->mode==CP_V3_TRANSPORT_HTTPS){
         if(!config->origin||!strcmp(config->origin,CP_API_ORIGIN)||!cp_v3_transport_origin(config->origin,&origin)||
