@@ -1,10 +1,24 @@
 # V3 small-statistics backend implementation — 2026-10-30
 
-Status: local implementation, synthetic acceptance, a bounded physical
+Current production state is tracked in the
+[2026-10-31 release record](v3-production-release-2026-10-31.md). The server is
+deployed over native MQTT/TLS through EMQX and the authenticated Cloudflare
+gateway. Bounded concurrent device checks passed for Waveshare three windows/
+three statuses and T-Energy three windows/one final status, including exact
+retries and safe stops. T-Energy checkpoint/historical recovery is observed;
+post-test legacy-queue byte preservation and six non-writing production probes
+passed. Independent authority/source/receipt-metadata reconciliation and scoped
+public exclusion also passed. Normal-run original request bytes were not
+independently rehashed; the recovered 762-byte checkpoint request additionally
+passed CRC/SHA and original-receipt comparison. Historical
+isolated-service trials below retain their original evidence boundaries.
+
+Historical isolated acceptance status: local implementation, synthetic acceptance, a bounded physical
 normal-profile 60s/5s × 3 run and one independent local-TF concurrent window
 passed. Sustained device acceptance remains separate. The 2026-10-31 authorized
 release configuration now enables production control/statistics by default;
-actual deployment and two-board acceptance must still be recorded separately.
+native deployment and the completed bounded remote audit are recorded separately
+from long-run, calibration and arbitrary power-loss acceptance.
 This follows the
 user's final default: edge aggregation and small results; local TF research raw
 is independently optional. The historical eight-identifier feature experiment
@@ -38,6 +52,27 @@ Local release checks cover generated gates/whitelist/shutdown rejection,
 historical protocol compatibility, and actual workerd migrations/concurrency.
 They do not establish remote D1 migration status, production credentials, cron
 execution or either board's production upload/recovery acceptance.
+
+The subsequent native backend/gateway release `fdcddd6` passed
+[CI41181875701](https://github.com/Aiaid/CampusPulse/actions/runs/41181875701)
+and was deployed. `e53d176` then made the shared native transport default-off,
+with explicit opt-in in the two V3 apps to preserve old V2 network owners.
+The [production release record](v3-production-release-2026-10-31.md) separates
+the first Waveshare MQTT three-window/three-status device success from the later
+concurrent device pass and independent authority/source/receipt-metadata audit.
+T-Energy's real one-window/no-post checkpoint and exact historical-window
+recovery preceded a management-timeout attempt with no new normal windows/status.
+Its subsequent concurrent run passed three new windows and one final status;
+that intended cadence differs from Waveshare's three statuses. The isolated
+HTTPS records below retain their original scope and are not the formal
+production transport. The current normal runs stored exactly 3 windows / 3
+statuses / 6 batches for Waveshare and 3 windows / 1 final status / 4 batches for
+T-Energy, with no candidate events. Their MQTT assignments and source windows
+retain controlled-test data with no public place; public statistics require
+field scope and a bound place, and V3 ingestion does not write legacy projections.
+Retained V2 projection rows are not evidence of new V3 public contribution;
+their matched per-node count delta was not verified. Temporary administrator
+sessions were revoked and the former-cookie read-only probe returned 401.
 
 ## Implemented boundary
 
@@ -253,5 +288,8 @@ Extend the bounded microSD/statistics coexistence test to sustained load and
 power-loss recovery; local recording never enables cloud raw. Ten-minute history
 and episodes longer than history have replay tests; this note does not claim a
 completed long live elevator pilot.
-Production enrollment/clock recovery, capacity/cleanup throughput, calibration,
-manual TF/stopwatch validation and deployment remain separate.
+Production enrollment/clock recovery, capacity/cleanup throughput, calibration
+and manual TF/stopwatch validation remain separate. Deployment and the current
+bounded MQTT device evidence are recorded in the release note linked above;
+the bounded remote metadata audit passed, with the original-byte distinction
+above. Scheduled real-deadline cleanup and sustained operation remain separate.

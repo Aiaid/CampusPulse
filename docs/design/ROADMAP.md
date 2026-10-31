@@ -6,7 +6,7 @@ or acceptance; any partial local implementation is identified explicitly below.
 Competition deadline: 2026-10-25 20:00 Asia/Shanghai (12:00 UTC), confirmed by
 the user. Mandatory track requirements remain unknown.
 
-Hardware decision (2026-10-23): all five devices first implement BLE collection,
+Historical hardware decision (2026-10-23): all five devices first implement BLE collection,
 bounded durable buffering and direct HTTPS upload with one shared core and
 board-specific adapters. AI Passport interaction and ePaper display follow that
 baseline. This supersedes dedicated manual-only, beacon-only and display-only
@@ -14,16 +14,18 @@ assignments; the Passport local software chain now connects setup, policy,
 collection and durable upload. Final local software verification passed on
 2026-10-25; physical-device acceptance remains separate in [firmware chain](../notes/firmware-chain.md).
 
+The 2026-10-31 production transport correction supersedes the direct-HTTPS
+uplink choice above: the formal V3 path is native MQTT/TLS through Hangzhou
+EMQX and the authenticated Cloudflare gateway. Historical HTTPS acceptance
+retains its original scope.
+
 ## P0 — Deliver the core MVP
 
-- [ ] Publish the user-authorized V3 release (2026-10-31): review and group the
-      relevant source commits, push main, apply remote D1 migrations and deploy
-      the real Cloudflare Worker with small-statistics/control enabled. Preserve
-      legacy queues and disable historical V3 feature/raw upload. Verify strict
-      production-origin bootstrap, actual registration/ACK/leases, exact receipts
-      and retry/cleanup with both Waveshare and T-Energy on that remote service.
-      Keep local/synthetic checks distinct from remote two-board acceptance;
-      complete T-Energy's bounded runtime and real NVS admission before use.
+- [ ] Extend the bounded native MQTT release to sustained deployment-scale
+      operation: saturated BLE/Wi-Fi load, long offline operation, storage/GC and
+      endurance, arbitrary power loss, real-deadline retention cleanup and field
+      calibration. Preserve the completed bounded acceptance in the archive;
+      planned checkpoint/normal-restart recovery is not arbitrary power loss.
 
 - [ ] Restore the Waveshare Chinese ePaper operational UI for collection, TF,
       upload, USB and battery state. Bind displayed state to the actual runtime
@@ -38,8 +40,8 @@ collection and durable upload. Final local software verification passed on
       USB/full-refresh were verified on2026-10-31. Restored-page appearance and
       battery workload calibration remain separate acceptance.
 
-- [ ] Implement the final user-confirmed V3 default (2026-10-30): bounded edge
-      aggregation and conservative classification, one small statistics record
+- [ ] Extend the final user-confirmed V3 default beyond the bounded release:
+      bounded edge aggregation and conservative classification, one small statistics record
       per 30/60-second window, and only necessary candidate observation events.
       Default cloud raw and per-address detail are off. Keep local TF research
       recording independent. Add separate rolling history (initially 10 minutes)
@@ -55,8 +57,11 @@ collection and durable upload. Final local software verification passed on
       TF; later original frozen windows were accepted under their original lease.
       Independent local-TF coexistence passed one 60s window with final sync and
       read-only CRC verification. Saturated capacity, long-run/power-loss
-      acceptance and T-Energy remain open. The user authorized isolated public
-      testing and cross-chat synchronization; production stays off.
+      acceptance and deployment-scale capacity remain open. T-Energy's later
+      bounded native MQTT device checks are recorded above. The user authorized isolated public
+      testing and cross-chat synchronization. Production server deployment is
+      now recorded in the release item above; this earlier isolated hardware
+      evidence does not establish production device acceptance.
 Historical context: the raw-first implementation direction was **superseded as
       the default by the final small-statistics decision above** (2026-10-30). Waveshare
       records raw locally on TF and uploads complete SDK-delivered reports;
@@ -80,13 +85,16 @@ Historical context: the raw-first implementation direction was **superseded as
       the intended main collector and needs its own bounded durable buffering.
       [Device v3 configuration](../specs/device-v3.md) has a locally tested
       pure capability/configuration core. The separate
-      [control service](../specs/device-v3-control.md) is default-off with local
-      D1/workerd synthetic tests and a bounded physical trial; production
-      enrollment, heartbeat and pending-batch reboot recovery remain outstanding.
+      [control service](../specs/device-v3-control.md) has local D1/workerd tests
+      and a bounded isolated physical trial. Production control is enabled for
+      the small-statistics release above; ordinary local development stays
+      opt-in. Production
+      enrollment, heartbeat and reboot recovery beyond the bounded checkpoint
+      case above remain outstanding.
       [Private v3 ingestion](../specs/device-v3-ingest.md) is implemented and
       synthetically tested locally for HTTPS feature/status, but double-gated
       and disabled in production; bounded device integration passed, while
-      production deployment and cleanup acceptance remain open.
+      production feature activation and cleanup acceptance remain open.
       Its present experimental scope requires local_raw=off, so simultaneous
       TF raw recording and v3 feature upload needs a separate contract change;
       offline TF raw remains independent of any upload.
@@ -95,8 +103,9 @@ Historical context: the raw-first implementation direction was **superseded as
       features; its narrow Waveshare trial integration is accepted below.
       [CPRAW archive](../specs/cpraw-archive-v1.md) has local synthetic server
       coverage including 257 chunks; a host uploader for exported files also has
-      synthetic workerd tests. The service is disabled and undeployed; USB
-      acquisition, production resource checks and device integration remain.
+      synthetic workerd tests. Its schema/code is now deployed, with the archive
+      service still disabled; USB acquisition, production resource checks and
+      device integration remain.
       The separate [Waveshare v3 trial](../../firmware/waveshare-v3-trial/README.md)
       passed direct capability/config ACK, live feature/status, TF frozen queue
       and exact HTTPS receipt/retry checks against an isolated controlled-test
@@ -411,6 +420,32 @@ Historical context: the raw-first implementation direction was **superseded as
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] 2026-10-31: Complete the bounded native MQTT/TLS → Hangzhou EMQX →
+      Cloudflare gateway → MqttDeviceApi production V3 release and independent
+      remote audit. Waveshare passed 3 windows / 3 statuses / 6 batches;
+      T-Energy passed 3 windows / 1 final status / 4 batches. Exact retries, safe
+      stops, applied ACKs, leases, actual boot scope, source rows and strict
+      stored receipt tuples matched. All windows were 60,000 ms / 5,000 ms bins,
+      with original policy TTLs and retained quality/coverage flags. Normal
+      request bytes were not independently rehashed. T-Energy's original
+      762-byte NVS checkpoint passed record/CRC/SHA and original receipt checks
+      after planned normal restart. Controlled V3 data has no public place and
+      is excluded from field projections; legacy per-node count deltas were not
+      verified. See [production release](../notes/v3-production-release-2026-10-31.md).
+
+- [x] 2026-10-31: Finish the authorized release preservation and cleanup gates.
+      Native backend/gateway `fdcddd6` deployed after CI run 41181875701; current
+      `c54aaf7` passed CI run 41187235858 check/deploy with 112 test files / 1475 tests.
+      The shared native transport is default-off at `e53d176`, explicitly
+      enabled only in the two V3 apps, preserving old V2 owner boundaries.
+      Exact deletion of `scanstats/devs` preserved the other 29 NVS keys;
+      post-test 4 MiB legacy-queue readback matched pre-V3 and full-backup copies
+      byte-for-byte. Six non-writing production gate/public probes passed.
+      Temporary admin sessions were revoked by exact session-hash selection;
+      the former-cookie read-only probe returned 401 without account or device
+      credential changes. Keep historical HTTPS/management-timeout attempts as
+      scoped evidence and preserve real source/receipt retention deadlines.
 
 - [x] 2026-10-31: Accept one independent local-TF/raw concurrent small-statistics
       window: 6326 SDK reports, a 772-byte window and 487-byte status with strict
