@@ -1,25 +1,28 @@
 # Device v3 configuration and capability core
 
-Status: **strict configuration core with bounded physical trial acceptance,
-2026-10-30; production remains disabled.** The implementation is
+Status: **current V3 configuration core; bounded two-board native MQTT production
+acceptance recorded before the 2026-10-31 V3-only retirement.** See the
+[production evidence](../notes/v3-production-release-2026-10-31.md) and
+[migration scope](../notes/v3-only-migration-2026-10-31.md). Earlier isolated
+trial results retain their original scope; this code cleanup does not establish
+new physical acceptance of its resulting images.
+
+The implementation is
 [`worker/device-v3-config.ts`](../../worker/device-v3-config.ts), with synthetic
 fixtures in [`tests/device-v3-config.test.ts`](../../tests/device-v3-config.test.ts).
-The final default profile now uses [small statistics and optional candidate
-events](v3-small-statistics.md). Its additive statistics/temporal capabilities
-and explicit lease spans are independent of the historical feature experiment.
-Local TF raw recording remains separately configurable; normal cloud raw is off.
-The [Waveshare trial](../notes/waveshare-v3-acceptance-2026-10-30.md) exercised
-the supported subset on a real board through an isolated local backend. It does
-not establish general board support or production interoperability.
+The final default profile uses [small statistics and optional candidate events](v3-small-statistics.md).
+Its additive statistics/temporal capabilities and explicit lease spans remain
+independent of the historical feature experiment. Local TF raw is separately
+configurable; normal cloud raw and per-address uploads are off.
 
-This module validates a fresh configuration shape, binds it to a capability
-snapshot, checks declared limits and plans closed-boundary activation and lease
-actions. The separate [experimental control service](device-v3-control.md)
-implements capability registration, assignment and device acknowledgements; its
-router is disabled by default and has not been deployed. The core does not
-implement a queue, produce feature batches or activate firmware. Existing
-[v1 ingestion](ingest-v1.md) and [device v2](device-v2.md) remain unchanged and
-parallel; neither accepts these objects.
+The core validates configuration against actual capability snapshots and plans
+closed-boundary activation and lease actions. The
+[control service](device-v3-control.md) implements capability registration,
+immutable assignment and device acknowledgements. Production transport is
+[native MQTT](device-v3-mqtt.md); the V3 HTTPS handlers remain authenticated
+logical/API contracts. The core alone does not implement firmware, queues or
+activation. V1/V2 device control and ingestion are retired rather than parallel
+fallbacks; their stored historical records remain intact.
 
 See [BLE inference](ble-inference-v1.md), the
 [end-to-end design](../design/ble-device-inference.md) and the separately owned
@@ -213,7 +216,7 @@ is sufficient. Runtime quotas/retention enforcement remain unimplemented.
   All other assigned datasets also require a placement. The alternative
   association scope is `segment`; it grants no cross-address or cross-node link.
 - Unassigned research requires mobile mode, null placement and disabled uplink.
-  This local-only policy value does not add an accepted v1/v2 ingestion dataset.
+  This local-only policy value does not restore a retired V1/V2 ingestion dataset.
 - Both retentions are 1–168 hours, and derived retention cannot exceed source
   retention. Source retention applies to private local evidence as well as any
   future cloud copy; enforcement and authorized cleanup need implementation.

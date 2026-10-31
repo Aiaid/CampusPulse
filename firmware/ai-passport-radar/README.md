@@ -1,3 +1,9 @@
+> **Historical target retired, 2026-10-31.** The V1/V2 application and protocol
+> build entry have been removed. Retained board drivers, UI/fonts, algorithm
+> sources, license/provenance and this historical documentation are reference
+> assets only. Current firmware is [V3](../waveshare-v3/README.md). This does not establish a
+> Passport C3 V3 migration or device acceptance.
+
 # AI Passport firmware entry and Radar provenance
 
 Local source import of `xiaoYan-bit/ai-passport-radar`, revision

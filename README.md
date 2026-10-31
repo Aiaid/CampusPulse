@@ -4,13 +4,15 @@
 
 **Hackathon deadline: 25 October 2026, 20:00 Beijing time (UTC+8 / 12:00 UTC).**
 Repository snapshot: [`hackathon-2026-10-25`](https://github.com/Aiaid/CampusPulse/tree/hackathon-2026-10-25).
-The tag records the current frontend and README snapshot, prepared after the deadline.
+The tag records the historical frontend and README snapshot, prepared after the deadline.
+Current source follows the [V3-only migration](docs/notes/v3-only-migration-2026-10-31.md).
 
 CampusPulse is a campus observation map we are building for Central China Normal
 University (CCNU). It started with the idea of a Bluetooth activity heatmap;
-CCNU's existing GIS, e-bike parking problems and elevator waits led us to add
-on-device e-bike identification, Bluetooth event analysis at elevator lobbies
-and a shared live/history timeline.
+CCNU's existing GIS, e-bike parking problems and elevator waits led us to explore
+vehicle evidence and elevator-lobby events, alongside a shared live/history
+timeline. Current V3 firmware uploads bounded BLE statistics; calibrated vehicle
+identification and wait estimates remain research work.
 
 ## Earlier Bluetooth map projects
 
@@ -39,23 +41,17 @@ expanding parking spaces. Alongside activity changes, we want to record how many
 bikes were seen at a parking point, when the observation was made, and how it
 changes during the day.
 
-The device now identifies e-bikes automatically from Bluetooth advertisements.
-Its rules use vehicle-brand names and known vehicle-module manufacturer IDs,
-exclude known phone, accessory and office-device signatures, and check sustained
-presence. Identified vehicles and uncertain devices are counted separately; see
-the [on-device rules](firmware/ai-passport-radar/main/veh_rules.c).
+Current V3 firmware extracts bounded BLE statistics with versioned quality and
+loss counters. The default `unclassified-v1` ruleset leaves observed identifier
+keys in `unknown`; it does not identify each nearby device as a vehicle or turn
+identifier counts into people or parked-bike counts. Earlier Radar rules and
+collected records remain historical research evidence. Manual parking
+observations are retained as a separate source for cross-checking.
 
-Automatic identification is the main source for parking observations. Manual
-entry remains available for supplementary records and cross-checks, rather than
-requiring someone to identify each vehicle. The count refers to vehicles matched
-by the rules, not every nearby Bluetooth device.
-
-Elevator waiting time is another problem we want to address. We use Bluetooth
-observations at the lobby to detect when a group of previously stable signals
-disappears together, producing candidate boarding events for reviewing changes
-in elevator-lobby activity. The rules already produce these candidates; deriving
-actual wait durations still needs field calibration. The time taken to confirm
-an event is not the time someone spent waiting.
+Elevator-lobby visibility changes can provide candidate events for research.
+They do not establish boarding or a person's wait duration. Completed manual
+wait observations remain historical references; a calibrated automatic wait
+estimate is unavailable.
 
 We also added one time axis for live observations and historical review. Once
 field data is uploaded, we can look back at changes at the same place and see
@@ -113,126 +109,97 @@ available in the data selector.
 
 ## Managing devices and data
 
-Production device transport now defaults to **native MQTT/TLS → Hangzhou EMQX →
-Cloudflare**, with exact Cloudflare application receipts returned over MQTT.
-The administrator prepares a batch of independent MQTT identities, imports the
-private authentication/ACL files into EMQX once, and verifies the broker's actual
-login/topic permissions. Registration then allocates a verified identity
-automatically. The device setup wizard writes it through protected BLE, USB or
-the device hotspot; Wi-Fi-only changes preserve the saved identity. Pool
-allocation, device save and actual cloud receipts remain separate states.
-See [production MQTT operations](docs/notes/mqtt-production.md) and the
-[public CA certificate](firmware/certs/README.md). Credentials and private keys
-are never stored in Git. Existing field-device rollout is reported separately
-from source/build and browser acceptance.
+Current device transport is **native MQTT/TLS → Hangzhou EMQX → Cloudflare**.
+The V3 gateway requires a CPV3 frame and returns an exact Cloudflare application
+receipt; broker delivery alone does not authorize local queue reclamation.
+The existing `cp/v1` MQTT topic namespace remains for deployed broker ACLs;
+its name does not enable a V1 device payload. MQTT identities and private setup
+material stay out of Git. See [MQTT operations](docs/notes/mqtt-production.md)
+and the [public CA certificate](firmware/certs/README.md).
 
-CampusPulse includes an [administrator workspace](https://pulse.anend.net/admin)
-for operating the observation network alongside the public map. Its pages and
-APIs cover the device lifecycle:
+The [administrator workspace](https://pulse.anend.net/admin) retains account,
+Passkey, device identity, placement, site-settings and audit operations. V3
+configuration uses the device's actual capability snapshot, validated immutable
+policy assignments and explicit device acknowledgements. Publication, device ACK
+and stored statistics are separate states. Devices without an actual V3 capability
+report are not given an invented profile. Setup for the active V3 applications
+uses physical USB; historical BLE and device-hotspot wizards are retired.
 
-- **Register and deploy:** register devices, enable or disable access, rotate
-  device credentials, assign places and retain deployment history. The setup
-  wizard supports browser BLE, desktop USB and a device-hosted Wi-Fi setup page,
-  subject to device and browser capabilities. Existing devices can change their
-  network settings without being registered again.
-- **Configure collection:** edit versioned drafts, check their limits and publish
-  an immutable capture policy. The console distinguishes the desired policy,
-  the version referenced by uploads and the version explicitly acknowledged by
-  the device. Publishing alone does not mean a device has applied it.
-- **Assign observation purposes:** a place can support activity, parking and
-  elevator observations together. Changing an existing device's place or work
-  purposes creates a new deployment/configuration version, preserves historical
-  attribution and waits for explicit device activation. Selecting a purpose does
-  not by itself implement its recognition or estimation algorithm.
-- **Diagnose operation:** inspect control contact, upload reception and device
-  status separately, including scan state, memory, queue pressure, storage and
-  loss/failure counters. Missing measurements stay unknown; old-boot or delayed
-  status is labelled rather than presented as current health.
-- **Inspect received data:** browse paginated upload receipts and normalized
-  stored entries. Where a retained request body exists, the backend verifies its
-  SHA-256 before showing the original bytes. Public map queries expose aggregate
-  observations; address summaries and raw advertisements require authentication.
-- **Maintain the site:** manage settings, review administrative audit records,
-  and use an administrator account with password or Passkey authentication.
-  Sensitive actions require recent identity verification.
+Diagnostics and private evidence use V3 capabilities, assignments, acknowledgements,
+leases and stored statistics. Missing measurements remain unknown. The public map
+reads eligible V3 field statistics with their original policy ID and assignment
+generation; it does not fall back to V1/V2 sensor rows. Manual observations remain
+independent. Existing V1/V2 D1 records, receipts and private R2 objects are preserved,
+although their ingestion/control routes now return 404 and legacy retention is
+stopped. Historical data preservation does not imply that every retired record
+has a current UI reader.
 
-![Administrator workspace with synthetic device contact and configuration states](docs/images/admin-overview.png)
+![Historical administrator workspace with synthetic contact and configuration states](docs/images/admin-overview.png)
 
-*Actual local administrator interface with browser-local sample data. Device
-names and the administrator are labelled “样例” (sample); this is not a production
-fleet or evidence of hardware acceptance.*
+*Historical local administrator interface with browser-local sample data. Names
+are labelled “样例” (sample). This screenshot predates the V3-only migration and
+is not the current V3 console or hardware acceptance evidence.*
 
-The cloud backend authenticates each device, validates batches against its
-assigned policy and returns durable, idempotent receipts. Windows, address
-summaries, optional raw advertisements and device status have independent
-streams. D1 stores structured records and receipts; private R2 holds retained
-research payloads. A retry can reuse its committed receipt, and firmware keeps
-queued data until it has processed a matching acknowledgement.
+Normal cloud uploads contain small statistics and status records. Cloud raw and
+per-address uploads remain off for the selected production profile. Local TF
+research recording and the separately gated private CPRAW archive contract have
+independent custody and acceptance boundaries. D1 stores versioned V3 records and
+durable receipts; private historical R2 data is retained.
 
-See [administrator operations](docs/specs/admin-v1.md),
-[account security](docs/specs/admin-auth-v1.md) and
-[device diagnostics](docs/design/device-diagnostics-panel.md).
+See the [V3-only migration](docs/notes/v3-only-migration-2026-10-31.md),
+[V3 small-statistics contract](docs/specs/v3-small-statistics.md) and
+[administrator account security](docs/specs/admin-auth-v1.md).
 
 ## Shared firmware and board adapters
 
-Firmware separates the collection/upload pipeline from hardware through a board
-adapter (`cp_board`). The shared core handles capture policy, BLE aggregation,
-bounded buffering, a durable Flash journal, upload and acknowledgements. The
-adapter supplies the board identity, capabilities and resource limits, and maps
-its battery, buttons and display into the runtime. Optional screen rendering
-does not own collection timing.
-
-This lets board ports reuse the same data contract and cloud services while
-keeping pins, drivers, power behavior and Flash layouts specific to each board.
-The target inventory is two AI Passports, two LILYGO T-Energy-S3 boards and one
-Waveshare 1.54-inch ESP32-S3 ePaper board. Each is intended to collect, buffer and
-upload directly; Passport interaction and ePaper presentation build on that path.
-
-CCNU's existing campus Wi-Fi provides the upload connection. Once provisioned
-and able to reach the cloud service, devices upload observations directly over
-HTTPS. Local buffering and retries retain unacknowledged data across temporary
-network interruptions.
+The active network applications are [Waveshare V3](firmware/waveshare-v3/README.md)
+and [T-Energy-S3 V3](firmware/t-energy-v3-trial/README.md). They share bounded
+`cp_v3_*` collection, statistics, control, queue and transport components while
+keeping board pins, power, display and Flash layouts specific to each board.
+Both wait for physical USB setup and retain their documented bounded runtime
+limits; they are not unattended five-board deployment firmware.
 
 | Board family | Available source and verification status |
 | --- | --- |
-| FoloToy AI Passport / ESP32-C3 | Board adapter and collection/upload runtime present. Display/headless and normal/diagnostic builds share the same core. A bounded physical upload check is recorded; broader field acceptance remains open. |
-| LILYGO T-Energy-S3 / ESP32-S3 | Target board family. Its adapter and build/physical acceptance records are not present in the source refs reviewed here; these still need a source link before support can be confirmed. |
-| Waveshare ESP32-S3-ePaper-1.54 V2 | The [S3 collector branch](https://github.com/Aiaid/CampusPulse/tree/463269d7e3bf4109cf8f3f07a7630fe7dba8be43/firmware/epaper-collector) adds a board adapter and 200 × 200 SSD1681 status card, sharing the collector and v2 upload core. Its records report an ESP-IDF build and one board's PEAP/TLS, applied-policy, scan, ACKed upload and display check. Power measurement and fixed-place field acceptance remain open. This port is not yet merged into main. |
+| FoloToy AI Passport / ESP32-C3 | BSP, fonts, licenses and historical evidence are retained. Its V1/V2 network application entry is retired; no current C3 V3 application is claimed. |
+| LILYGO T-Energy-S3 / ESP32-S3 | [V3 application](firmware/t-energy-v3-trial/README.md), bounded statistics, MQTT and checkpoint recovery. Earlier production MQTT acceptance is historical evidence for its tested image. |
+| Waveshare ESP32-S3-ePaper-1.54 V2 | [V3 application](firmware/waveshare-v3/README.md), local TF recording, MQTT and Chinese UI. “V2” identifies the hardware revision, not the retired device protocol. |
 
-![Device diagnostic panels with synthetic status, storage and queue measurements](docs/images/admin-device-diagnostics.png)
+![Historical diagnostic panels with synthetic storage and queue measurements](docs/images/admin-device-diagnostics.png)
 
-*Sample diagnostic data in the actual interface. Queue sizes, memory values and
-counters here are illustrative, not measurements from a physical board.*
+*Historical interface with illustrative measurements, preserved with its source
+record. It predates the V3-only diagnostics and is not a physical measurement.*
 
-Build variants are separate from board support. Each port needs its own build
-and physical checks, including radio behavior, memory, network access and safe
-storage recovery. The Passport's protected data and partition layout must be
-preserved; its layout is not a template for the S3 boards. See the
-[firmware guide](firmware/README.md), [runtime architecture](docs/notes/firmware-runtime.md)
-and [hardware/network verification record](docs/notes/device-onboarding-diagnostics.md).
+The independent [offline raw recorder](firmware/waveshare-raw/README.md), CPRAW
+formats, BSP and V3 local-TF dependencies remain available. Read-only compatibility
+with older saved NVS credentials preserves device settings; it does not restore
+old upload protocols. Historical Flash queues are not converted, replayed or
+erased by source retirement. Preserve the Passport's protected data and partition
+layout; never apply that layout to S3 boards or erase the entire Flash.
+
+See the [firmware guide](firmware/README.md),
+[bounded T-Energy runtime](firmware/t-energy-v3-trial/BOUNDED_RUNTIME.md) and
+[production acceptance record](docs/notes/v3-production-release-2026-10-31.md).
 
 ## Current progress
 
-Passport firmware includes automatic Bluetooth e-bike identification,
-provisioning, policy control, BLE aggregation and buffered upload. The web app
-provides map exploration, the shared live/history axis, supplementary manual
-records and a separate simulation. The administrator workspace connects device
-registration, provisioning, deployment, policy publication and diagnostics;
-cloud services provide authenticated ingestion, durable receipts and private
-research storage.
+The web app retains the official GIS, dual maps, shared live/history axis,
+independent visual layers, manual observations and a separate simulation.
+Illustrative actors and lighting retain their provenance and never fill gaps in
+field records. V3 sensor reads preserve source policy/generation, timestamps,
+uncertainty and quality. Unknown categories and population estimates remain
+unknown; candidate events do not become measured elevator waits.
 
-The earlier field screenshots show aggregate BLE windows. Current main also
-connects compact vehicle evidence to rule-based candidate categories and shows
-historical elevator-wait references from completed manual observations. Map
-diagrams identify their sources; their glyph counts and arrangement are
-illustrative. Current inferences stay separate from historical-cursor records.
-BLE visibility events remain experimental and do not establish boarding or
-predict a current wait. See [automatic observations](docs/specs/automatic-observations.md)
-for evidence requirements, unavailable states and calibration limits.
-
-Next we need to check collection, network access and upload on site, then see
-whether the saved records support a useful replay. Preparation is in the
-[field checklist](docs/notes/hackathon-delivery.md); further work is in the
+The [earlier bounded production release](docs/notes/v3-production-release-2026-10-31.md)
+records real two-board MQTT, exact receipts and planned-restart checkpoint checks.
+The V3-only source cleanup passes 1,170 repository tests, the production build,
+MQTT gateway/browser checks and fresh S3 builds/host verification. Publication
+is established by the actual main CI/deployment workflow; these local results
+include no new flash or physical acceptance of the resulting images. It preserves historical
+D1/R2 data and retires only old device protocol/application paths. Long offline
+operation, arbitrary power loss, saturated load, battery calibration and field
+inference validation remain open. See the
+[migration record](docs/notes/v3-only-migration-2026-10-31.md) and
 [roadmap](docs/design/ROADMAP.md).
 
 ## Hackathon demonstration
@@ -288,7 +255,7 @@ Cloudflare Workers Static Assets, a Workers API, D1 and private R2. Firmware use
 ESP-IDF/FreeRTOS. GitHub hosts source and CI; Cloudflare hosts the application.
 
 - [Architecture](docs/notes/architecture.md) and [API documentation](docs/specs/web-api-v0.md)
-- [Administrator setup](docs/specs/admin-auth-v1.md) and [firmware chain](docs/notes/firmware-chain.md)
-- [Device management](docs/specs/admin-v1.md), [board adapters](docs/notes/firmware-runtime.md) and [provisioning](docs/specs/local-provisioning-v2.md)
+- [Administrator setup](docs/specs/admin-auth-v1.md) and [V3 firmware](firmware/README.md)
+- [V3 configuration](docs/specs/device-v3.md), [MQTT contract](docs/specs/device-v3-mqtt.md) and [migration boundaries](docs/notes/v3-only-migration-2026-10-31.md)
 - [CI/CD and deployment](docs/notes/ci-cd.md)
 - [Source provenance and reuse boundaries](docs/notes/reuse.md), [contributor rules](AGENTS.md) and [full documentation index](docs/README.md)

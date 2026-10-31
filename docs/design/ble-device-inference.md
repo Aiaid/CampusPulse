@@ -203,7 +203,7 @@ N_hat = max(0, C - b) / κ
 
 ## 11 实现入口与参考
 
-已有入口：[`cp_vehicle`](../../firmware/components/cp_vehicle/include/cp_vehicle.h)、[`cp_collect`](../../firmware/components/cp_collect/include/cp_collect.h)、[设备验证器](../../worker/device-v2-validation.ts)、[raw 验证器](../../worker/ingest-validation.ts)、[车辆规则](../../worker/vehicle-rules.ts)、[公开候选投影](../../worker/place-inference.ts)、[微雪记录格式](../../firmware/waveshare-raw/FORMAT.md)。
+已有入口：[`cp_vehicle`](../../firmware/components/cp_vehicle/include/cp_vehicle.h)、[`cp_collect`](../../firmware/components/cp_collect/include/cp_collect.h)、[设备验证器](https://github.com/Aiaid/CampusPulse/blob/69a0fee/worker/device-v2-validation.ts)、[raw 验证器](https://github.com/Aiaid/CampusPulse/blob/69a0fee/worker/ingest-validation.ts)、[车辆规则](../../worker/vehicle-rules.ts)、[公开候选投影](../../worker/place-inference.ts)、[微雪记录格式](../../firmware/waveshare-raw/FORMAT.md)。
 
 方法参考：
 

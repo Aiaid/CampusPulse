@@ -4,19 +4,18 @@
 explicitly. Off builds compile `mqtt_disabled.c`, expose no MQTT SDK calls or
 global IO wrappers, and reject native mode before Wi-Fi starts. The inert SDK
 dependency declarations remain for ESP-IDF's pre-Kconfig requirements scan;
-they do not instantiate an owner. A selected legacy `cp_network` MQTT component
-and enabled V3 owner together are rejected explicitly instead of competing for
-the same linker wrappers. A macro without that component in the build graph
-does not trigger the guard.
+they do not instantiate an owner. The obsolete V1/V2 network component and its
+build owner were removed on2026-10-31. Native URI validation, memory admission
+and confirmed-stop lifetime helpers now live in this component's
+`mqtt_lifetime.h`; no old RPC wire codec or include path is retained.
 
 Current production mode (2026-10-31) is `CP_V3_TRANSPORT_MQTT_TLS`, with logical
 `CP_API_ORIGIN`, a current `active_boot` UUID and the existing settings' fixed
 `CP_MQTT_PRODUCTION_URI` plus independent broker credentials. It uses the system
 CA bundle with strict hostname/date checks. Production has no HTTPS/proxy
 fallback; `CP_V3_TRANSPORT_HTTPS` is retained for isolated diagnostics only.
-The old `cp_network` owner is never linked or started. Its pure MQTT validators,
-resource constants, lease and fragment/correlation design are reused by reference;
-the old v2 default2048-byte reply bound stays unchanged.
+Native callback copying, fragment correlation and retained-stop ownership are
+covered by the V3 host regressions.
 
 The [V3 wire contract](../../../docs/specs/device-v3-mqtt.md) wraps original
 requests in8 bytes: `CPV3`, version1, subop1..5, receipt-only bit0, reserved0.

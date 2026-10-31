@@ -17,7 +17,11 @@ collection and durable upload. Final local software verification passed on
 The 2026-10-31 production transport correction supersedes the direct-HTTPS
 uplink choice above: the formal V3 path is native MQTT/TLS through Hangzhou
 EMQX and the authenticated Cloudflare gateway. Historical HTTPS acceptance
-retains its original scope.
+retains its original scope. The subsequent V3-only migration retires old
+V1/V2 device code and application entries while preserving historical records,
+board drivers, CPRAW/offline recording and independent application/admin APIs.
+V3-only source implementation and local integrated verification are complete;
+publication/deployment is checked against the actual main workflow run.
 
 ## P0 — Deliver the core MVP
 
@@ -420,6 +424,24 @@ Historical context: the raw-first implementation direction was **superseded as
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] 2026-10-31: Complete V3-only source implementation and local verification.
+      Remove V1/V2 device ingestion/control/provisioning and obsolete network
+      application/relay entries; preserve historical D1/R2 collection records,
+      credentials, device queues, BSP, CPRAW/offline recording and independent
+      application/admin APIs. Stop legacy retention; require CPV3 framing while
+      preserving the stable cp/v1 MQTT ACL namespace. Public sensors and admin
+      configuration/diagnostics use actual V3 source authority and evidence.
+      Full suite 88 files / 1,170 tests, production build/TypeScript, gateway
+      111 Node tests/TypeScript and Chromium/WebKit/fallback/MQTT-pool browser
+      workflows passed; independent targeted review passed 173 backend and
+      70 gateway tests, and the administrator core passed 145 tests. Fresh S3
+      builds/host checks passed. Private read-only full D1 export and SHA
+      manifest retained; no historical data deletion, new flash or physical run.
+      Commit/push and production publication are verified through the actual
+      [Check and deploy main workflow](https://github.com/Aiaid/CampusPulse/actions/workflows/ci.yml)
+      for the release commit, separately from this completed implementation.
+      See the [migration evidence and boundaries](../notes/v3-only-migration-2026-10-31.md).
 
 - [x] 2026-10-31: Complete the bounded native MQTT/TLS → Hangzhou EMQX →
       Cloudflare gateway → MqttDeviceApi production V3 release and independent

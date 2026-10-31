@@ -1,10 +1,12 @@
 # Device V3 over the existing native MQTT gateway
 
-Status: implemented locally with synthetic relay, real workerd/service-binding
-and D1 tests. Production gateway deployment and physical two-board acceptance
-remain pending. The native path is device MQTT/TLS → existing Hangzhou EMQX →
-Cloudflare gateway → `MqttDeviceApi` → the existing V3 control/statistics modules.
-No Mac proxy, new broker credential, API secret, ACL or EMQX rule is required.
+Status: **native MQTT gateway deployed, with bounded concurrent two-board
+production acceptance recorded in the pre-retirement release.** See the
+[production release](../notes/v3-production-release-2026-10-31.md) and
+[V3-only migration](../notes/v3-only-migration-2026-10-31.md). The current path is
+device MQTT/TLS → existing Hangzhou EMQX → authenticated Cloudflare gateway →
+`MqttDeviceApi` → V3 control/statistics modules. No Mac proxy is used. The
+V3-only source retirement adds no new physical-device acceptance.
 
 This transports [V3 control](device-v3-control.md) and
 [small statistics](v3-small-statistics.md). It does not enable raw, per-address or
@@ -51,9 +53,11 @@ Flag bit 0 is valid only for suboperations 3 and 4. In that mode, an original
 old-boot body is allowed, but the control module returns only its already
 committed, exact ACK/lease receipt. An absent receipt returns
 `409 v3_receipt_not_committed`; it cannot create an ACK, lease or capture span.
-Suboperations 1, 2 and 5 reject this flag. A recognized `CPV3` magic with an
-invalid/truncated header never falls back to the legacy JSON handler. The V3
-frame is accepted only on the existing `ingest` topic operation.
+Suboperations 1, 2 and 5 reject this flag. CPV3 framing is mandatory: unframed
+legacy JSON and malformed/truncated frames are rejected, with no legacy handler
+fallback. The frame is accepted only on the existing `ingest` topic operation;
+retired device operations are rejected. The `cp/v1` prefix is a stable topic/ACL
+namespace, not payload-version negotiation or V1/V2 compatibility.
 
 Original JSON whitespace, order, UTF-8 and bytes are preserved. The relay parses
 only to validate framing/JSON shape and never serializes the body again. The
@@ -69,7 +73,6 @@ boot and source-authority validation to the original unwrapped bytes.
 | Existing broker webhook JSON | 12288 bytes |
 | V3 configuration reply JSON | 8192 bytes |
 | Other V3 reply JSON | 2048 bytes |
-| Legacy v2 request / reply JSON | 8192 / 2048 bytes |
 
 The reply retains the existing two-byte unsigned big-endian HTTP-style status,
 followed by the exact backend JSON response. The two-byte prefix is additional
@@ -116,7 +119,8 @@ Backend tests exercise actual relay/DO/service binding/D1 capability/config,
 ACK/lease, old-boot receipt-only recovery, MQTT and original-HTTPS authority,
 statistics/status custody, public isolation and registry revocation. Separate
 SQLite tests inject registry changes immediately before commits and verify
-rollback. Existing v2 and V3 HTTPS regressions remain part of the test suite.
+rollback. V3 HTTPS authority remains covered independently; retirement tests
+require V1/V2 device HTTP routes and unframed MQTT requests to be rejected.
 
 These are synthetic software tests. Broker deployment, native device MQTT/TLS,
 physical checkpoint/reboot recovery, concurrent three-window collection and

@@ -1,3 +1,9 @@
+> **Historical target retired, 2026-10-31.** The V1/V2 application and protocol
+> build entry have been removed. Retained board drivers, UI/fonts, algorithm
+> sources, license/provenance and this historical documentation are reference
+> assets only. Current firmware is [V3](../t-energy-v3-trial/README.md). This does not establish a
+> Passport C3 V3 migration or device acceptance.
+
 # T-Energy-S3 firmware entry points
 
 The root project runs the **current shared CampusPulse chain** on the headless

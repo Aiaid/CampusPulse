@@ -1,5 +1,17 @@
 # CampusPulse 上传协议 v1 草案
 
+> **Retired device contract — 2026-10-31.** This document and its validation
+> claims describe historical V1/V2 software, not a supported current path.
+> The old device ingestion/control/provisioning implementation has been removed;
+> its HTTP routes return 404. Historical D1 records, receipts, private R2 objects,
+> device credentials and captures are preserved; legacy retention is stopped.
+> Use the [V3-only migration record](../notes/v3-only-migration-2026-10-31.md),
+> [current V3 contract](device-v3.md) and [V3 firmware](../../firmware/README.md).
+> Removed source/test paths refer to the
+> [pre-retirement snapshot](https://github.com/Aiaid/CampusPulse/tree/69a0fee8dde227e1123c3defd21481569c8b1760).
+> Hardware revision “V2”, NVS credential-layout versions and CPRAW formats are
+> separate concepts and are not retired by this device-protocol change.
+
 日期：2026-10-23，状态核对：2026-10-25。**v1 服务端已部署 Cloudflare 并通过
 独立 demo 线上验收；当前 Passport 已实现 v2 软件链路，真实采集上传仍待真机验收。**
 

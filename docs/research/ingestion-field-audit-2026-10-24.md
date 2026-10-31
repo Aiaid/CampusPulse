@@ -63,7 +63,7 @@
 
 ## “信息不完全”目前能做到什么
 
-当前 [v1 validator](../../worker/ingest-validation.ts) 和
+当前 [v1 validator](https://github.com/Aiaid/CampusPulse/blob/69a0fee/worker/ingest-validation.ts) 和
 [AD parser](../../worker/ble-ad.ts) 已经允许：
 
 - 广播没有名称、UUID、厂商或服务内容：它们只是 payload 的可选 AD 元素，

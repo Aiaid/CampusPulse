@@ -131,12 +131,20 @@ instructions take precedence.
   separately. See `docs/design/hackathon-plan.md` for the proposed roles.
 - Host the frontend, API, and database on Cloudflare. GitHub stores source only.
   The proposed baseline is Workers Static Assets + Workers API + D1.
-- The upload design is `docs/specs/ingest-v1.md`: separate window/raw/status
-  streams; research raw batches use private R2 and independent durable receipts.
-  Its first server slice is implemented and locally verified; see
-  `docs/notes/backend-ingestion.md` for limitations and verified Cloudflare
-  deployment/demo acceptance. Firmware, physical-node onboarding and hardware
-  acceptance remain pending.
+- The current device contracts are `docs/specs/device-v3.md`,
+  `docs/specs/device-v3-control.md`, `docs/specs/v3-small-statistics.md` and
+  `docs/specs/device-v3-mqtt.md`. Production uses mandatory CPV3 framing over
+  native MQTT/TLS, Hangzhou EMQX and the authenticated Cloudflare gateway; the
+  stable `cp/v1` topic namespace is not a V1 payload compatibility path.
+  Normal uploads are bounded statistics/status, with cloud raw/per-address
+  uploads off for the selected profile and local TF research independent.
+  `ingest-v1.md`, device v2 and their firmware/application paths are historical
+  and retired. Preserve historical D1/R2 records, receipts, credentials, captures
+  and device queues; do not restart legacy retention or convert them implicitly.
+  Independent application/admin APIs under `/api/v1` remain supported.
+  See `docs/notes/v3-only-migration-2026-10-31.md` and the bounded production
+  acceptance record; builds and code retirement do not establish new hardware
+  acceptance or arbitrary-power-loss validation.
 - If board drivers are reused from `aipassport/ai-passport/components/bsp`, preserve
   their pin mapping, copyright, and license. Do not initialize unused audio.
 - On the AI Passport, preserve the 3 MB application partition and `cardid` at

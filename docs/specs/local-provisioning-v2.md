@@ -1,5 +1,17 @@
 # Local provisioning: short PIN and physical USB
 
+> **Retired device contract — 2026-10-31.** This document and its validation
+> claims describe historical V1/V2 software, not a supported current path.
+> The old device ingestion/control/provisioning implementation has been removed;
+> its HTTP routes return 404. Historical D1 records, receipts, private R2 objects,
+> device credentials and captures are preserved; legacy retention is stopped.
+> Use the [V3-only migration record](../notes/v3-only-migration-2026-10-31.md),
+> [current V3 contract](device-v3.md) and [V3 firmware](../../firmware/README.md).
+> Removed source/test paths refer to the
+> [pre-retirement snapshot](https://github.com/Aiaid/CampusPulse/tree/69a0fee8dde227e1123c3defd21481569c8b1760).
+> Hardware revision “V2”, NVS credential-layout versions and CPRAW formats are
+> separate concepts and are not retired by this device-protocol change.
+
 > **Partially superseded, 2026-10-29:** current setup is
 > [USB only](../notes/usb-only-provisioning.md). Bluetooth/Security 2, PIN and
 > device-hotspot sections below describe the retired implementation. Their
@@ -118,7 +130,7 @@ build-only correction aligning Security 2's private IV array. Compile-time
 assertions keep the wire nonce at 12 bytes. Fixed-width salt/verifier generation
 avoids a separate SDK helper's leading-zero conversion. The installed SDK and
 the SRP/GCM wire algorithms remain unchanged. See the
-[component verification notes](../../firmware/components/cp_provision/README.md).
+[component verification notes](https://github.com/Aiaid/CampusPulse/blob/69a0fee8dde227e1123c3defd21481569c8b1760/firmware/components/cp_provision/README.md).
 
 The physical smoke tool can exercise entry, identity/status and malformed-frame
 recovery without sending a Wi-Fi password or device credential:

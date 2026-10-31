@@ -1,99 +1,46 @@
-# CampusPulse firmware
+# CampusPulse V3 firmware
 
-Local setup is **USB only** as of2026-10-29. Bluetooth and device-hotspot
-provisioning are removed from the administrator wizard and shared firmware;
-normal Wi-Fi networking and passive BLE collection remain. Use a USB data cable
-and a desktop browser with Web Serial in a secure context. The Passport setup
-action opens USB setup, and unconfigured devices wait for explicit USB setup.
-See [USB-only setup](../docs/notes/usb-only-provisioning.md) for the current
-contract and local verification boundaries. Earlier BLE/SoftAP acceptance below
-is historical.
+The active network applications are [Waveshare V3](waveshare-v3/README.md)
+and [T-Energy-S3 V3](t-energy-v3-trial/README.md). They share the independent
+`cp_v3_*` capture, statistics, temporal evidence, control, budget, queue and
+transport components. Production transport is native MQTT/TLS through the
+Hangzhou EMQX broker and authenticated Cloudflare gateway. Exact application
+receipts govern reclamation; a broker PUBACK is not durable cloud custody.
+Both applications retain their documented bounded acceptance limits.
 
-As of2026-10-29, normal builds default to native MQTT/TLS through Hangzhou EMQX
-and the CF gateway. Settings v3 stores independent MQTT URI, username, password
-and routing namespace at runtime; firmware images contain no broker password.
-Legacy v1/v2 settings are preserved and require MQTT migration through setup,
-with no silent HTTP upload fallback. Wi-Fi-only reconfiguration reuses saved
-MQTT credentials. USB accepts1536-byte candidates. See
-[production MQTT operations](../docs/notes/mqtt-production.md) for software,
-deployed-service and current hardware-rollout boundaries. The original chain
-acceptance below is historical evidence, not validation of every new image.
+V1/V2 ingestion, enrollment, policy, provisioning and network application code
+was retired on 2026-10-31. The Passport C3, earlier T-Energy shared-chain and
+ePaper collector build entries are removed. This is a software retirement,
+not a Passport C3 V3 migration or five-board hardware acceptance. Board BSP,
+fonts/UI, passive-BLE and vehicle algorithms, licenses and provenance remain
+available. `cp_core` contains neutral board/display types only, with no policy
+supervisor. `cp_usb` retains only framing used by the offline raw recorder.
 
-The current local AI Passport implementation connects physical USB setup,
-durable enrollment, v2 policy control, canonical
-MAC/address-type summaries, a frozen Flash journal and exact upload receipts.
-See the [firmware chain and evidence boundaries](../docs/notes/firmware-chain.md).
-The initial chain's software acceptance passed on 2026-10-25, including four
-fresh C3 image variants. Its server is deployed and one Passport application
-update/startup was verified while retaining protected data. Physical enrollment
-and capture/upload acceptance remain separate. The
-[short PIN and USB revision](../docs/specs/local-provisioning-v2.md) passes local
-native/SDK/browser checks and four C3 configurations; its physical acceptance
-is recorded separately. The [T-Energy-S3 entry](t-energy-s3/README.md) now links
-the current shared core through an isolated S3 adapter. Its USB-only r2 image,
-native MQTT settings migration and bounded128/60s workload are
-[physically verified](../docs/notes/tenergy-usb-mqtt-acceptance.md): five complete
-windows/405 summaries reconcile and the sampled queue declines. The newer
-[512-address PSRAM profile](../docs/notes/tenergy-512-psram-acceptance.md) is also
-installed:112KiB banks and upload buffers are checked external, a601.981s stable
-observation has sampled internal free≥87071bytes and queue36→4. Its actual
-radio occupancy is below512; full saturation remains separate. Larger-load,
-interruption, calibrated battery and power-loss acceptance remain open in the
-[integration plan](../docs/design/tenergy-s3-integration.md). Waveshare support
-still requires an independently verified profile and layout. The later user-
-requested [Waveshare raw recorder](waveshare-raw/README.md) is an independent
-TF-only first implementation, with a separate build and decoder. It is not
-the shared authenticated collection/upload chain; its card/radio/physical
-acceptance remains pending and it has not been flashed.
+[Waveshare offline raw](waveshare-raw/README.md), its CPRAW tools and the actual
+V3 local-TF dependencies remain independent. The old optional USB-v2 network
+setup adapter is removed; hardware revision V2, existing USB export formats and
+CPRAW format versions are unrelated to the retired collection wire protocol.
+The Waveshare V3 app still reuses board/TF/UI adapters from `waveshare-raw` and
+bootstrap code from `waveshare-v3-trial`. Keep these source trees together.
 
-The project entry is [ai-passport-radar](ai-passport-radar/README.md), imported at
-the user's request on 2026-10-24. Shared components live under `components/`.
-Normal boot waits for setup or starts the authenticated network/control path;
-collection requires an accepted, applied and unexpired policy. Optional UI does
-not own collection timing. The inherited Radar remains an explicit diagnostic
-mode, separate from canonical collection and cloud observations.
+Settings retain read-only decoding of older saved NVS credential layouts so
+credential preservation does not require erasure. Retiring protocol code does
+not delete or rewrite existing captures, TF files, old NVS, Flash `cpqueue`,
+private backups or ignored build directories. A pending historical queue is
+not treated as a V3 queue and is not automatically replayed or cleared.
 
-Activate ESP-IDF 5.5.3 and its Python environment, then run:
+Use ESP-IDF 5.5.3 and `uv` for Python commands. Activate its Python/toolchain
+environment, then build the two separate applications:
 
 ```bash
-firmware/tools/check-chain.sh
-node scripts/provisioning-browser-smoke.mjs
-npx vitest run tests/provisioning
-firmware/tools/build-passport.sh
-firmware/tools/build-passport.sh --diagnostic
-firmware/tools/build-passport.sh --headless
-firmware/tools/build-passport.sh --diagnostic --headless
+firmware/waveshare-v3/build.sh
+firmware/t-energy-v3-trial/build.sh
 ```
 
-The chain helper includes native sanitizer/fault tests and sends literal C-codec
-fixtures to a real isolated local workerd/D1/R2 instance. The browser script uses
-synthetic cloud and USB transport; it cannot validate physical USB connectivity.
-The two build flags select diagnostics
-and no LCD/buttons; they do not select another board family. The USB revision
-gives normal headless builds a physical setup path without a displayed code.
-Connecting a cable alone does not enter setup; select USB in the administrator
-wizard. It requires a desktop browser exposing Web Serial. iPhone/iPad browser
-setup is unavailable; use the supported desktop USB route.
-
-Builds use fresh directories and validate separate bootloader, partition and app
-images. Python operations use `uv`. No helper deploys or flashes hardware.
-Preserve the 3 MiB application and `cardid` at `0x356000` / `0x4000`; inspect the
-actual device layout before writing a partition table. The declared 4 MiB queue
-at `0x360000` is not evidence that an attached board's region is empty. Unknown
-journal bytes are quarantined, never automatically formatted. Never erase the
-whole chip or flash a padded merged image across protected data.
-
-Target networks support explicit WPA2 personal, open Wi-Fi and WPA2 Enterprise
-PEAP/MSCHAPv2 with optional outer identity. Enterprise server certificate checks
-are disabled at the user's request; upload HTTPS retains CA/hostname/date checks.
-Captive portal login is not automated. Legacy personal-network settings load
-without an NVS rewrite. See [network diagnostics](../docs/notes/device-onboarding-diagnostics.md)
-for the settings migration, failure history and verification boundaries.
-Runtime secrets remain outside tracked files; application NVS is not encrypted
-storage at rest. Physical revision, TLS/network behavior, Flash power-loss
-recovery, radio losses, memory margins and sustained upload remain hardware gates.
-The user authorized publication of the selected current firmware on 2026-10-25.
-The inherited font arrays have been replaced with licensed OFL derivatives;
-[font notices](fonts/README.md) must accompany redistribution. Original private
-repository history, captures and credentials remain excluded. See [import notes](../docs/notes/firmware-baseline.md)
-and [reuse record](../docs/notes/reuse.md).
+The build helpers produce separate images and never flash hardware. Verify the
+actual board revision, installed partitions and protected contents before any
+future device write. Never erase the chip or flash padded merged images across
+protected data. Historical hardware measurements and captures keep their original
+scope; passing host tests or builds establishes no new radio, battery, endurance
+or power-loss acceptance. See [font notices](fonts/README.md) and
+[reuse provenance](../docs/notes/reuse.md).

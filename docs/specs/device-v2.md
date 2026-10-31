@@ -1,5 +1,17 @@
 # Device v2: control, address metrics and durable upload
 
+> **Retired device contract — 2026-10-31.** This document and its validation
+> claims describe historical V1/V2 software, not a supported current path.
+> The old device ingestion/control/provisioning implementation has been removed;
+> its HTTP routes return 404. Historical D1 records, receipts, private R2 objects,
+> device credentials and captures are preserved; legacy retention is stopped.
+> Use the [V3-only migration record](../notes/v3-only-migration-2026-10-31.md),
+> [current V3 contract](device-v3.md) and [V3 firmware](../../firmware/README.md).
+> Removed source/test paths refer to the
+> [pre-retirement snapshot](https://github.com/Aiaid/CampusPulse/tree/69a0fee8dde227e1123c3defd21481569c8b1760).
+> Hardware revision “V2”, NVS credential-layout versions and CPRAW formats are
+> separate concepts and are not retired by this device-protocol change.
+
 Status: implemented server contract and synthetic tests, 2026-10-24. Physical
 radio, flash recovery, provisioning and upload acceptance require separate device
 checks. The v1 contract remains available with its original policy semantics.

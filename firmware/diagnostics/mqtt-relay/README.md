@@ -1,3 +1,5 @@
+> **Retired 2026-10-31:** The legacy JSON relay/V2 demo ingestion executable and fixture tools have been removed. This document preserves historical measurement context only. Current application transport is [V3 native MQTT/TLS](../../components/cp_v3_transport/README.md). Private ignored configuration and historical records are preserved.
+
 # Temporary MQTT/TLS relay diagnostic
 
 This independent ESP-IDF **5.5.3 / ESP32-C3** project tests one managed MQTT/TLS

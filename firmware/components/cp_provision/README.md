@@ -1,3 +1,7 @@
+> Historical component: the V1/V2 provisioning runtime was retired in the
+> V3-only migration on 2026-10-31. This document is preserved as evidence;
+> use the current V3 USB setup and capability-based management flow.
+
 # Current transport: physical USB only
 
 As of2026-10-29, Bluetooth and device-hotspot provisioning are removed from this

@@ -1,3 +1,7 @@
+> Historical implementation retired on 2026-10-31. The executable legacy
+> relay was removed in the V3-only migration. The production path is
+> `../emqx-cloud/`. Historical source remains in Git at `69a0fee`.
+
 # Local EMQX MQTT/TLS verification bridge
 
 This bridge runs on the operator's Mac for the native device → EMQX MQTT/TLS →

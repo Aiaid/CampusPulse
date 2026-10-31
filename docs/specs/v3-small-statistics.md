@@ -1,13 +1,21 @@
 # V3 small statistics and candidate observation events
 
-Status: final-default implementation contract, 2026-10-30; deployment and physical
-acceptance are separate. This replaces raw-first as the normal path and does not
-change historical feature-upload receipts. Raw stays local by default.
+Status: **current default V3 contract, with bounded concurrent two-board native
+MQTT production acceptance recorded before the V3-only source retirement on
+2026-10-31.** See the [production evidence](../notes/v3-production-release-2026-10-31.md)
+and [migration scope](../notes/v3-only-migration-2026-10-31.md). That evidence
+covers its tested images; this cleanup does not establish new device acceptance.
+This replaces raw-first as the normal path and preserves historical records and
+feature-upload receipts. Raw stays local by default.
 
 ## Compact transport
 
-`POST /api/v3/statistics/ingest`, enabled-node bearer credential, HTTPS, strict
-uncompressed JSON, `X-Body-SHA256` of exact frozen bytes, no query parameters.
+Production uses [CPV3 native MQTT framing](device-v3-mqtt.md), suboperation 5,
+with an authenticated registry principal and the original frozen bytes. The
+logical API remains `POST /api/v3/statistics/ingest`; its HTTPS form requires an
+enabled-node bearer credential, strict uncompressed JSON, `X-Body-SHA256` of
+exact frozen bytes and no query parameters. The private MQTT service-binding
+principal does not introduce a public-header authentication bypass.
 Requests are bounded by policy and 8192 bytes globally. One batch has one stream.
 Unknown fields, duplicate decoded keys, unsafe integers and invalid UTF-8 fail.
 

@@ -161,7 +161,7 @@ for factory identity, assigned node ID, cloud bearer delivery, provisioning
 attempt ID and durable-state/status queries. Bound message sizes and retries;
 verify that automatic provisioning shutdown cannot discard its final write or
 confirmation. The local implementation now defines these messages and UUIDs in
-[`cp_provision`](../../firmware/components/cp_provision/README.md). A received reply
+[`cp_provision`](https://github.com/Aiaid/CampusPulse/blob/69a0fee/firmware/components/cp_provision/README.md). A received reply
 is RAM acceptance; save follows network/cloud validation and a controlled reboot.
 
 Use per-device provisioning proof of possession distinct from the node MAC and

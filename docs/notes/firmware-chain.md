@@ -458,7 +458,7 @@ the patched source is
 Only the IV member's alignment changes; compile-time assertions retain the
 12-byte nonce/counter layout. Installed SDK files, algorithms and wire schema
 are unchanged. Original Apache notices remain in generated code. See the
-[component contract](../../firmware/components/cp_provision/README.md).
+[component contract](https://github.com/Aiaid/CampusPulse/blob/69a0fee/firmware/components/cp_provision/README.md).
 
 Final local verification:
 

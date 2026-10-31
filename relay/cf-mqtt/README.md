@@ -1,3 +1,7 @@
+> Historical implementation retired on 2026-10-31. The executable legacy
+> relay was removed in the V3-only migration. The production path is
+> `../emqx-cloud/`. Historical source remains in Git at `69a0fee`.
+
 # Cloudflare MQTT over WSS gateway prototype
 
 This is a restricted MQTT 3.1.1 RPC gateway for CampusPulse device API v2. It is

@@ -1,3 +1,5 @@
+> **2026-10-31:** 旧 USB-v2 配网适配器及构建开关已移除；该工程仅保留独立离线 TF/CPRAW 记录。当前联网、物理 USB bootstrap 和 V3 小统计入口为 [waveshare-v3](../waveshare-v3/README.md)。下文配网实验记述为历史，不再可编译。V2 板卡型号、USB 导出格式及 CPRAW 格式并非旧采集协议，保持不变。
+
 # 微雪 BLE raw 记录固件
 
 独立的 ESP-IDF 5.5.3 工程，目标为 ESP32-S3-ePaper-1.54 V2（8 MB Flash、

@@ -1,20 +1,22 @@
-# Experimental device v3 control service
+# Device V3 control service
 
-Status: **local server implementation with bounded physical trial acceptance;
-disabled in production, 2026-10-30.** This is an opt-in control experiment on top
-of the [v3 policy core](device-v3.md), implemented in
-[`worker/device-v3-control.ts`](../../worker/device-v3-control.ts) and additive
+Status: **current production V3 control with bounded two-board native MQTT
+acceptance recorded before the 2026-10-31 V3-only retirement.** See the
+[production release](../notes/v3-production-release-2026-10-31.md) and
+[migration record](../notes/v3-only-migration-2026-10-31.md). Earlier isolated
+trial evidence remains historical; this source retirement is not new device
+validation. The implementation is
+[`worker/device-v3-control.ts`](../../worker/device-v3-control.ts), using the
+[v3 policy core](device-v3.md) and additive
 [`0014_device_v3_control.sql`](../../migrations/0014_device_v3_control.sql).
-See the [physical trial evidence](../notes/waveshare-v3-acceptance-2026-10-30.md)
-and [backend checks](../notes/v3-backend-integration-2026-10-30.md). The isolated
-test ingress has been stopped; production deployment remains outstanding.
 
-The gate is `DEVICE_V3_CONTROL_ENABLED="true"`; no production configuration
-enables it. Deploying the code or adding the tables does not enable the service.
-Matched routes return `503 v3_control_disabled` while the gate is absent. It
-never alters v1/v2 desired policies, credentials, receipts or ingestion routes.
-Existing administrator authentication remains under `/api/v1/admin` because
-that is the administrator cookie's scope.
+The explicit gate remains `DEVICE_V3_CONTROL_ENABLED="true"`. The selected
+production release enables it; deployments without it fail closed with
+`503 v3_control_disabled`. V1/V2 device routes have been removed, while old
+policies, credentials, receipts and collection records remain preserved.
+Independent administrator authentication and application APIs keep their
+`/api/v1/admin` namespace; that URL version does not imply a V1 device protocol.
+Native MQTT uses the same authenticated control semantics as the V3 HTTPS API.
 
 The final default statistics profile adds `DEVICE_V3_STATISTICS_ENABLED="true"`
 and [explicit renewable lease spans](v3-small-statistics.md). It accepts compact
@@ -31,17 +33,16 @@ device's terminal `applied` or `failed` acknowledgement. A capability is a
 certification or authority to register another device. Assignment responses
 always say `applied:false` and `requires_device_ack:true`.
 
-Policies with `uplink.enabled:true` are accepted only for the strictly bounded
-[private HTTPS feature/status experiment](device-v3-ingest.md), when both
-control and ingest gates and the required version allowlists are configured.
-Other uplink policies remain rejected. A narrow Waveshare trial producer has
-physical acceptance; general firmware support and production acceptance remain
-outstanding. The independent CPRAW archive policy
-cannot be enabled by this service.
-Even local collection/TF policies require a future firmware producer that
-honors budgets, lease actions, retention and safe boundary/recovery semantics.
+Policies with `uplink.enabled:true` require an explicitly supported, enabled
+profile and version allowlists. The current production profile uses
+[small statistics](v3-small-statistics.md), renewable lease spans and native
+MQTT/TLS. The historical [feature/status experiment](device-v3-ingest.md) remains
+separately gated and is off in the selected production release. The independent
+CPRAW archive policy cannot be enabled by this control service. Supported policy
+validation does not establish general board compatibility, collection quality,
+long-run retention, arbitrary-power-loss recovery or field calibration.
 
-## Experimental HTTP shapes
+## Control API shapes
 
 All request bodies require uncompressed `application/json`, are bounded at
 32,768 bytes and use the strict duplicate-key/UTF-8 parser before validation.
