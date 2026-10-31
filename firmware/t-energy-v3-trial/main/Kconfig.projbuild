@@ -1,4 +1,14 @@
 menu "CampusPulse bounded T-Energy acceptance"
+config TE_SMALL_CLEAR_LEGACY_SCANSTATS
+    bool "Maintenance image: delete only the authorized legacy scanstats/devs key"
+    default n
+    help
+        Explicit operator-authorized maintenance image, not a normal runtime
+        feature. Verify the existing 12300-byte BLOB read-only, then erase only
+        scanstats/devs through the SDK and commit/read back NOT_FOUND. Never
+        erase a namespace, partition, other key, or queue. No BLE/Wi-Fi starts.
+        After reporting numeric before/after statistics, remain in USB standby.
+        Mutually exclusive with the window-reboot checkpoint image.
 config TE_SMALL_TEST_HOLD_FIRST_COMMIT
     bool "Hold after the first committed window for normal-reboot acceptance"
     default n

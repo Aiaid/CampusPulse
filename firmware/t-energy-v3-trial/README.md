@@ -7,6 +7,11 @@ screen, raw upload, per-address upload, saved network secret or automatic reboot
 This is a bounded acceptance image, not an unattended production collector.
 See [runtime and physical acceptance](BOUNDED_RUNTIME.md).
 
+An independent, default-off [single-key maintenance image](MAINTENANCE.md) was
+explicitly authorized on2026-10-31 to clear only the existing `scanstats/devs`
+legacy MAC cache. It replaces the application entry at build time and links no
+V3/radio/network code. Normal and checkpoint images never invoke that deletion.
+
 Target: LILYGO T-Energy-S3 V1.0 / ESP32-S3-R8, 16 MB Flash and 8 MB octal PSRAM,
 as specified by the [manufacturer](https://github.com/Xinyuan-LilyGO/T-Energy-S3).
 Confirm actual revision and installed partition bytes before device work.
