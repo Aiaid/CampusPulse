@@ -341,7 +341,7 @@ void app_main(void){
 }
 static bool run(void){
     cp_v3_transport_config_t cfg={.origin=bootstrap.origin,.server_ca_pem=bootstrap.server_ca_pem[0]?bootstrap.server_ca_pem:NULL,
-        .clock_seed=bootstrap.clock_seed,.wifi_timeout_ms=10000,.request_timeout_ms=5000,.server_clock_error_ms=1000};
+        .clock_seed=bootstrap.clock_seed,.wifi_timeout_ms=10000,.request_timeout_ms=te_small_request_timeout_ms(bootstrap.origin),.server_clock_error_ms=1000};
     transport_started=true;if(cp_v3_transport_start(&bootstrap.settings,&cfg)!=ESP_OK)return false;
     if(!recover())return false;
     cp_v3_time_t t;if(!current(&t))return false;

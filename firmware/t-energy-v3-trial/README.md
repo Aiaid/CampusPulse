@@ -55,6 +55,9 @@ fields. Explicit `:443`, other ports and aliases are rejected.
 authorize production. Default LAN tests require an explicit CA. The actual
 board parser shares the transport preflight; certificate, hostname and time
 verification stay enabled.
+The configured request deadline is30 seconds for that exact production origin
+and15 seconds for other test origins. SDK socket/select calls can overrun it;
+this setting is not a guaranteed hard wall-clock bound.
 
 Build with activated ESP-IDF 5.5.3 and `./build.sh`; temporary separate images
 and partition-boundary checks run without opening a device. From the repository

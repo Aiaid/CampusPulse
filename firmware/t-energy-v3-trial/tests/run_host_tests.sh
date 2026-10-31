@@ -11,6 +11,7 @@ bash "$TEST_DIR/run_maintenance_host_test.sh"
 "$CC_BIN" "${FLAGS[@]}" -I "$PROJECT/main" -I "$TEST_DIR" \
   -I "$FIRMWARE/components/cp_v3_control/include" -I "$FIRMWARE/components/cp_v3_evidence/include" \
   -I "$FIRMWARE/components/cp_v3_queue/include" \
+  -I "$FIRMWARE/components/cp_settings/include" \
   -I "$FIRMWARE/components/cp_v3_temporal/include" "$TEST_DIR/test_small_runtime_logic.c" -o "$OUT/small-logic"
 "$OUT/small-logic"
 bash "$TEST_DIR/run_bootstrap_host_test.sh"

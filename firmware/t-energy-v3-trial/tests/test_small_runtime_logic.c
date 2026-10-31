@@ -2,6 +2,11 @@
 #include <assert.h>
 #include <stdio.h>
 int main(void){
+    assert(te_small_request_timeout_ms(CP_API_ORIGIN)==30000);
+    const char *isolated[]={NULL,"","https://192.168.1.2:8799","https://isolated.example",
+        CP_API_ORIGIN ":443",CP_API_ORIGIN ":8443",CP_API_ORIGIN "/",CP_API_ORIGIN ".",
+        "https://test.pulse.anend.net","https://PULSE.anend.net"};
+    for(unsigned i=0;i<sizeof isolated/sizeof *isolated;i++)assert(te_small_request_timeout_ms(isolated[i])==15000);
     for(int loaded=-1;loaded<=4;loaded++){
         assert(te_small_slot_reusable(CP_V3_QUEUE_FREE,loaded)==(loaded==0||loaded==3));
         assert(!te_small_slot_reusable(CP_V3_QUEUE_PENDING,loaded));

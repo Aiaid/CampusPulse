@@ -2,12 +2,18 @@
 #include "cp_v3_control.h"
 #include "cp_v3_temporal.h"
 #include "cp_v3_queue.h"
+#include "cp_settings.h"
 #include <limits.h>
 #include <string.h>
 #define TE_SMALL_BODY 1024u
 #define TE_SMALL_WORKING 4194304u
 #define TE_SMALL_STORAGE_DAY 1048576u
 #define TE_SMALL_UPLINK_DAY 131072u
+/* Same destination profile as the Waveshare runtime. This selects only the
+ * configured deadline; shared transport still validates the origin and TLS. */
+static inline uint32_t te_small_request_timeout_ms(const char *origin){
+    return origin&&!strcmp(origin,CP_API_ORIGIN)?30000u:15000u;
+}
 /* Store load0 is positive absence; load3 is a fully validated committed
  * tombstone with no surviving old source. load2/4 and I/O are not free space. */
 static inline bool te_small_slot_reusable(cp_v3_queue_state_t state,int loaded){
