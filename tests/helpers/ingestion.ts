@@ -17,7 +17,9 @@ export function sqliteD1(db: DatabaseSync): D1Database {
         async all() { return { results: db.prepare(sql).all(...bindings as []), success: true, meta: {} }; },
         async run() { return run(); },
       };
-      statements.set(statement, run);
+      statements.set(statement, /^\s*SELECT\b/i.test(sql)
+        ? () => ({ success: true, results: db.prepare(sql).all(...bindings as []), meta: { changes: 0 } })
+        : run);
       return statement;
     },
     async batch(items: object[]) {

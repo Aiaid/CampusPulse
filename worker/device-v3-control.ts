@@ -9,6 +9,7 @@ import { capabilityDigestV3, DeviceV3ConfigError, freezeDeviceConfigV3, negotiat
 import { assertV3IngestPolicy, supportsV3IngestPolicy, v3IngestEnabled, type V3IngestPolicy } from './device-v3-ingest-validation';
 import { assertV3StatisticsPolicy, supportsV3StatisticsPolicy, v3StatisticsEnabled,
   type DeviceV3StatisticsEnv, type V3StatisticsPolicy } from './device-v3-statistics-policy';
+import { readAdminDeviceV3Evidence } from './device-v3-admin-evidence';
 
 export type DeviceV3ControlEnv = DeviceV3StatisticsEnv;
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -450,16 +451,17 @@ export async function handleDeviceV3Control(request: Request, env: DeviceV3Contr
   const devicePath = ['/api/v3/device/capabilities', '/api/v3/device/config', '/api/v3/device/config/ack', '/api/v3/device/lease'].includes(path);
   const adminAssignment = path === '/api/v1/admin/device-v3/assignments';
   const adminNode = /^\/api\/v1\/admin\/device-v3\/nodes\/([a-z0-9][a-z0-9_-]{0,63})$/.exec(path);
-  if (!devicePath && !adminAssignment && !adminNode) return null;
+  const adminEvidence = /^\/api\/v1\/admin\/device-v3\/nodes\/([a-z0-9][a-z0-9_-]{0,63})\/evidence$/.exec(path);
+  if (!devicePath && !adminAssignment && !adminNode && !adminEvidence) return null;
   try {
-    if (env.DEVICE_V3_CONTROL_ENABLED !== 'true') throw new IngestError(503, 'v3_control_disabled', 'Experimental v3 control is disabled.');
+    if (!adminEvidence && env.DEVICE_V3_CONTROL_ENABLED !== 'true') throw new IngestError(503, 'v3_control_disabled', 'Experimental v3 control is disabled.');
     const receiptOnly = request.headers.get('X-Receipt-Only');
     if (receiptOnly !== null && (receiptOnly !== '1' || !['/api/v3/device/config/ack', '/api/v3/device/lease'].includes(path))) {
       throw new IngestError(422, 'v3_invalid_receipt_only', 'Receipt-only mode is valid only for exact ACK or lease recovery.');
     }
-    const method = adminNode || path === '/api/v3/device/config' ? 'GET' : 'POST';
+    const method = adminNode || adminEvidence || path === '/api/v3/device/config' ? 'GET' : 'POST';
     if (request.method !== method) throw new IngestError(405, 'method_not_allowed', `Use ${method}.`);
-    if (adminAssignment || adminNode) {
+    if (adminAssignment || adminNode || adminEvidence) {
       const secret = adminSecret(env); adminOrigin(request, method !== 'GET');
       const session = await requireAdminSession(request, env, secret), initial = sessionAssertion(session);
       // sessionAssertion also binds the account/auth version. Its JS cutoff is
@@ -467,7 +469,8 @@ export async function handleDeviceV3Control(request: Request, env: DeviceV3Contr
       // the database clock in every final authorization check and transaction.
       const authorization = { sql: `(${initial.sql}) AND EXISTS(SELECT 1 FROM admin_sessions WHERE token_sha256=? AND expires_at_ms>${NOW_SQL})`,
         bindings: [...initial.bindings, session.hash] };
-      return adminNode ? await inspect(env, adminNode[1], authorization) : await assign(request, env, authorization);
+      return adminEvidence ? await readAdminDeviceV3Evidence(request, env, adminEvidence[1], authorization) :
+        adminNode ? await inspect(env, adminNode[1], authorization) : await assign(request, env, authorization);
     }
     const node = await device(request, env);
     const hash = await sha256(new TextEncoder().encode(request.headers.get('Authorization')!.slice(7)));
