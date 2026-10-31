@@ -30,7 +30,8 @@ int main(int argc,char **argv){assert(argc==8);char caps[8192],response[8192],ne
  int reg=snprintf(reply,sizeof reply,"{\"protocol\":\"campuspulse/3\",\"node_id\":\"synthetic-node\",\"boot_id\":\"%s\",\"registration_seq\":1,\"capability_sha256\":\"%s\",\"registered_at\":\"2026-10-30T00:00:50.000Z\",\"applied\":false,\"capability_evidence\":\"device_claim\"}",control.boot_id,control.capability_sha256);
  assert(cp_v3_control_registration_receipt(&control,reply,(size_t)reg,now(0))==CP_V3_CONTROL_OK);
  cp_v3_control_result_t offered=cp_v3_control_offer(&control,response,rn,now(0));if(!strcmp(argv[1],"reject")){assert(offered!=CP_V3_CONTROL_OK&&!apply_calls);return 0;}
- assert(offered==CP_V3_CONTROL_OK&&!strcmp(control.policy.scope.policy_sha256,argv[5]));saved=control;cp_v3_boundary_t b={0};
+ assert(offered==CP_V3_CONTROL_OK&&!strcmp(control.policy.scope.policy_sha256,argv[5]));
+ assert(control.policy.mqtt_tls==control.capability_mqtt_tls);saved=control;cp_v3_boundary_t b={0};
  outcome=CP_V3_APPLY_STORAGE_FAILED;assert(cp_v3_control_apply(&control,now(0),b,1,apply,NULL)==CP_V3_CONTROL_OK);size_t length=ack_reply(reply,false);
  assert(cp_v3_control_ack_receipt(&control,reply,length,now(0))==CP_V3_CONTROL_OK&&control.state==CP_V3_CONTROL_FAILED);assert(!cp_v3_control_permissions(&control,now(0)).collection);
  control=saved;outcome=CP_V3_APPLY_OK;assert(cp_v3_control_apply(&control,now(0),b,1,apply,NULL)==CP_V3_CONTROL_OK);length=ack_reply(reply,true);

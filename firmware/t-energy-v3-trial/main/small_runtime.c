@@ -118,7 +118,8 @@ static bool admit(void *p,cp_v3_queue_kind_t kind,const cp_v3_expected_t *e,size
     (void)p;if(!control->small_statistics||!te_small_scope(&e->scope,&control->policy.scope)||
        bytes>control->policy.max_body_bytes||expiry>control->policy.accept_until_utc_ms)return false;
     if(kind==CP_V3_QUEUE_CONTROL)return control->state==CP_V3_CONTROL_ACK_PENDING||control->state==CP_V3_CONTROL_APPLIED;
-    return te_small_policy(&control->policy)&&(kind==CP_V3_QUEUE_WINDOW||kind==CP_V3_QUEUE_STATUS)&&control->state==CP_V3_CONTROL_APPLIED;
+    return control->policy.mqtt_tls==(bootstrap.transport==CP_V3_TRANSPORT_MQTT_TLS)&&te_small_policy(&control->policy)&&
+        (kind==CP_V3_QUEUE_WINDOW||kind==CP_V3_QUEUE_STATUS)&&control->state==CP_V3_CONTROL_APPLIED;
 }
 static te_v3_small_queue_config_t queue_config(void){
     return (te_v3_small_queue_config_t){.sha256=cp_v3_transport_sha256,.clock=utc,.write_budget=&budgets.storage,
@@ -151,6 +152,9 @@ static esp_err_t transport_exchange(void *p,cp_v3_http_method_t method,const cha
     (void)p;uint64_t started=mono();
     esp_err_t e=receipt_only?cp_v3_transport_request_receipt_only(method,path,bytes,n,reply,TE_RESPONSE,r):
         cp_v3_transport_request(method,path,bytes,n,reply,TE_RESPONSE,r);
+    if(bootstrap.transport==CP_V3_TRANSPORT_MQTT_TLS)ESP_LOGI(TAG,"mqtt_transport error=%ld status=%d complete=%u publish_id=%ld puback_id=%ld outbox=%lu ready=%u reply_received=%u stopped=%u retained=%u connect_code=%ld",
+        (long)e,r->http_status,r->complete,(long)r->mqtt_publish_id,(long)r->mqtt_puback_id,(unsigned long)r->mqtt_outbox_bytes,
+        r->mqtt_session_ready,r->mqtt_response_received,r->mqtt_stop_confirmed,r->mqtt_retained,(long)r->mqtt_connect_code);
     if(e==ESP_ERR_INVALID_STATE)request_stop=true;
     if(e!=ESP_OK||!r->complete||r->http_status<200||r->http_status>=300||r->tls_verify_flags){
         failures++;ESP_LOGW(TAG,"request_failed error=%ld status=%d parsed_http_status=%d stage=%u elapsed_ms=%llu dns=%ld resolved_ipv4=%lu tls_connected=%ld io=%ld last_read=%ld last_write=%ld rx=%lu tx=%lu tls_esp_error=%ld tls_stack_error=%ld tls_verify_flags=%ld whole_flush_attempted=%u whole_flush_succeeded=%u whole_flush_error=%ld",
@@ -245,30 +249,38 @@ static size_t capabilities(cp_v3_time_t t){
         "\"scanner\":{\"modes\":[\"passive\"],\"phys\":[\"1m\"],\"duplicate_filter\":[false],\"min_interval_units\":4,\"max_interval_units\":16384},"
         "\"summary\":{\"max_addresses\":512,\"max_bins\":12,\"max_window_ms\":60000},\"statistics\":{\"schemas\":[\"window-statistics/1\"],\"extractor_versions\":[\"cp-v3-stats/1\"],\"ruleset_versions\":[\"unclassified-v1\"]},"
         "\"temporal\":{\"slice_ms\":[2000],\"max_history_ms\":600000,\"max_tracks\":512,\"max_open_events\":64,\"max_event_ms\":3600000,\"event_schemas\":[\"candidate-event/1\"],\"report_modes\":[\"off\"]},\"local_raw\":null,"
-        "\"uplink\":{\"transports\":[\"https\"],\"streams\":[\"window_statistics\",\"node_status\"],\"max_batch_items\":1,\"max_body_bytes\":1024,\"max_sample_reports_per_window\":0,\"cpraw_archive\":false},"
+        "\"uplink\":{\"transports\":[\"%s\"],\"streams\":[\"window_statistics\",\"node_status\"],\"max_batch_items\":1,\"max_body_bytes\":1024,\"max_sample_reports_per_window\":0,\"cpraw_archive\":false},"
         "\"queue\":{\"media\":[{\"medium\":\"flash_journal\",\"usable_bytes\":3072,\"max_items\":3,\"power_loss_recovery\":true}]},\"resources\":{\"max_working_bytes\":%u,\"max_storage_write_bytes_per_day\":%u,\"tf_usable_bytes\":null}}",
-        id,node,boot,CP_V3_SMALL_PRODUCER,issued,until,TE_SMALL_WORKING,TE_SMALL_STORAGE_DAY);
+        id,node,boot,CP_V3_SMALL_PRODUCER,issued,until,bootstrap.transport==CP_V3_TRANSPORT_MQTT_TLS?"mqtt_tls":"https",TE_SMALL_WORKING,TE_SMALL_STORAGE_DAY);
     return n>0&&n<CP_V3_CONTROL_CAP_MAX?(size_t)n:0;
 }
 static cp_v3_apply_result_t apply(void *p,const cp_v3_trial_policy_t *policy,cp_v3_boundary_t *boundary){
     (void)p;if(boundary->window_open||boundary->segment_open||capture)return CP_V3_APPLY_BOUNDARY_FAILED;
-    if(!te_small_policy(policy))return CP_V3_APPLY_UNSUPPORTED;
+    if(!te_small_policy(policy)||policy->mqtt_tls!=(bootstrap.transport==CP_V3_TRANSPORT_MQTT_TLS))return CP_V3_APPLY_UNSUPPORTED;
     if(te_board_budget_bind_policy(&budgets,control)!=TE_BOARD_BUDGET_OK)return CP_V3_APPLY_STORAGE_FAILED;
     if(!te_board_budget_try_lock(&budgets))return CP_V3_APPLY_STORAGE_FAILED;
     size_t entries=0;bool space=audit(true,&entries)&&entries>=TE_NVS_PROFILE_ENTRIES;te_board_budget_unlock(&budgets);
     if(!space)return CP_V3_APPLY_RESOURCE_EXHAUSTED;
+    cp_v3_transport_memory_t memory_phase;
+    if(cp_v3_transport_begin_memory(1000,&memory_phase)!=ESP_OK)return CP_V3_APPLY_RESOURCE_EXHAUSTED;
     cp_v3_capture_config_t cfg={.statistics={.capacity=policy->stats_max_addresses,.window_ms=policy->window_ms,.bin_ms=policy->bin_ms,.rules_version=CP_V3_STATS_RULESET},
         .temporal_enabled=policy->temporal.rolling,.report_events=false,.context={1,policy->scope.assignment_generation,policy->scope.assignment_generation},
         .report_slots=128,.window_slots=2,.event_slots=1,.stop_after_windows=bootstrap.max_windows,
-        .min_internal_free=56000,.min_internal_largest=20000,.min_psram_free=512u*1024,.min_psram_largest=128u*1024,.clock=clock_copy,.entropy=entropy};
+        .min_internal_free=memory_phase.min_internal_free,.min_internal_largest=memory_phase.min_internal_largest,
+        .min_psram_free=512u*1024,.min_psram_largest=128u*1024,.clock=clock_copy,.entropy=entropy};
     cfg.temporal=(cp_v3_temporal_config_t){policy->temporal.max_tracks,policy->temporal.max_open_events,4,(uint16_t)policy->temporal.slice_ms,policy->temporal.history_ms,policy->temporal.gap_ms,policy->temporal.max_event_ms};
     size_t temporal=cfg.temporal_enabled?cp_v3_temporal_memory_bytes(&cfg.temporal):0;
     size_t estimate=temporal+cp_v3_stats_memory_bytes(policy->stats_max_addresses)+128u*(sizeof(cp_v3_stats_report_t)+1650u)+2u*sizeof(cp_v3_capture_window_t)+sizeof(cp_v3_capture_event_t)+65536u;
-    if((cfg.temporal_enabled&&!temporal)||estimate>policy->working_bytes)return CP_V3_APPLY_RESOURCE_EXHAUSTED;
+    estimate+=memory_phase.persistent_external_bytes;
+    if((cfg.temporal_enabled&&!temporal)||estimate>policy->working_bytes){cp_v3_transport_end_memory();return CP_V3_APPLY_RESOURCE_EXHAUSTED;}
     esp_err_t e=cp_v3_capture_prepare(&cfg,&capture);
+    cp_v3_transport_end_memory();
     cp_v3_capture_status_t s;if(e==ESP_OK)cp_v3_capture_status(capture,&s);else cp_v3_capture_prepare_status(&s);
     ESP_LOGI(TAG,"capture_prepare error=%ld stats=%u temporal=%u stats_align=%u/%u temporal_align=%u/%u",(long)e,(unsigned)s.statistics_bytes,(unsigned)s.temporal_bytes,s.statistics_alignment,s.statistics_alignment_remainder,s.temporal_alignment,s.temporal_alignment_remainder);
-    return e==ESP_OK&&s.prepared&&!s.running&&!s.failed?CP_V3_APPLY_OK:CP_V3_APPLY_RESOURCE_EXHAUSTED;
+    bool post_memory=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)>=memory_phase.min_internal_free&&
+        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)>=memory_phase.min_internal_largest&&
+        heap_caps_get_free_size(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)>=512u*1024&&heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)>=128u*1024;
+    return e==ESP_OK&&s.prepared&&!s.running&&!s.failed&&post_memory?CP_V3_APPLY_OK:CP_V3_APPLY_RESOURCE_EXHAUSTED;
 }
 static bool exchange(const char *stream,const char *path,const char *bytes,size_t n,uint32_t seq,bool lease){
     cp_v3_expected_t e={.scope=control->policy.scope,.seq_first=seq,.seq_last=seq,.accepted_count=1,.body_bytes=n};uuid(e.batch_id);strcpy(e.stream,stream);
@@ -367,7 +379,7 @@ void app_main(void){
 static bool run(void){
     cp_v3_transport_config_t cfg={.origin=bootstrap.origin,.server_ca_pem=bootstrap.server_ca_pem[0]?bootstrap.server_ca_pem:NULL,
         .clock_seed=bootstrap.clock_seed,.wifi_timeout_ms=10000,.request_timeout_ms=te_small_request_timeout_ms(bootstrap.origin),.server_clock_error_ms=1000,
-        .flush_dns_on_network_failure=!strcmp(bootstrap.origin,CP_API_ORIGIN)};
+        .flush_dns_on_network_failure=false,.mode=bootstrap.transport,.active_boot=boot};
     transport_started=true;if(cp_v3_transport_start(&bootstrap.settings,&cfg)!=ESP_OK)return false;
     if(!recover())return false;
     cp_v3_time_t t;if(!current(&t))return false;

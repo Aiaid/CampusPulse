@@ -185,17 +185,18 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
     /* Physical USB records are printable ASCII. Escaped JSON newlines are
      * decoded only within strings; encoded record size is bounded separately. */
     for (size_t i = 0; i < length; ++i) if ((unsigned char)json[i] < 32 || (unsigned char)json[i] > 126) return false;
-    bool ok = false, seen[12] = {0};
-    static const char *keys[] = {"node_id","boot_id","origin","device_token","ssid","password","utc_ms","uncertainty_ms","max_windows","security","anchor_mono_ms","server_ca_pem"};
-    char key[32] = {0}, given_boot[37] = {0}, security[16] = {0};
+    bool ok = false, seen[17] = {0};
+    static const char *keys[] = {"node_id","boot_id","origin","device_token","ssid","password","utc_ms","uncertainty_ms","max_windows","security","anchor_mono_ms","server_ca_pem",
+        "uplink_transport","mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace"};
+    char key[32] = {0}, given_boot[37] = {0}, security[16] = {0},transport[16]={0};
     uint64_t utc = 0, uncertainty = 0, windows = 0, anchor = 0;
     const char *p = json;
     space(&p); if (*p != '{') goto done; ++p;
     for (;;) {
         space(&p);
         if (!string(&p,key,sizeof key)) goto done;
-        unsigned k; for (k = 0; k < 12 && strcmp(key,keys[k]); ++k) {}
-        if (k == 12 || seen[k]) goto done;
+        unsigned k; for (k = 0; k < 17 && strcmp(key,keys[k]); ++k) {}
+        if (k == 17 || seen[k]) goto done;
         seen[k] = true;
         space(&p); if (*p != ':') goto done; ++p; space(&p);
         char *target = NULL; size_t cap = 0;
@@ -212,6 +213,11 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
             case 9: target = security; cap = sizeof security; break;
             case 10: if (!integer(&p,0,9007199254740991ULL,&anchor)) goto done; break;
             case 11: target = out->server_ca_pem; cap = sizeof out->server_ca_pem; break;
+            case 12: target = transport; cap = sizeof transport; break;
+            case 13: target = out->settings.mqtt_uri; cap = sizeof out->settings.mqtt_uri; break;
+            case 14: target = out->settings.mqtt_username; cap = sizeof out->settings.mqtt_username; break;
+            case 15: target = out->settings.mqtt_password; cap = sizeof out->settings.mqtt_password; break;
+            case 16: target = out->settings.mqtt_namespace; cap = sizeof out->settings.mqtt_namespace; break;
         }
         if (target && (!string(&p,target,cap) || (k != 11 && !ascii_text(target,k == 5)))) goto done;
         space(&p);
@@ -227,7 +233,17 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
     /* Production is one canonical origin and always the SDK public bundle.
      * A CA field is forbidden even when empty. Host CLI permission is checked
      * before USB; the physical frame cannot weaken the device TLS boundary. */
-    if(!cp_v3_transport_origin_allowed(out->origin,seen[11]))goto done;
+    bool production=!strcmp(out->origin,CP_API_ORIGIN);
+    /* Production defaults strictly to native MQTT. Diagnostics must explicitly
+     * choose HTTPS, never silently route a test endpoint through the broker. */
+    if(!seen[12]){if(!production)goto done;snprintf(transport,sizeof transport,"mqtt_tls");}
+    if(!strcmp(transport,"mqtt_tls")){
+        if(!production||seen[11]||!seen[13]||!seen[14]||!seen[15]||!seen[16]||!cp_settings_mqtt_ready(&out->settings))goto done;
+        out->transport=CP_V3_TRANSPORT_MQTT_TLS;
+    }else if(!strcmp(transport,"https")){
+        if(production||seen[13]||seen[14]||seen[15]||seen[16]||!cp_v3_transport_origin_allowed(out->origin,seen[11]))goto done;
+        out->transport=CP_V3_TRANSPORT_HTTPS;
+    }else goto done;
     uint64_t age = mono-anchor;
     utc += age; uncertainty += (age*500u+999999u)/1000000u;
     if (uncertainty > 2000) goto done;

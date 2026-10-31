@@ -134,6 +134,9 @@ class BootstrapTests(unittest.TestCase):
         self.wifi = dict(ssid="synthetic-wifi", password="wifi-secret-do-not-print")
         self.public_backend = dict(endpoint="https://trial.example.org:8443", device_bearer=SECRET,
                                    node_id=NODE, tls="public_ca_bundle", isolation="isolated-controlled-test")
+        self.production_backend = self.public_backend | dict(endpoint="https://pulse.anend.net",
+            mqtt_uri=host.PRODUCTION_MQTT_URI,mqtt_username="synthetic-broker-user",
+            mqtt_password="synthetic-broker-password",mqtt_namespace="synthetic-node")
 
     def frame(self, **kwargs):
         values = dict(backend=self.backend, wifi=self.wifi, hello=hello(), request_id=NONCE,
@@ -172,7 +175,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(value["anchor_mono_ms"], 1234)
         self.assertEqual(value["max_windows"], 3)
         self.assertNotIn("server_ca_file", value)
-        self.assertEqual(set(value), {"node_id", "boot_id", "origin", "device_token", "ssid", "password", "security", "utc_ms", "uncertainty_ms", "anchor_mono_ms", "max_windows", "server_ca_pem"})
+        self.assertEqual(set(value), {"node_id", "boot_id", "origin", "device_token", "ssid", "password", "security", "utc_ms", "uncertainty_ms", "anchor_mono_ms", "max_windows", "server_ca_pem", "uplink_transport"})
 
     def test_wrong_identity_boot_nonce_and_types(self):
         bad = [dict(node_id="cp_ffeeddccbbaa"), dict(boot_id="01234567-89ab-1cde-8123-456789abcdef"),
@@ -223,7 +226,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertNotIn("server_ca_file", value)
         self.assertNotIn("tls", value)
         self.assertEqual(set(value), {"node_id", "boot_id", "origin", "device_token", "ssid", "password",
-                                     "security", "utc_ms", "uncertainty_ms", "anchor_mono_ms", "max_windows"})
+                                     "security", "utc_ms", "uncertainty_ms", "anchor_mono_ms", "max_windows", "uplink_transport"})
 
     def test_public_mode_accepts_strict_dns_and_global_ipv4(self):
         for endpoint in ("https://trial.example.org", "https://trial.example.org:443",
@@ -569,13 +572,22 @@ class BootstrapTests(unittest.TestCase):
 
 
     def test_production_requires_separate_permission_and_bundle(self):
-        backend = self.public_backend | dict(endpoint="https://pulse.anend.net")
+        backend = self.production_backend
         for options in ({}, dict(allow_public_test=True)):
             with self.assertRaises(host.BootstrapError):
                 self.frame(backend=backend, **options)
         payload = json.loads(self.frame(backend=backend, allow_production=True)[8:])
         self.assertEqual(payload["origin"], backend["endpoint"])
         self.assertNotIn("server_ca_pem", payload)
+        self.assertEqual(payload["uplink_transport"],"mqtt_tls")
+        self.assertEqual(payload["mqtt_uri"],host.PRODUCTION_MQTT_URI)
+        for name in ("mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace"):
+            with self.assertRaises(host.BootstrapError):
+                self.frame(backend={k:v for k,v in backend.items() if k!=name},allow_production=True)
+        for change in (dict(uplink_transport="https"),dict(mqtt_uri="mqtts://other.example:8883"),
+                       dict(mqtt_uri=host.PRODUCTION_MQTT_URI+"/"),dict(mqtt_namespace="bad/namespace")):
+            with self.assertRaises(host.BootstrapError):
+                self.frame(backend=backend|change,allow_production=True)
         for fields in (dict(server_ca_pem=""), dict(server_ca_pem=self.ca), dict(server_ca_file="private"), dict(tls="other")):
             with self.assertRaises(host.BootstrapError):
                 self.frame(backend=backend | fields, allow_production=True)
@@ -589,7 +601,7 @@ class BootstrapTests(unittest.TestCase):
                 self.frame(backend=backend, allow_production=permission)
 
     def test_production_permission_survives_serial_call_chain(self):
-        backend = self.public_backend | dict(endpoint="https://pulse.anend.net")
+        backend = self.production_backend
         port = self.session(backend=backend, allow_production=True)
         self.assertEqual(json.loads(port.records[1][8:])["origin"], backend["endpoint"])
         for options in ({}, dict(allow_public_test=True)):

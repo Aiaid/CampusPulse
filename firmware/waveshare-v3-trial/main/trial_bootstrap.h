@@ -1,10 +1,12 @@
 #pragma once
 #include "cp_settings.h"
 #include "cp_v3_evidence.h"
+#include "cp_v3_transport.h"
 #include "esp_err.h"
 typedef struct {
     cp_settings_t settings;
     char origin[128];
+    cp_v3_transport_mode_t transport;
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
     /* Optional isolated-server test CA over USB; forbidden at CP_API_ORIGIN. */
     char server_ca_pem[4097];

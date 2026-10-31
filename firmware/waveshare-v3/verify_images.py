@@ -13,6 +13,7 @@ def verify(root):
                  'SPIRAM', 'SPIRAM_MODE_OCT', 'ESP_CONSOLE_USB_SERIAL_JTAG',
                  'MBEDTLS_HAVE_TIME', 'MBEDTLS_HAVE_TIME_DATE', 'MBEDTLS_CERTIFICATE_BUNDLE',
                  'MBEDTLS_EXTERNAL_MEM_ALLOC', 'MBEDTLS_DYNAMIC_BUFFER',
+                 'MQTT_OUTBOX_DATA_ON_EXTERNAL_MEMORY',
                  'BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL',
                  'BT_NIMBLE_ROLE_OBSERVER', 'ESP_COEX_SW_COEXIST_ENABLE'):
         assert f'CONFIG_{flag}=y' in config, flag
@@ -21,7 +22,8 @@ def verify(root):
     assert description['project_name'] == 'waveshare_v3'
     assert description['project_version'] == '0.3.2-original-ui'
     components = set(description['build_components'])
-    assert not components.intersection(('cp_network', 'cp_provision', 'cp_runtime', 'mqtt'))
+    assert not components.intersection(('cp_network', 'cp_provision', 'cp_runtime'))
+    assert {'mqtt', 'tcp_transport'} <= components
     assert {'cp_v3_control', 'cp_v3_transport', 'cp_v3_queue', 'cp_v3_budget', 'cp_v3_evidence', 'cp_v3_stats', 'cp_v3_temporal', 'cp_v3_small_results', 'cp_v3_capture'} <= components
     files = json.loads((root / 'flasher_args.json').read_text())['flash_files']
     assert {int(offset, 0) for offset in files} == {0, 0x8000, 0x10000}

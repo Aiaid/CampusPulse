@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "mqtt_native.h"
+#include "mqtt_protocol.h"
 #include "network_failure.h"
 #include "sdkconfig.h"
 #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
@@ -51,6 +53,12 @@ static bool active(void) { return !__atomic_load_n(&s_cancelled, __ATOMIC_ACQUIR
 static bool before(uint64_t deadline) { return active() && now_ms() < deadline; }
 static void pause_io(void) { vTaskDelay(pdMS_TO_TICKS(10) ?: 1); }
 static esp_err_t cancelled_or_timeout(void) { return active() ? ESP_ERR_TIMEOUT : ESP_ERR_INVALID_STATE; }
+esp_err_t cp_v3_transport_begin_memory(uint32_t timeout,cp_v3_transport_memory_t *phase){
+    if(!owner()||!active()||!phase)return ESP_ERR_INVALID_STATE;
+    if(s_config.mode==CP_V3_TRANSPORT_MQTT_TLS)return cp_v3_mqtt_begin_memory(timeout,phase);
+    *phase=(cp_v3_transport_memory_t){false,56000,20000,0};return ESP_OK;
+}
+void cp_v3_transport_end_memory(void){if(owner()&&s_config.mode==CP_V3_TRANSPORT_MQTT_TLS)cp_v3_mqtt_end_memory();}
 
 static void wifi_event(void *arg, esp_event_base_t base, int32_t event, void *data) {
     (void)arg; (void)data;
@@ -121,6 +129,7 @@ esp_err_t cp_v3_transport_time(cp_v3_time_t *out) {
     return ESP_OK;
 }
 esp_err_t cp_v3_transport_sync_clock(void) {
+    if(s_config.mode==CP_V3_TRANSPORT_MQTT_TLS)return ESP_ERR_NOT_SUPPORTED;
     if (!owner() || !active() || !s_date_known || s_anchor.clock_epoch == UINT32_MAX) return ESP_ERR_INVALID_STATE;
     cp_v3_time_t candidate = s_date;
     candidate.clock_epoch = s_anchor.clock_epoch + 1;
@@ -139,6 +148,15 @@ esp_err_t cp_v3_transport_stop(void) {
     if (!__atomic_load_n(&s_owner, __ATOMIC_ACQUIRE)) return ESP_OK;
     if (!owner()) return ESP_ERR_INVALID_STATE;
     cp_v3_transport_cancel();
+    if(s_config.mode==CP_V3_TRANSPORT_MQTT_TLS){
+        esp_err_t stopped=cp_v3_mqtt_stop();if(stopped!=ESP_OK){
+            /* Own radio only. Retain callback/client/credential storage, but
+             * contain any unsettled QoS outbox when SDK stop is unconfirmed. */
+            if(s_wifi_started){esp_err_t radio=esp_wifi_stop();if(radio==ESP_OK||radio==ESP_ERR_WIFI_NOT_STARTED)s_wifi_started=false;}
+            return stopped;
+        }
+        cp_v3_mqtt_clear();
+    }
     portENTER_CRITICAL(&s_dns_lock); ++s_dns_generation; portEXIT_CRITICAL(&s_dns_lock);
     /* Keep ownership/handles if a driver stop fails so cleanup can be retried. */
     if (s_wifi_started) {
@@ -172,12 +190,17 @@ esp_err_t cp_v3_transport_stop(void) {
 }
 esp_err_t cp_v3_transport_start(const cp_settings_t *settings, const cp_v3_transport_config_t *config) {
     cp_v3_origin_t origin; cp_v3_time_t current;
-    if (!settings || !config || !cp_settings_validate(settings) || !cp_v3_transport_origin(config->origin, &origin) ||
-        !cp_v3_transport_origin_allowed(config->origin, config->server_ca_pem != NULL) ||
+    if (!settings || !config || !cp_settings_validate(settings) ||
+        (config->mode!=CP_V3_TRANSPORT_HTTPS&&config->mode!=CP_V3_TRANSPORT_MQTT_TLS)||
         config->wifi_timeout_ms < 1000 || config->wifi_timeout_ms > 60000 ||
         config->request_timeout_ms < 1000 || config->request_timeout_ms > 30000 ||
         !config->server_clock_error_ms || config->server_clock_error_ms > 3000 ||
         !cp_v3_transport_anchor(&config->clock_seed, now_ms(), &current)) return ESP_ERR_INVALID_ARG;
+    memset(&origin,0,sizeof origin);
+    if(config->mode==CP_V3_TRANSPORT_HTTPS){
+        if(!config->origin||!strcmp(config->origin,CP_API_ORIGIN)||!cp_v3_transport_origin(config->origin,&origin)||
+           !cp_v3_transport_origin_allowed(config->origin,config->server_ca_pem!=NULL))return ESP_ERR_INVALID_ARG;
+    }else if(!cp_v3_mqtt_config_valid(settings,config))return ESP_ERR_INVALID_ARG;
     if (config->server_ca_pem && (strnlen(config->server_ca_pem, 16385) > 16384 ||
         !strstr(config->server_ca_pem, "-----BEGIN CERTIFICATE-----"))) return ESP_ERR_INVALID_ARG;
 #if !CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
@@ -242,6 +265,10 @@ esp_err_t cp_v3_transport_start(const cp_settings_t *settings, const cp_v3_trans
     uint64_t deadline = now_ms() + config->wifi_timeout_ms;
     while (before(deadline) && !__atomic_load_n(&s_link, __ATOMIC_ACQUIRE)) pause_io();
     if (!before(deadline)) { result = cancelled_or_timeout(); goto failed; }
+    if(config->mode==CP_V3_TRANSPORT_MQTT_TLS){
+        result=cp_v3_mqtt_configure(settings,config->active_boot,config->request_timeout_ms);
+        if(result!=ESP_OK)goto failed;
+    }
     return ESP_OK;
 failed: {
     esp_err_t cleanup = cp_v3_transport_stop();
@@ -276,6 +303,15 @@ static esp_err_t request_mode(cp_v3_http_method_t method, const char *path,
     cp_v3_time_t current;
     if (cp_v3_transport_time(&current) != ESP_OK) return ESP_ERR_INVALID_STATE;
     s_date_known = false;
+    if(s_config.mode==CP_V3_TRANSPORT_MQTT_TLS){
+        esp_err_t mqtt=cp_v3_mqtt_request(method,path,body,length,receipt_only,response,capacity,out,active);
+        if(out->mqtt_retained){
+            cp_v3_transport_cancel();
+            if(s_wifi_started){esp_err_t radio=esp_wifi_stop();if(radio==ESP_OK||radio==ESP_ERR_WIFI_NOT_STARTED)s_wifi_started=false;}
+            return ESP_ERR_INVALID_STATE;
+        }
+        return mqtt;
+    }
     uint64_t started = now_ms(), deadline = started + s_config.request_timeout_ms;
     out->stage = CP_V3_TRANSPORT_DNS;
     char address[16]; esp_err_t result = resolve(address, deadline);

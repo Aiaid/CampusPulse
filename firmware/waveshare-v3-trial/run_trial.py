@@ -81,6 +81,7 @@ def main():
         # Physical host clock is a trusted test input with a declared 250 ms
         # absolute-error allowance; RTT bounds the device HELLO instant.
         bootstrap = dict(node_id=identity['node_id'], boot_id=identity['boot_id'],
+                         uplink_transport='https',
                          origin=backend['endpoint'], device_token=backend['device_bearer'],
                          ssid=wifi['ssid'], password=wifi['password'], security='personal',
                          utc_ms=(sent_wall + received_wall) // 2,

@@ -1,3 +1,52 @@
+# Independent V3 native MQTT/TLS transport
+
+Current production mode (2026-10-31) is `CP_V3_TRANSPORT_MQTT_TLS`, with logical
+`CP_API_ORIGIN`, a current `active_boot` UUID and the existing settings' fixed
+`CP_MQTT_PRODUCTION_URI` plus independent broker credentials. It uses the system
+CA bundle with strict hostname/date checks. Production has no HTTPS/proxy
+fallback; `CP_V3_TRANSPORT_HTTPS` is retained for isolated diagnostics only.
+The old `cp_network` owner is never linked or started. Its pure MQTT validators,
+resource constants, lease and fragment/correlation design are reused by reference;
+the old v2 default2048-byte reply bound stays unchanged.
+
+The [V3 wire contract](../../../docs/specs/device-v3-mqtt.md) wraps original
+requests in8 bytes: `CPV3`, version1, subop1..5, receipt-only bit0, reserved0.
+Bodies are at most8192 bytes; config has no body. Topics retain
+`cp/v1/<namespace>/<active_boot>/req/ingest/<rpc>` and corresponding replies.
+Responses are2-byte big-endian status plus at most8192 original CF JSON bytes.
+No body, hash, old-boot scope or receipt is regenerated while changing transport.
+The transport RPC high-water counter is separate boot-lifetime state: reconnect
+and explicit stop/start with the same active boot preserve it. A different
+node/namespace/boot in the same firmware boot is rejected; uint32 exhaustion
+stops admission. No connection reset clears the gateway correlation sequence.
+
+Requests publish QoS1/nonretained, replies subscribe QoS0/nonretained. Callback
+work is bounded scalar/fragment copying and signaling only. Full correlated
+response + matching PUBACK + empty SDK outbox establishes transport completion,
+not custody: the app must still validate the original full strict CF receipt.
+Auto-reconnect is disabled and SDK retransmit timeout lies far beyond the bounded
+attempt. Every failed/unknown request stops the client before another application
+attempt; unconfirmed stop retains all reachable storage and the owner attempts
+radio containment. Never reclaim from a PUBACK or partial reply.
+
+External state/reply/frame, TLS and S3 outbox data use PSRAM. Cold/hot admission
+keeps nonzero internal and PSRAM floors. Owner `begin_memory`/`end_memory` leases
+serialize hot IO allocations and expose actual session phase/floors to collector
+admission. Do not call MQTT/start/request/stop while holding the lease. The parent
+TLS handle is read by the owner after CONNECTED, not by the event callback.
+Cold/hot numeric heap phases are measured independently; no build/test sets
+physical qualification flags. Callback stack watermark0 is explicitly unknown.
+
+The trusted host/RTC anchor remains the transport clock. MQTT never supplies or
+fakes an HTTP Date; ISO receipt times are checked by the existing control code.
+No credentials, topics, payloads or identifiers are logged. Native MQTT resources,
+continuous RF/coexistence, reconnect and power-loss still require device acceptance.
+
+## Historical HTTPS implementation and isolated diagnostics
+
+The following earlier HTTPS notes describe the retained diagnostic plumbing.
+Any earlier production-HTTPS statement is superseded by the native mode above.
+
 # Optional v3 HTTPS transport
 
 This component supplies a single-task Wi-Fi/TLS/time owner for an explicitly

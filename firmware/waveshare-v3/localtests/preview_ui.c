@@ -118,6 +118,7 @@ int main(int argc, char **argv) {
         if (variant == 8) { m.raw_policy_enabled = m.raw_active = false; s.written = s.synced = 0; }
         if (variant == 9) { s.received = s.dropped = s.written = s.synced = s.reports_per_second = 0; memset(s.report_bins, 0, sizeof s.report_bins); }
         if (variant == 10) { m.phase = EDGE_UI_ERROR; m.raw_active = m.tf_mounted = false; m.raw_fault = m.storage_fault = true; s.setup_available = true; s.storage_errors = 42; }
+        m.transport_known=m.phase!=EDGE_UI_WAIT_USB;m.mqtt_tls=(variant%2)==0;
         edge_ui_state(&m);
         for (unsigned page = 0; page < 5; ++page) {
             s.page = page; char filename[64]; snprintf(filename, sizeof filename, "%s-page-%u", name, page + 1);
@@ -126,6 +127,7 @@ int main(int argc, char **argv) {
             if (page == 0 && !has_label(screen, "ETA -- 待标定")) return 1;
             if (page == 0 && variant == 7 && !has_label(screen, "TF 未挂载")) return 1;
             if (page == 0 && !has_label(screen, "设备诊断")) return 1;
+            if(page==0&&m.transport_known){char uplink[64];snprintf(uplink,sizeof uplink,"%s%s",m.mqtt_tls?"MQTT ":"HTTPS ",!s.wifi_enabled?"Wi-Fi 关闭":s.wifi_connected?"Wi-Fi 已连接":"Wi-Fi 未连接");if(!has_label(screen,uplink))return 1;}
             if (page == 1 && (!has_label(screen, "上一窗接收") || !has_label(screen, "已确认窗") || !has_label(screen, "接收趋势"))) return 1;
             if (page == 2 && (!has_label(screen, "车辆候选 / 未分析") || !has_label(screen, "品牌名称  --"))) return 1;
             if (page == 2 && variant == 8 && (!has_label(screen, "当前仅采集V3统计") || !has_label(screen, "本地原始记录已关闭"))) return 1;

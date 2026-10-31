@@ -16,12 +16,17 @@ legacy_spec.loader.exec_module(legacy)
 
 class HostOrigin(unittest.TestCase):
     def backend(self, origin=None, **extra):
-        return dict(endpoint=origin or runner.PRODUCTION_ORIGIN, tls='public_ca_bundle', **extra)
+        origin=origin or runner.PRODUCTION_ORIGIN
+        value=dict(endpoint=origin,tls='public_ca_bundle',uplink_transport='mqtt_tls' if origin==runner.PRODUCTION_ORIGIN else 'https')
+        if value['uplink_transport']=='mqtt_tls':value.update(mqtt_uri=runner.MQTT_URI,mqtt_username='synthetic-user',mqtt_password='synthetic-password',mqtt_namespace='synthetic')
+        value.update(extra);return value
 
     def test_production_constant_matches_firmware(self):
         settings = (ROOT / 'firmware/components/cp_settings/include/cp_settings.h').read_text()
         value = re.search(r'^#define CP_API_ORIGIN "([^"]+)"$', settings, re.MULTILINE)[1]
         self.assertEqual(runner.PRODUCTION_ORIGIN, value)
+        broker = re.search(r'^#define CP_MQTT_PRODUCTION_URI "([^"]+)"$', settings, re.MULTILINE)[1]
+        self.assertEqual(runner.MQTT_URI,broker)
 
     def test_production_requires_own_explicit_flag(self):
         for public in (False, True):
@@ -29,6 +34,20 @@ class HostOrigin(unittest.TestCase):
                 runner.validate_backend(self.backend(), allow_public_test=public)
             self.assertEqual(runner.validate_backend(self.backend(), allow_production=True,
                                                      allow_public_test=public), runner.PRODUCTION_ORIGIN)
+
+    def test_production_mqtt_required_without_https_fallback(self):
+        for key in runner.MQTT_KEYS:
+            value=self.backend();value.pop(key)
+            with self.assertRaises(ValueError):runner.validate_backend(value,allow_production=True)
+        for key,value in [('uplink_transport','https'),('mqtt_uri','mqtts://elsewhere.invalid:8883'),
+                          ('mqtt_password','bad password'),('mqtt_namespace','bad/topic')]:
+            backend=self.backend();backend[key]=value
+            with self.assertRaises(ValueError):runner.validate_backend(backend,allow_production=True)
+        backend=self.backend();backend.pop('uplink_transport')
+        self.assertEqual(runner.validate_backend(backend,allow_production=True),runner.PRODUCTION_ORIGIN)
+        for origin in ('https://192.168.1.2:8799','https://isolated.example'):
+            backend=self.backend();backend['endpoint']=origin
+            with self.assertRaises(ValueError):runner.validate_backend(backend,allow_production=True,allow_public_test=True)
 
     def test_production_rejects_aliases_ports_and_tls_overrides(self):
         bad = [runner.PRODUCTION_ORIGIN + suffix for suffix in (':443', ':8443', '/', '.', '?x=1', '#x')]

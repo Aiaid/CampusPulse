@@ -993,3 +993,12 @@ existing board budget/small-queue adapters and `cp_v3_*` components. Only actual
 model/pin facts are referenced from LILYGO's official documentation; no GPL
 vendor application is copied. The earlier strict qualification experiment stays
 in source, separately from the bounded runtime and its physical acceptance.
+
+The 2026-10-31 native V3 MQTT adapter reuses this repository's
+`cp_network/mqtt_wss.c` native callback, confirmed-stop and I/O-gate design,
+and the pure validators/lease helpers in `mqtt_rpc.h`. It does not link or
+initialize the old network owner, and the old V2 2048-byte reply limit is
+unchanged. The CPV3 frame, separate bounded reply assembler and boot/RPC
+high-water tracking are newly authored here. ESP-IDF, esp-mqtt and mbedTLS keep
+their existing dependency notices; no external private source, capture or
+credential is imported into tracked files.

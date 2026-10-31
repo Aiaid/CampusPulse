@@ -31,6 +31,9 @@ async function add(name,mutate,expected='small'){
  cases.push({name,expected,caps:c,cap_hash,policy_hash:frozen.policy_sha256,response:response(frozen),next_response:nextResponse,third_response:thirdResponse});
 }
 await add('small-512');
+await add('small-mqtt',(c,p)=>{c.uplink.transports=['mqtt_tls'];p.uplink.transport='mqtt_tls';});
+await add('small-mqtt-policy-https-cap',(_c,p)=>{p.uplink.transport='mqtt_tls';},'reject');
+await add('small-https-policy-mqtt-cap',(c)=>{c.uplink.transports=['mqtt_tls'];},'reject');
 await add('small-mobile-256-1024',(c,p)=>{p.collection.mode='mobile_research';p.collection.summary.window_ms=30000;p.collection.summary.max_addresses=256;c.uplink.max_body_bytes=p.uplink.max_body_bytes=1024;});
 await add('small-temporal-off',(c,p)=>{p.temporal={mode:'off'};delete c.temporal;});
 await add('small-tf-raw',(c,p)=>{p.local_raw={mode:'tf_cpraw',format:'cpraw/1',max_segment_bytes:1048576,max_total_bytes:16777216,min_free_bytes:1048576,sync_interval_ms:1000,full_behavior:'stop_recording'};});

@@ -46,6 +46,7 @@ LAN_NETS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12"
 # Keep aligned with firmware/components/cp_settings/include/cp_settings.h;
 # the host test checks this against CP_API_ORIGIN without runtime file IO.
 PRODUCTION_HOST = "pulse.anend.net"
+PRODUCTION_MQTT_URI = "mqtts://q9a692f8.ala.cn-hangzhou.emqxsl.cn:8883"
 DNS_LABEL_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\Z")
 
 
@@ -191,12 +192,26 @@ def validate_inputs(backend, wifi, *, allow_public_test=False, allow_production=
             raise BootstrapError("invalid T-Energy node identity")
         origin = _text(backend["endpoint"], 1, 127)
         ca_fields = {}
+        transport = backend.get("uplink_transport", "mqtt_tls" if allow_production else "https")
+        mqtt_fields = {}
         if allow_production:
             if origin != "https://" + PRODUCTION_HOST:
                 raise BootstrapError("production permission requires the canonical production origin")
             if (backend.get("tls") != "public_ca_bundle"
                     or any(key.startswith("server_ca_") for key in backend)):
                 raise BootstrapError("production requires the public CA bundle without private CA fields")
+            if transport != "mqtt_tls":
+                raise BootstrapError("production requires native MQTT/TLS; HTTPS fallback is forbidden")
+            if backend.get("mqtt_uri") != PRODUCTION_MQTT_URI:
+                raise BootstrapError("the fixed production MQTT broker is required")
+            username = _text(backend["mqtt_username"], 1, 128)
+            broker_password = _text(backend["mqtt_password"], 1, 256)
+            namespace = _text(backend["mqtt_namespace"], 1, 15)
+            if (any(ord(c) < 33 or ord(c) > 126 for c in username + broker_password)
+                    or not re.fullmatch(r"[a-z0-9_-]{1,15}", namespace)):
+                raise BootstrapError("invalid private MQTT settings")
+            mqtt_fields = dict(mqtt_uri=PRODUCTION_MQTT_URI, mqtt_username=username,
+                               mqtt_password=broker_password, mqtt_namespace=namespace)
         elif allow_public_test:
             validate_public_origin(origin)
             if (backend.get("tls") != "public_ca_bundle"
@@ -210,6 +225,8 @@ def validate_inputs(backend, wifi, *, allow_public_test=False, allow_production=
             if not any(ip in network for network in LAN_NETS) or (match[2] and int(match[2]) > 65535):
                 raise BootstrapError("endpoint must be an isolated HTTPS LAN IPv4 origin")
             ca_fields["server_ca_pem"] = validate_ca(backend["server_ca_pem"])
+        if not allow_production and transport != "https":
+            raise BootstrapError("nonproduction diagnostics require explicit HTTPS transport")
         token = _text(backend["device_bearer"], 32, 192)
         if not re.fullmatch(r"[A-Za-z0-9_-]+", token):
             raise BootstrapError("invalid device bearer")
@@ -220,7 +237,8 @@ def validate_inputs(backend, wifi, *, allow_public_test=False, allow_production=
         if wifi.get("security", "personal") != "personal":
             raise BootstrapError("only personal Wi-Fi is supported")
         return dict(node_id=node, origin=origin, device_token=token,
-                    ssid=ssid, password=password, security="personal", **ca_fields)
+                    ssid=ssid, password=password, security="personal", uplink_transport=transport,
+                    **ca_fields, **mqtt_fields)
     except (KeyError, TypeError, ValueError):
         raise BootstrapError("invalid private bootstrap configuration") from None
 
@@ -415,7 +433,7 @@ def main(argv=None):
     parser.add_argument("--send", action="store_true", help="explicitly open USB and send the bounded runtime bootstrap")
     origins = parser.add_mutually_exclusive_group()
     origins.add_argument("--allow-public-test", action="store_true", help="explicitly permit an isolated HTTPS DNS/public IPv4 test origin using the public CA bundle; does not enable USB")
-    origins.add_argument("--allow-production", action="store_true", help="explicitly permit only canonical https://pulse.anend.net with the public CA bundle; does not enable USB")
+    origins.add_argument("--allow-production", action="store_true", help="permit native MQTT/TLS with canonical logical origin and fixed-broker credentials/system CA; does not enable USB")
     parser.add_argument("--port")
     parser.add_argument("--windows", type=int, choices=(1, 2, 3), default=1)
     args = parser.parse_args(argv)

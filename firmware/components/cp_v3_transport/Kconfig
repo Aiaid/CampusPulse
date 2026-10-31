@@ -1,0 +1,8 @@
+config CP_V3_NATIVE_MQTT
+    bool "Build native MQTT/TLS for the independent V3 transport"
+    default y
+    select MQTT_PROTOCOL_311
+    select MQTT_TRANSPORT_SSL
+    help
+        Uses only the independent V3 network owner. Does not start the older
+        cp_network runtime. The application explicitly selects the transport.

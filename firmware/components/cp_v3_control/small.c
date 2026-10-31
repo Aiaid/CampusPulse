@@ -58,8 +58,9 @@ bool v3_small_caps(cp_v3_control_t *c){
         if(!v3_fields(w,a,"formats max_segment_bytes min_sync_interval_ms")||!v3_array_exact(w,f(w,a,"formats"),"cpraw/1")||
             !u(w,a,"max_segment_bytes",1,V3_BYTES_MAX,&c->capability_raw_segment_bytes)||!n(w,a,"min_sync_interval_ms",100,60000,&c->capability_raw_sync_ms))return false;
         c->capability_local_raw=true;}
-    a=f(w,0,"uplink");if(!v3_fields(w,a,"transports streams max_batch_items max_body_bytes max_sample_reports_per_window cpraw_archive")||
-        !v3_array_exact(w,f(w,a,"transports"),"https")||!streams(w,f(w,a,"streams"),&c->capability_events)||!u(w,a,"max_batch_items",1,1,&ignored)||
+    a=f(w,0,"uplink");c->capability_mqtt_tls=v3_array_exact(w,f(w,a,"transports"),"mqtt_tls");
+    if(!v3_fields(w,a,"transports streams max_batch_items max_body_bytes max_sample_reports_per_window cpraw_archive")||
+        (!c->capability_mqtt_tls&&!v3_array_exact(w,f(w,a,"transports"),"https"))||!streams(w,f(w,a,"streams"),&c->capability_events)||!u(w,a,"max_batch_items",1,1,&ignored)||
         !n(w,a,"max_body_bytes",512,4096,&c->capability_body_bytes)||!u(w,a,"max_sample_reports_per_window",0,0,&ignored)||!no(w,a,"cpraw_archive"))return false;
     a=f(w,0,"queue");if(!v3_fields(w,a,"media")||!v3_is(w,f(w,a,"media"),V3_ARRAY))return false;a=w->tokens[f(w,a,"media")].first;
     if(a==V3_NONE||w->tokens[a].next!=V3_NONE||!v3_fields(w,a,"medium usable_bytes max_items power_loss_recovery"))return false;
@@ -109,8 +110,9 @@ bool v3_small_policy(cp_v3_control_t *c,int root,cp_v3_trial_policy_t *p){
         unsigned mode=mode_bit(w,f(w,a,"report_mode"));if(!(mode&c->capability_report_modes))return false;
         t->report_mode=mode==1?CP_V3_TEMPORAL_REPORT_OFF:mode==2?CP_V3_TEMPORAL_REPORT_TERMINAL:CP_V3_TEMPORAL_REPORT_REVISIONS;t->rolling=true;
     }
-    a=f(w,root,"uplink");if(!v3_fields(w,a,"enabled transport streams max_batch_items max_body_bytes retry raw_sample archive")||!yes(w,a,"enabled")||
-        !eq(w,a,"transport","https")||!streams(w,f(w,a,"streams"),&p->candidate_events)||(p->candidate_events&&!c->capability_events)||
+    a=f(w,root,"uplink");p->mqtt_tls=eq(w,a,"transport","mqtt_tls");
+    if(!v3_fields(w,a,"enabled transport streams max_batch_items max_body_bytes retry raw_sample archive")||!yes(w,a,"enabled")||
+        (!p->mqtt_tls&&!eq(w,a,"transport","https"))||p->mqtt_tls!=c->capability_mqtt_tls||!streams(w,f(w,a,"streams"),&p->candidate_events)||(p->candidate_events&&!c->capability_events)||
         !u(w,a,"max_batch_items",1,1,&ignored)||!n(w,a,"max_body_bytes",512,c->capability_body_bytes,&p->max_body_bytes))return false;
     if(p->candidate_events!= (t->rolling&&t->report_mode!=CP_V3_TEMPORAL_REPORT_OFF))return false;
     b=f(w,a,"raw_sample");if(!v3_fields(w,b,"mode")||!eq(w,b,"mode","off"))return false;

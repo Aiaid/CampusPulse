@@ -210,7 +210,8 @@ void raw_ui_update(const raw_display_snapshot_t *s) {
     lv_label_set_text(s_status, phase_text(m.phase));
     char t[128], n[32], a[32], b[32];
     if (page == 0) {
-        lv_label_set_text(s_labels[0], !s->wifi_enabled ? "Wi-Fi 关闭" : s->wifi_connected ? "Wi-Fi 已连接" : "Wi-Fi 未连接");
+        snprintf(t,sizeof t,"%s%s",m.transport_known?(m.mqtt_tls?"MQTT ":"HTTPS "):"",!s->wifi_enabled?"Wi-Fi 关闭":s->wifi_connected?"Wi-Fi 已连接":"Wi-Fi 未连接");
+        fit(s_labels[0],t);
         snprintf(t, sizeof t, "SSID %.*s", (int)sizeof s->wifi_ssid, s->wifi_connected && s->wifi_ssid[0] ? s->wifi_ssid : "--"); fit(s_labels[1], t);
         if (s->wifi_connected && s->wifi_rssi_known) snprintf(t, sizeof t, "RSSI %d", s->wifi_rssi); else strcpy(t, "RSSI --"); fit(s_labels[2], t);
         snprintf(t, sizeof t, "IP %.*s", (int)sizeof s->ip, s->wifi_connected && s->ip[0] ? s->ip : "--"); fit(s_labels[3], t);

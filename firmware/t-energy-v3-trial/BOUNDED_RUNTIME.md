@@ -3,6 +3,13 @@
 Status (2026-10-31): standalone runtime implemented; host/build evidence is
 separate from actual device acceptance. No physical operation is implied here.
 
+The latest production transport is native MQTT/TLS via the fixed Hangzhou
+EMQX broker and Cloudflare service, replacing the earlier HTTPS trial transport.
+The [wire contract](../../docs/specs/device-v3-mqtt.md) preserves original frozen
+body bytes/SHA/identity and requires the original full CF receipt. Broker PUBACK
+alone never releases custody. HTTPS below refers to historical acceptance or
+nonproduction diagnostics; current production bootstrap is MQTT-only.
+
 The official [LILYGO T-Energy-S3 repository](https://github.com/Xinyuan-LilyGO/T-Energy-S3)
 lists V1.0, ESP32-S3-R8, 16 MB Flash and 8 MB octal PSRAM. Only pin/model facts
 are referenced; no vendor application code was imported. Existing NVS `0x9000`/

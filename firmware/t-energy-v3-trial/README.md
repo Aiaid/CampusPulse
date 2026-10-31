@@ -1,6 +1,6 @@
 # T-Energy-S3 bounded V3 small-statistics runtime
 
-The compiled entry is `main/small_runtime.c`, version `0.3.1-te-small-bounded`.
+The compiled entry is `main/small_runtime.c`, version `0.3.2-te-native-mqtt`.
 It runs **one to three 30/60-second windows** after a fresh physical USB bootstrap.
 It uses shared capture/statistics/temporal/control/receipt code, with no TF,
 screen, raw upload, per-address upload, saved network secret or automatic reboot.
@@ -48,30 +48,38 @@ Old `main.c`, strict capability builder and coordinator remain separate, unused
 experiments with their qualification gate off. No CPU/scanner/power-loss
 verified flag from those experiments is manufactured.
 
-Production needs `tools/host_bootstrap.py --allow-production`, the exact
-`https://pulse.anend.net` origin, `tls="public_ca_bundle"` and no `server_ca_*`
-fields. Explicit `:443`, other ports and aliases are rejected.
-`--allow-public-test` independently permits isolated public tests; it cannot
-authorize production. Default LAN tests require an explicit CA. The actual
-board parser shares the transport preflight; certificate, hostname and time
-verification stay enabled.
-The configured request deadline is30 seconds for that exact production origin
-and15 seconds for other test origins. SDK socket/select calls can overrun it;
-this setting is not a guaranteed hard wall-clock bound.
-Startup registration makes at most three attempts with the same frozen
-capability/body/sequence/uptime, with1s/2s backoff and the original persistent
-POST budget charged before every attempt. Known terminal HTTP status, explicit
-nonretryable errors, cancellation and non-network certificate/TLS failures stop
-retries. A partial2xx receipt can trigger an exact retry but never counts as
-registration success or collection authority.
+Production uses **native MQTT/TLS to the fixed Hangzhou EMQX broker, then the
+Cloudflare service**. The host must use `--allow-production`, logical endpoint
+`https://pulse.anend.net`, `uplink_transport="mqtt_tls"`, `tls="public_ca_bundle"`
+and flat `mqtt_uri`, `mqtt_username`, `mqtt_password`, `mqtt_namespace` fields.
+The URI must equal `CP_MQTT_PRODUCTION_URI`; no custom CA is accepted. Missing
+broker credentials fail closed. Production HTTPS and proxy fallback are rejected.
+Nonproduction HTTPS diagnostics remain available with explicit host permission.
 
-Only this bounded runtime's exact canonical production origin opts into the
-transport's whole SDK DNS-cache flush after a qualifying network failure. It
-keeps DHCP DNS servers and strict hostname/CA checks. The SDK flush affects
-the entire cache and can cancel unrelated in-flight DNS queries; this app owns
-all outbound requests and runs no other DNS client. The option defaults false
-and is unsuitable for a shared network owner. Any parsed HTTP status prevents
-flushing; no claim is made that the next DNS response selects a different IP.
+V3 uses the existing `req/ingest/<rpc>` topic and an8-byte CPV3 frame. Frozen
+body bytes, hashes, old boot identity and receipt-only recovery remain exact.
+A broker PUBACK is not Cloudflare custody: a full correlated reply, matching
+PUBACK and empty SDK outbox only make the transport response complete; the
+existing strict application receipt is still mandatory before queue reclamation.
+Timeout/disconnect/unsettled outbox forces confirmed SDK stop. Unknown stop
+retains callback/client/body storage and attempts to stop this owner's radio.
+There is no auto-reconnect or hidden application retry; every application retry
+first charges its unchanged logical body against the persistent uplink budget.
+
+Registration preserves one capability/body/sequence/uptime for at most three
+attempts, with1s/2s backoff. Logical request deadlines remain30 seconds on the
+production profile and15 seconds for diagnostics; SDK calls can overrun those
+bounds. MQTT uses the trusted host clock seed and typed server receipts, never
+a fabricated HTTP Date. No MQTT failure changes the configured DNS server,
+chooses a new IP or disables hostname/CA/time verification.
+
+MQTT state,8192-byte reply and8200-byte frame are explicitly in PSRAM. The S3
+profile enables external TLS/outbox data. Actual cold/hot phases are measured;
+the owner-only memory lease serializes hot TLS IO with collector allocation.
+Cold internal admission remains57344/20480 bytes; a verified connected/subscribed,
+empty-outbox hot state uses28936/17058 bytes. PSRAM free/largest remain512 KiB/
+128 KiB. These are conservative admission guards, not measured endurance or
+radio-capacity qualification. Callback stack watermark0 means unknown.
 
 Build with activated ESP-IDF 5.5.3 and `./build.sh`; temporary separate images
 and partition-boundary checks run without opening a device. From the repository

@@ -31,6 +31,7 @@ class BootstrapOrigin(unittest.TestCase):
                                 *['-I' + str(ROOT / 'firmware/components' / name / 'include')
                                   for name in ('cp_settings', 'cp_v3_evidence', 'cp_v3_transport')],
                                 str(PROJECT / 'localtests/bootstrap_origin_test.c'),
+                                str(ROOT / 'firmware/components/cp_settings/settings_validate.c'),
                                 str(component / 'protocol.c'), str(parser / 'http_parser.c'),
                                 str(upstream), '-o', str(binary)], check=True)
                 subprocess.run([str(binary)], check=True)

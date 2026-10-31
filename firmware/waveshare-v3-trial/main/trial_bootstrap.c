@@ -34,10 +34,10 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
     if(strstr(json,"\\u0000")){trial_bootstrap_clear(out);return false;}
     const char *end = NULL;
     cJSON *root = cJSON_ParseWithOpts(json, &end, true);
-    bool ok = cJSON_IsObject(root), seen[12] = {0};
-    static const char *keys[] = {"node_id","boot_id","origin","device_token","ssid","password","utc_ms","uncertainty_ms","max_windows","security","anchor_mono_ms"
+    bool ok = cJSON_IsObject(root), seen[17] = {0};
+    static const char *keys[] = {"node_id","boot_id","origin","device_token","ssid","password","utc_ms","uncertainty_ms","max_windows","security","anchor_mono_ms","uplink_transport"
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
-        ,"server_ca_pem"
+        ,"server_ca_pem","mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace"
 #endif
     };
     const unsigned key_count=sizeof keys/sizeof keys[0];
@@ -46,11 +46,12 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
         unsigned k; for (k = 0; k < key_count && strcmp(v->string, keys[k]); ++k) {}
         if (k == key_count || seen[k]) { ok = false; break; } seen[k] = true;
     }
-    for (unsigned k = 0; k < 11; ++k) if (!seen[k]) ok = false;
-    char given_boot[37] = {0}, security[16] = {0}; uint64_t utc = 0, uncertainty = 0, windows = 0, anchor=0;
+    for (unsigned k = 0; k < 12; ++k) if (!seen[k]) ok = false;
+    char given_boot[37] = {0}, security[16] = {0},transport[16]={0}; uint64_t utc = 0, uncertainty = 0, windows = 0, anchor=0;
     if (ok) ok = text(root,"node_id",out->settings.node_id,sizeof out->settings.node_id,false) &&
         text(root,"boot_id",given_boot,sizeof given_boot,false) && !strcmp(node,out->settings.node_id) && !strcmp(boot,given_boot) &&
         text(root,"origin",out->origin,sizeof out->origin,false) &&
+        text(root,"uplink_transport",transport,sizeof transport,false) &&
         text(root,"device_token",out->settings.device_token,sizeof out->settings.device_token,false) &&
         text(root,"ssid",out->settings.ssid,sizeof out->settings.ssid,false) &&
         text(root,"password",out->settings.password,sizeof out->settings.password,true) &&
@@ -76,6 +77,26 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
         if(ok)snprintf(out->server_ca_pem,sizeof out->server_ca_pem,"%s",ca->valuestring);
     }
 #endif
+    if(ok){
+        if(!strcmp(transport,"https")){
+            out->transport=CP_V3_TRANSPORT_HTTPS;
+            ok=strcmp(out->origin,CP_API_ORIGIN)!=0;
+            const char *mqtt_keys[]={"mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace"};
+            for(unsigned i=0;i<4;i++)if(cJSON_GetObjectItemCaseSensitive(root,mqtt_keys[i]))ok=false;
+        }
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+        else if(!strcmp(transport,"mqtt_tls")){
+            out->transport=CP_V3_TRANSPORT_MQTT_TLS;
+            ok=!strcmp(out->origin,CP_API_ORIGIN)&&!cJSON_GetObjectItemCaseSensitive(root,"server_ca_pem")&&
+                text(root,"mqtt_uri",out->settings.mqtt_uri,sizeof out->settings.mqtt_uri,false)&&
+                text(root,"mqtt_username",out->settings.mqtt_username,sizeof out->settings.mqtt_username,false)&&
+                text(root,"mqtt_password",out->settings.mqtt_password,sizeof out->settings.mqtt_password,false)&&
+                text(root,"mqtt_namespace",out->settings.mqtt_namespace,sizeof out->settings.mqtt_namespace,false)&&
+                cp_settings_mqtt_ready(&out->settings);
+        }
+#endif
+        else ok=false;
+    }
     if (ok) ok = cp_v3_transport_origin_allowed(out->origin,
         cJSON_GetObjectItemCaseSensitive(root,"server_ca_pem") != NULL);
     if (ok) {
@@ -87,7 +108,7 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
         out->max_windows = (unsigned)windows;
     }
     for (cJSON *v = root ? root->child : NULL; v; v = v->next) if (v->valuestring) wipe(v->valuestring,strlen(v->valuestring));
-    cJSON_Delete(root); wipe(given_boot,sizeof given_boot); wipe(security,sizeof security);
+    cJSON_Delete(root); wipe(given_boot,sizeof given_boot); wipe(security,sizeof security);wipe(transport,sizeof transport);
     if (!ok) trial_bootstrap_clear(out);
     return ok;
 }

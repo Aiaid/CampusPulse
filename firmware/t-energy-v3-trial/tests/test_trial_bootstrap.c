@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char base[] = "{\"node_id\":\"te-test\",\"boot_id\":\"boot-test\",\"origin\":\"https://trial.invalid\",\"device_token\":\"synthetic-token\",\"ssid\":\"test-net\",\"password\":\"test-pass\",\"utc_ms\":1800000000000,\"uncertainty_ms\":10,\"max_windows\":1,\"security\":\"personal\",\"anchor_mono_ms\":1000}";
+static const char base[] = "{\"node_id\":\"te-test\",\"boot_id\":\"boot-test\",\"origin\":\"https://trial.invalid\",\"uplink_transport\":\"https\",\"device_token\":\"synthetic-token\",\"ssid\":\"test-net\",\"password\":\"test-pass\",\"utc_ms\":1800000000000,\"uncertainty_ms\":10,\"max_windows\":1,\"security\":\"personal\",\"anchor_mono_ms\":1000}";
 static unsigned checks;
 static bool zero(const void *data, size_t n) {
     const unsigned char *p = data;
@@ -110,7 +110,21 @@ int main(int argc, char **argv) {
     assert(argc == 3);
     trial_bootstrap_t out;
     char *production=replace(base,"https://trial.invalid",CP_API_ORIGIN);
-    assert(parse(production,&out));
+    reject(production);
+    char extra[1024];snprintf(extra,sizeof extra,",\"mqtt_uri\":\"%s\",\"mqtt_username\":\"synthetic-user\",\"mqtt_password\":\"synthetic-password\",\"mqtt_namespace\":\"synthetic-node\"}",CP_MQTT_PRODUCTION_URI);
+    char *mqtt_base=replace(production,"\"uplink_transport\":\"https\"","\"uplink_transport\":\"mqtt_tls\"");
+    char *mqtt=replace(mqtt_base,"}",extra);free(mqtt_base);
+    assert(parse(mqtt,&out)&&out.transport==CP_V3_TRANSPORT_MQTT_TLS);
+    char *default_mqtt=replace(mqtt,",\"uplink_transport\":\"mqtt_tls\"","");
+    assert(parse(default_mqtt,&out)&&out.transport==CP_V3_TRANSPORT_MQTT_TLS);free(default_mqtt);
+    reject_change(base,",\"uplink_transport\":\"https\"","");
+    reject_change(mqtt,"mqtt_tls","https");
+    reject_change(mqtt,CP_MQTT_PRODUCTION_URI,"mqtts://other.example:8883");
+    reject_change(mqtt,"synthetic-node","bad/namespace");
+    reject_change(mqtt,"\"mqtt_password\":\"synthetic-password\"","\"mqtt_password\":\"\"");
+    reject_change(mqtt,"\"anchor_mono_ms\":1000","\"anchor_mono_ms\":1000,\"server_ca_pem\":\"\"");
+    reject_change(mqtt,CP_API_ORIGIN,"https://isolated.example");
+    free(mqtt);
     const char *bad_production[]={"https://pulse.anend.net:443","https://pulse.anend.net:8443","https://pulse.anend.net/","https://sub.pulse.anend.net","https://pulse.anend.net.","https://PULSE.anend.net"};
     for(size_t i=0;i<sizeof bad_production/sizeof *bad_production;i++)reject_change(base,"https://trial.invalid",bad_production[i]);
     reject_change(production,"\"anchor_mono_ms\":1000","\"anchor_mono_ms\":1000,\"server_ca_pem\":\"\"");

@@ -171,7 +171,7 @@ void cp_v3_transport_note_headers(cp_v3_transport_response_t *out, const cp_v3_h
 }
 bool cp_v3_transport_should_flush_dns(const cp_v3_transport_config_t *config, const cp_v3_transport_response_t *r,
     bool network_failure, bool is_owner, bool cancelled) {
-    return config && r && config->flush_dns_on_network_failure && config->origin &&
+    return config && r && config->mode==CP_V3_TRANSPORT_HTTPS && config->flush_dns_on_network_failure && config->origin &&
         !strcmp(config->origin, CP_API_ORIGIN) && network_failure && is_owner && !cancelled &&
         r->stage >= CP_V3_TRANSPORT_TLS && r->stage <= CP_V3_TRANSPORT_RESPONSE_BODY &&
         !r->dns_error && r->resolved_ipv4 && !r->complete && !r->http_status && !r->parsed_http_status &&

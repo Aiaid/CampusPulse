@@ -8,10 +8,16 @@
 
 #define CP_V3_TRANSPORT_REQUEST_MAX 65536u
 #define CP_V3_TRANSPORT_RESPONSE_MAX 32768u
+#define CP_V3_MQTT_REQUEST_MAX 8192u
+#define CP_V3_MQTT_RESPONSE_MAX 8192u
+
+/* Zero preserves existing isolated HTTPS test callers. Production applications
+ * explicitly select native MQTT/TLS; the legacy cp_network owner is not started. */
+typedef enum { CP_V3_TRANSPORT_HTTPS=0, CP_V3_TRANSPORT_MQTT_TLS=1 } cp_v3_transport_mode_t;
 
 typedef struct {
-    /* Explicit HTTPS origin, no path/userinfo/query. Production accepts only
-     * canonical CP_API_ORIGIN with implicit port 443. settings.api_origin is unused. */
+    /* MQTT requires logical CP_API_ORIGIN; its actual peer is the fixed broker.
+     * HTTPS compatibility is restricted to nonproduction diagnostic origins. */
     const char *origin;
     /* NULL selects the ESP certificate bundle. Otherwise a NUL-terminated PEM
      * CA is required for isolated servers only. Production requires NULL.
@@ -23,17 +29,33 @@ typedef struct {
      * clock. Mandatory before TLS; no unauthenticated SNTP bootstrap. */
     cp_v3_time_t clock_seed;
     uint32_t wifi_timeout_ms; /* 1000..60000 */
-    uint32_t request_timeout_ms; /* 1000..30000, whole DNS/TCP/TLS/HTTP attempt */
+    uint32_t request_timeout_ms; /* 1000..30000; HTTPS attempt or MQTT connect/RPC deadline. SDK calls may overrun. */
     uint32_t server_clock_error_ms; /* 1..3000; declared server-clock error bound */
-    /* Default false. Only an application owning ALL outbound network clients
+    /* HTTPS diagnostics only, default false. Only an application owning ALL outbound network clients
      * may opt in. Production network failures can flush the WHOLE SDK DNS
      * cache, including other pending queries; never a per-host/DONE-only flush. */
     bool flush_dns_on_network_failure;
+    cp_v3_transport_mode_t mode;
+    /* Required current UUIDv4 boot for MQTT topics/config reads. Frozen old
+     * request bodies retain their original boot; this string is copied at start.
+     * MQTT uses settings.mqtt_* and fixed CP_MQTT_PRODUCTION_URI/public bundle.
+     * No custom MQTT CA, broker, fallback proxy or HTTP Date is accepted. */
+    const char *active_boot;
 } cp_v3_transport_config_t;
 
 /* Pure USB preflight: validates origin syntax and production's bundle-only rule.
  * It performs no DNS/TLS and grants no policy or collection authority. */
 bool cp_v3_transport_origin_allowed(const char *origin, bool custom_ca);
+typedef struct {
+    bool mqtt_hot; /* Actual connected + subscribed + empty-outbox state. */
+    uint32_t min_internal_free,min_internal_largest;
+    size_t persistent_external_bytes;
+} cp_v3_transport_memory_t;
+/* Owner-only allocation phase. MQTT serializes TLS IO allocations with this
+ * lease; do not call any MQTT/request/start/stop API while it is held. Always
+ * end it, including allocation/admission failures. HTTPS has no async IO owner. */
+esp_err_t cp_v3_transport_begin_memory(uint32_t timeout_ms,cp_v3_transport_memory_t *);
+void cp_v3_transport_end_memory(void);
 
 typedef enum { CP_V3_HTTP_GET, CP_V3_HTTP_POST } cp_v3_http_method_t;
 typedef enum {
@@ -52,7 +74,8 @@ typedef struct {
     cp_v3_transport_stage_t stage;
     /* io_error is the raw failing IO return when available, else esp_err_t.
      * Last read/write include WANT_READ/WANT_WRITE; zero can mean no call yet.
-     * tls_connected is the final async connect return, with 1 meaning connected. */
+     * HTTPS tls_connected is its async connect return. MQTT sets1 only after
+     * verified CONNECTED plus the required QoS0 subscription acknowledgment. */
     int32_t io_error, dns_error, tls_connected, last_read, last_write;
     uint32_t received_bytes, written_bytes;
     /* DNS diagnostic only: a.b.c.d -> (a<<24)|(b<<16)|(c<<8)|d.
@@ -65,16 +88,23 @@ typedef struct {
      * callback actually flushed. No claim that a DNS server returns another A. */
     bool whole_flush_attempted, whole_flush_succeeded;
     int32_t whole_flush_error; /* TCP/IP dispatch/callback result;0 alone is not proof of an attempt. */
+    /* Native MQTT diagnostics; a PUBACK is never an application receipt.
+     * complete/status/body become valid only after full correlated response,
+     * matching PUBACK and an empty SDK outbox. */
+    int32_t mqtt_publish_id,mqtt_puback_id,mqtt_connect_code;
+    uint32_t mqtt_outbox_bytes,mqtt_callback_stack_min;
+    bool mqtt_session_ready,mqtt_response_received,mqtt_stop_confirmed,mqtt_retained;
 } cp_v3_transport_response_t;
 
 /* One application task exclusively owns start/request/time/stop. It must stop
- * other Wi-Fi owners first. No NVS erase/save, v2 policy loop, MQTT, TF, scanner,
+ * other Wi-Fi owners first. No NVS erase/save, v2 policy loop, TF, scanner,
  * retries or queue reclamation. The caller owns frozen request bytes/receipts. */
 esp_err_t cp_v3_transport_start(const cp_settings_t *, const cp_v3_transport_config_t *);
 esp_err_t cp_v3_transport_request(cp_v3_http_method_t, const char *path,
     const void *body, size_t length, char *response, size_t capacity,
     cp_v3_transport_response_t *result);
-/* Historical control recovery only. Adds X-Receipt-Only:1 to exact ACK/lease
+/* Historical control recovery only. HTTPS adds X-Receipt-Only:1; MQTT sets the
+ * CPV3 frame flag for the same exact ACK/lease body.
  * POSTs, never registration, config reads or statistics. A missing committed
  * receipt is a server conflict, not permission to create a new ACK/lease. */
 esp_err_t cp_v3_transport_request_receipt_only(cp_v3_http_method_t, const char *path,

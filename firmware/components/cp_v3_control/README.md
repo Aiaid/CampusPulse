@@ -104,6 +104,14 @@ starting a full window and before each upload, allow uncertainty at both window
 ends, and never cache a permission beyond its deadline. Capability issuance must
 be at/before the trusted interval's lower endpoint.
 
+Small-statistics capabilities select exactly one actual uplink: `https` for
+isolated diagnostics or `mqtt_tls` for the formal native production path.
+`capability_mqtt_tls` and `policy.mqtt_tls` expose that choice to board adapters;
+a new policy must match the selected capability, and the adapter checks its
+actual transport again before applying. This adds no MQTT client or credentials
+to the pure control core. Historical frozen HTTP-authorized bodies and strict
+receipt matching remain unchanged when recovered through the MQTT gateway.
+
 The public header is the integration contract. Keep the caller-owned control and
 workspace outside a small task stack. Inputs contain no Wi-Fi or bearer secret.
 SHA-256 is supplied by the runtime; host tests use OpenSSL and independently match

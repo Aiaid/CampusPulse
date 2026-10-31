@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Physical USB bootstrap for small results; every HTTPS request is board-owned."""
+"""Physical USB bootstrap; native MQTT/TLS production, explicit isolated HTTPS."""
 import argparse
 import ipaddress
 import json
@@ -14,6 +14,8 @@ import serial
 # Matches CP_API_ORIGIN in cp_settings.h; the host regression checks the binding.
 PRODUCTION_ORIGIN = 'https://pulse.anend.net'
 PRODUCTION_HOST = PRODUCTION_ORIGIN.removeprefix('https://')
+MQTT_URI = 'mqtts://q9a692f8.ala.cn-hangzhou.emqxsl.cn:8883'
+MQTT_KEYS = ('mqtt_uri', 'mqtt_username', 'mqtt_password', 'mqtt_namespace')
 LAN_NETS = tuple(ipaddress.IPv4Network(value) for value in
                  ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'))
 
@@ -31,12 +33,27 @@ def validate_backend(backend, *, allow_public_test=False, allow_production=False
     host = match[1]
     ca_fields = any(key.startswith('server_ca_') for key in backend)
     production_host = host == PRODUCTION_HOST or host.endswith('.' + PRODUCTION_HOST)
+    transport = backend.get('uplink_transport', 'mqtt_tls')
+    if transport not in ('mqtt_tls', 'https'):
+        raise ValueError('unsupported uplink transport')
     if production_host:
         if not allow_production or origin != PRODUCTION_ORIGIN:
             raise ValueError('canonical production origin requires --allow-production')
         if backend.get('tls') != 'public_ca_bundle' or ca_fields:
             raise ValueError('production requires the system CA bundle without test CA fields')
+        if transport != 'mqtt_tls':
+            raise ValueError('production requires native MQTT/TLS without HTTPS fallback')
+        if backend.get('mqtt_uri') != MQTT_URI:
+            raise ValueError('fixed production MQTT broker required')
+        for key, bound in (('mqtt_username', 64), ('mqtt_password', 96)):
+            value = backend.get(key)
+            if not isinstance(value, str) or not 1 <= len(value) <= bound or any(not 33 <= ord(c) <= 126 for c in value):
+                raise ValueError('private MQTT credentials required')
+        if not isinstance(backend.get('mqtt_namespace'), str) or not re.fullmatch(r'[a-z0-9_-]{1,15}', backend['mqtt_namespace']):
+            raise ValueError('invalid MQTT namespace')
         return origin
+    if transport != 'https' or any(key in backend for key in MQTT_KEYS):
+        raise ValueError('isolated diagnostics require explicit HTTPS without MQTT fields')
     if allow_public_test:
         if backend.get('tls') != 'public_ca_bundle' or ca_fields:
             raise ValueError('public test requires the system CA bundle without test CA fields')
@@ -141,12 +158,15 @@ def main():
         # Physical host clock is a trusted test input with a declared 250 ms
         # absolute-error allowance; RTT bounds the device HELLO instant.
         bootstrap = dict(node_id=identity['node_id'], boot_id=identity['boot_id'],
+                         uplink_transport=backend.get('uplink_transport', 'mqtt_tls'),
                          origin=backend['endpoint'], device_token=backend['device_bearer'],
                          ssid=wifi['ssid'], password=wifi['password'], security='personal',
                          utc_ms=(sent_wall + received_wall) // 2,
                          uncertainty_ms=(rtt + 1) // 2 + 251,
                          anchor_mono_ms=identity['mono_ms'],
                          max_windows=args.windows)
+        if bootstrap['uplink_transport'] == 'mqtt_tls':
+            bootstrap.update({key: backend[key] for key in MQTT_KEYS})
         ca = backend.get('server_ca_pem')
         if ca is not None:
             if not isinstance(ca, str) or len(ca.encode('ascii')) > 4096 or 'PRIVATE KEY' in ca or '-----BEGIN CERTIFICATE-----' not in ca or '-----END CERTIFICATE-----' not in ca:

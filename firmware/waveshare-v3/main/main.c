@@ -1,5 +1,5 @@
 /* Waveshare normal small-result collector. USB supplies boot-private settings;
- * scanner, storage and HTTPS have separate owners. No saved secret or raw uplink. */
+ * scanner, storage and uplink have separate owners. No saved secret or raw uplink. */
 #include "trial_bootstrap.h"
 #include "cp_v3_control.h"
 #include "cp_v3_queue.h"
@@ -83,6 +83,7 @@ static char s_phase[24]="WAIT USB";
 static _Atomic bool s_stop,s_usb_stop,s_power_stop,s_safe,s_display_asleep,s_storage_stop,s_storage_done;
 static _Atomic bool s_capture_ready,s_storage_fault,s_storage_started,s_raw_ready,s_bootstrapped,s_storage_backpressure,s_storage_resume,s_storage_ready,s_storage_gate;
 static _Atomic bool s_mounted,s_queue_ready,s_run_failed;
+static _Atomic bool s_selected_mqtt;
 static _Atomic uint32_t s_windows,s_window_acks,s_event_acks,s_status_acks,s_last_body;
 static _Atomic uint32_t s_upload_failures,s_ack_failures,s_retries;
 static uint32_t s_historical_acks;
@@ -274,6 +275,7 @@ static void display_task(void *unused) {
         metrics.history_slices=c.temporal.history_slices;metrics.tracks=c.temporal.tracks;metrics.open_events=c.temporal.open_events;
         metrics.windows=s_windows;metrics.confirmed_windows=s_window_acks;metrics.last_body_bytes=s_last_body;
         metrics.upload_failures=s_upload_failures;metrics.retries=s_retries;
+        metrics.transport_known=s_bootstrapped;metrics.mqtt_tls=s_selected_mqtt;
         uint64_t elapsed=now>=previous_ms?now-previous_ms:0;
         metrics.rate_known=s_capture_ready&&c.running&&previous_known&&elapsed&&elapsed<=60000&&c.callback_reports>=previous_reports;
         if(metrics.rate_known){uint64_t delta=c.callback_reports-previous_reports;uint64_t rate=delta>UINT64_MAX/1000?UINT64_MAX:delta*1000/elapsed;snap.reports_per_second=ui_count(rate);memmove(rate_bins,rate_bins+1,9*sizeof *rate_bins);rate_bins[9]=snap.reports_per_second;}
@@ -326,14 +328,14 @@ static size_t capabilities(char *out,size_t cap,cp_v3_time_t t,uint64_t free_byt
         "\"statistics\":{\"schemas\":[\"window-statistics/1\"],\"extractor_versions\":[\"cp-v3-stats/1\"],\"ruleset_versions\":[\"unclassified-v1\"]},"
         "\"temporal\":{\"slice_ms\":[2000],\"max_history_ms\":600000,\"max_tracks\":512,\"max_open_events\":64,\"max_event_ms\":3600000,\"event_schemas\":[\"candidate-event/1\"],\"report_modes\":[\"off\",\"terminal_only\"]},"
         "\"local_raw\":{\"formats\":[\"cpraw/1\"],\"max_segment_bytes\":1048576,\"min_sync_interval_ms\":1000},"
-        "\"uplink\":{\"transports\":[\"https\"],\"streams\":[\"window_statistics\",\"node_status\",\"candidate_events\"],\"max_batch_items\":1,\"max_body_bytes\":2048,\"max_sample_reports_per_window\":0,\"cpraw_archive\":false},"
+        "\"uplink\":{\"transports\":[\"%s\"],\"streams\":[\"window_statistics\",\"node_status\",\"candidate_events\"],\"max_batch_items\":1,\"max_body_bytes\":2048,\"max_sample_reports_per_window\":0,\"cpraw_archive\":false},"
         "\"queue\":{\"media\":[{\"medium\":\"tf_journal\",\"usable_bytes\":24576,\"max_items\":12,\"power_loss_recovery\":true}]},"
-        "\"resources\":{\"max_working_bytes\":4194304,\"max_storage_write_bytes_per_day\":67108864,\"tf_usable_bytes\":%llu}}",id,s_node,s_boot,issued,expires,(unsigned long long)tf_usable);
+        "\"resources\":{\"max_working_bytes\":4194304,\"max_storage_write_bytes_per_day\":67108864,\"tf_usable_bytes\":%llu}}",id,s_node,s_boot,issued,expires,s_bootstrap.transport==CP_V3_TRANSPORT_MQTT_TLS?"mqtt_tls":"https",(unsigned long long)tf_usable);
     return n>0&&(size_t)n<cap?(size_t)n:0;
 }
 /* Only the raw writer calls this after startup. Actual RTC seconds are used,
  * and disagreement with the trusted map invalidates the anchor. I2C never runs
- * in the BLE callback/collector or HTTPS owner while the writer is active. */
+ * in the BLE callback/collector or uplink owner while the writer is active. */
 static bool raw_rtc_clock(void *ctx,uint64_t mono,cp_v3_temporal_time_t *out) {
     (void)ctx;cp_v3_temporal_time_t expected;uint64_t seconds;
     if(!clock_copy(NULL,mono,&expected)||raw_clock_get(&seconds)!=ESP_OK)return false;
@@ -354,6 +356,7 @@ static bool calibrate_rtc(void) {
 static bool raw_hook(void *ctx,const cp_v3_stats_report_t *r){(void)ctx;return s_raw?local_raw_hook(s_raw,r):false;}
 static cp_v3_apply_result_t actual_apply(void *ctx,const cp_v3_trial_policy_t *p,cp_v3_boundary_t *b) {
     (void)ctx;if(b->window_open||b->segment_open||s_capture)return CP_V3_APPLY_BOUNDARY_FAILED;
+    if(p->mqtt_tls!=(s_bootstrap.transport==CP_V3_TRANSPORT_MQTT_TLS))return CP_V3_APPLY_UNSUPPORTED;
     if(!p->statistics||!p->tf_queue||!p->stats_max_addresses||p->stats_max_addresses>512||p->bin_ms!=5000||
        (p->window_ms!=30000&&p->window_ms!=60000)||p->max_body_bytes!=BODY_MAX||
        p->queue_max_bytes!=QUEUE_BYTES||p->queue_max_items!=12||p->window_reserve_items!=4||(p->candidate_events?p->event_reserve_items!=4:p->event_reserve_items!=0)||p->status_reserve_items!=2||p->control_reserve_items!=2||
@@ -379,7 +382,14 @@ static cp_v3_apply_result_t actual_apply(void *ctx,const cp_v3_trial_policy_t *p
     size_t temporal=p->temporal.rolling?cp_v3_temporal_memory_bytes(&config.temporal):0;
     size_t estimate=temporal+cp_v3_stats_memory_bytes(p->stats_max_addresses)+128u*(sizeof(cp_v3_stats_report_t)+1650u)+4u*sizeof(cp_v3_capture_window_t)+4u*sizeof(cp_v3_capture_event_t)+local_raw_memory_bytes()+FS_POOL;
     if((p->temporal.rolling&&!temporal)||estimate>p->working_bytes||heap_caps_get_free_size(MALLOC_CAP_SPIRAM)<estimate)return CP_V3_APPLY_RESOURCE_EXHAUSTED;
+    cp_v3_transport_memory_t memory;
+    if(cp_v3_transport_begin_memory(2000,&memory)!=ESP_OK)return CP_V3_APPLY_RESOURCE_EXHAUSTED;
+    if((p->mqtt_tls&&!memory.mqtt_hot)||memory.persistent_external_bytes>p->working_bytes-estimate){
+        cp_v3_transport_end_memory();return CP_V3_APPLY_RESOURCE_EXHAUSTED;
+    }
+    config.min_internal_free=memory.min_internal_free;config.min_internal_largest=memory.min_internal_largest;
     esp_err_t prepared=cp_v3_capture_prepare(&config,&s_capture);
+    cp_v3_transport_end_memory();
     if(prepared!=ESP_OK){
         cp_v3_capture_status_t failed;cp_v3_capture_prepare_status(&failed);
         ESP_LOGE(TAG,"capture_prepare_failed error=%ld stage=%s internal=%lu largest=%lu psram=%lu psram_largest=%lu",(long)prepared,failed.failure_stage,(unsigned long)failed.internal_free,(unsigned long)failed.internal_largest,(unsigned long)failed.psram_free,(unsigned long)failed.psram_largest);
@@ -387,7 +397,7 @@ static cp_v3_apply_result_t actual_apply(void *ctx,const cp_v3_trial_policy_t *p
         return CP_V3_APPLY_RESOURCE_EXHAUSTED;
     }
     cp_v3_capture_status_t status;cp_v3_capture_status(s_capture,&status);
-    if(!status.prepared||status.running||status.failed||heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)<56000||heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)<20000||heap_caps_get_free_size(MALLOC_CAP_SPIRAM)<512u*1024||heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)<128u*1024)return CP_V3_APPLY_RESOURCE_EXHAUSTED;
+    if(!status.prepared||status.running||status.failed||heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)<memory.min_internal_free||heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)<memory.min_internal_largest||heap_caps_get_free_size(MALLOC_CAP_SPIRAM)<512u*1024||heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)<128u*1024)return CP_V3_APPLY_RESOURCE_EXHAUSTED;
     s_capture_ready=true;
     ESP_LOGI(TAG,"resources_reserved stats=%u temporal=%u report=%u window=%u event=%u raw=%u queue_pool=%u",(unsigned)status.statistics_bytes,(unsigned)status.temporal_bytes,(unsigned)status.report_bytes,(unsigned)status.window_bytes,(unsigned)status.event_bytes,(unsigned)local_raw_memory_bytes(),FS_POOL);
     ESP_LOGI(TAG,"arena_alignment stats=%u/%u temporal=%u/%u",status.statistics_alignment,status.statistics_alignment_remainder,status.temporal_alignment,status.temporal_alignment_remainder);
@@ -398,7 +408,7 @@ static bool request_mode(cp_v3_http_method_t method,const char *path,const void 
     s_error_code="unavailable";s_error_retryable=true;
     if(method==CP_V3_HTTP_POST&&bytes){
         xSemaphoreTake(s_tf,portMAX_DELAY);bool charged=uplink_charge(bytes);xSemaphoreGive(s_tf);
-        if(!charged){s_upload_failures++;ESP_LOGW(TAG,"uplink_budget_denied no_http=1");return false;}
+        if(!charged){s_upload_failures++;ESP_LOGW(TAG,"uplink_budget_denied no_send=1");return false;}
     }
     uint64_t started=monotonic_ms();
     esp_err_t e=receipt_only?cp_v3_transport_request_receipt_only(method,path,body,bytes,s_reply,CP_V3_TRANSPORT_RESPONSE_MAX,r):
@@ -413,6 +423,9 @@ static bool request_mode(cp_v3_http_method_t method,const char *path,const void 
             (long)r->dns_error,(unsigned long)r->resolved_ipv4,(long)r->tls_connected,(long)r->io_error,(long)r->last_read,(long)r->last_write,
             (unsigned long)r->received_bytes,(unsigned long)r->written_bytes,(long)r->tls_esp_error,(long)r->tls_stack_error,(long)r->tls_verify_flags,
             (unsigned)r->whole_flush_attempted,(unsigned)r->whole_flush_succeeded,(long)r->whole_flush_error);
+        ESP_LOGW(TAG,"transport_mode=%u mqtt_ready=%u mqtt_response=%u mqtt_retained=%u mqtt_stop_confirmed=%u mqtt_publish_id=%ld mqtt_puback_id=%ld mqtt_connect_code=%ld mqtt_outbox=%lu mqtt_stack_min=%lu",
+            (unsigned)s_bootstrap.transport,(unsigned)r->mqtt_session_ready,(unsigned)r->mqtt_response_received,(unsigned)r->mqtt_retained,(unsigned)r->mqtt_stop_confirmed,
+            (long)r->mqtt_publish_id,(long)r->mqtt_puback_id,(long)r->mqtt_connect_code,(unsigned long)r->mqtt_outbox_bytes,(unsigned long)r->mqtt_callback_stack_min);
         return false;
     }return true;
 }
@@ -621,7 +634,7 @@ static bool upload_one(cp_v3_queue_kind_t kind) {
     ESP_LOGI(TAG,"durable_acked stream=%u bytes=%u historical=%u window_acks=%lu status_acks=%lu",(unsigned)kind,(unsigned)bytes,(unsigned)historical,(unsigned long)s_window_acks,(unsigned long)s_status_acks);return true;
 }
 static bool run(void) {
-    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.server_ca_pem=s_bootstrap.server_ca_pem[0]?s_bootstrap.server_ca_pem:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=edge_request_timeout_ms(s_bootstrap.origin),.server_clock_error_ms=100,.flush_dns_on_network_failure=!strcmp(s_bootstrap.origin,CP_API_ORIGIN)};
+    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.server_ca_pem=s_bootstrap.server_ca_pem[0]?s_bootstrap.server_ca_pem:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=edge_request_timeout_ms(s_bootstrap.origin),.server_clock_error_ms=100,.mode=s_bootstrap.transport,.active_boot=s_boot};
     phase("WIFI CONNECT");if(cp_v3_transport_start(&s_bootstrap.settings,&config)!=ESP_OK)return false;s_transport_started=true;
     ui_network_snapshot();
     cp_v3_time_t t;if(!current(&t))return false;
@@ -689,7 +702,7 @@ static bool run(void) {
     if(cp_v3_capture_pause(s_capture,CP_V3_TEMPORAL_SCAN_GAP,5000)!=ESP_OK)okay=false;
     s_storage_stop=true;
     for(unsigned i=0;i<600&&!s_storage_done;i++){
-        /* Draining HTTPS can free occupied slots while the last handoffs freeze. */
+        /* Draining uplink can free occupied slots while the last handoffs freeze. */
         if(!s_stop){(void)upload_one(CP_V3_QUEUE_WINDOW);(void)upload_one(CP_V3_QUEUE_EVENT);(void)upload_one(CP_V3_QUEUE_STATUS);}
         vTaskDelay(pdMS_TO_TICKS(50));
     }
@@ -736,7 +749,7 @@ static void main_task(void *unused) {
     if(xTaskCreate(key_task,"v3_keys",3072,NULL,2,NULL)!=pdPASS)fault("key_task");
     phase("WAIT USB");
     if(trial_bootstrap_wait(s_node,s_boot,&s_bootstrap,cancelled)!=ESP_OK){s_safe=true;vTaskDelete(NULL);return;}
-    s_bootstrapped=true;s_usb_stop=false;publish_anchor(s_bootstrap.clock_seed);
+    s_selected_mqtt=s_bootstrap.transport==CP_V3_TRANSPORT_MQTT_TLS;s_bootstrapped=true;s_usb_stop=false;publish_anchor(s_bootstrap.clock_seed);
     s_tf=xSemaphoreCreateMutex();s_control=psram(sizeof *s_control);s_workspace=psram(sizeof *s_workspace);s_queue=psram(sizeof *s_queue);s_store=psram(sizeof *s_store);s_reply=psram(CP_V3_TRANSPORT_RESPONSE_MAX);s_network_body=psram(4096);
     bool okay=s_tf&&s_control&&s_workspace&&s_queue&&s_store&&s_reply&&s_network_body;
     if(okay){xSemaphoreTake(s_tf,portMAX_DELAY);okay=budget_open()&&uplink_open();xSemaphoreGive(s_tf);}

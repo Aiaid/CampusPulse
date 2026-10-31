@@ -79,7 +79,7 @@ static cp_v3_budget_load_t load(void *p,void *b,size_t cap,size_t *n) {(void)b;(
 static bool store(void *p,const void *b,size_t n) {(void)b;(void)n;return forbidden(p);}
 
 static void make_json(bool ca) {
-    int written=snprintf(json,sizeof json,"{\"node_id\":\"%s\",\"boot_id\":\"%s\",\"origin\":\"https://synthetic.invalid\","
+    int written=snprintf(json,sizeof json,"{\"node_id\":\"%s\",\"boot_id\":\"%s\",\"origin\":\"https://synthetic.invalid\",\"uplink_transport\":\"https\","
         "\"device_token\":\"synthetic-secret\",\"ssid\":\"synthetic-wifi\",\"password\":\"synthetic-password\","
         "\"utc_ms\":%llu,\"uncertainty_ms\":10,\"max_windows\":2,\"security\":\"personal\",\"anchor_mono_ms\":60000",
         node,boot,(unsigned long long)(issued+60000));

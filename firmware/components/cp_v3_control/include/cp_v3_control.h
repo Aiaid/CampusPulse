@@ -47,7 +47,7 @@ typedef struct {
     uint32_t lease_ms, after_window_seq, after_segment_seq;
     uint64_t not_before_utc_ms, expires_utc_ms, accept_until_utc_ms;
     /* Small statistics never narrows capacity through legacy evidence limits. */
-    bool statistics, collection_enabled, mobile_research, candidate_events, drain_frozen;
+    bool statistics, collection_enabled, mobile_research, candidate_events, drain_frozen, mqtt_tls;
     uint16_t stats_max_addresses;
     uint32_t window_ms, max_body_bytes;
     uint64_t window_reserve_bytes, event_reserve_bytes;
@@ -106,7 +106,7 @@ typedef struct {
     cp_v3_control_workspace_t *workspace;
     cp_v3_sha256_fn sha256;
     void *hash_context;
-    bool small_statistics, capability_events, capability_local_raw, capability_temporal;
+    bool small_statistics, capability_events, capability_local_raw, capability_temporal, capability_mqtt_tls;
     uint32_t capability_body_bytes, capability_raw_sync_ms;
     uint64_t capability_raw_segment_bytes;
     cp_v3_control_temporal_t temporal_cap;

@@ -11,6 +11,7 @@ OPENSSL_BIN="${OPENSSL:-openssl}"
 PROTOCOL="$FIRMWARE/components/cp_v3_transport"
 PROTO_INCLUDES=(-I "$PROTOCOL/include" -I "$PROTOCOL" -I "$IDF_PATH/components/http_parser")
 PROTO_SOURCES=("$PROTOCOL/protocol.c" "$IDF_PATH/components/http_parser/http_parser.c")
+PROTO_SOURCES+=("$FIRMWARE/components/cp_settings/settings_validate.c")
 # Override MBEDTLS_PREFIX on hosts without pkg-config or Homebrew. Tests use
 # the real mbedTLS parser, never a permissive certificate-parser stub.
 if [[ -z "${MBEDTLS_PREFIX:-}" ]]; then

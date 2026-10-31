@@ -1,63 +1,55 @@
 # Waveshare v3 small-results collector
 
-This separate ESP-IDF 5.5.3 application targets the verified Waveshare
-ESP32-S3-ePaper-1.54 V2 hardware through the existing board/power/display adapters.
+This separate ESP-IDF5.5.3 application targets the verified Waveshare
+ESP32-S3-ePaper-1.54 V2 through the existing board/power/display adapters.
 It boots into physical USB standby. A cable alone starts neither Wi-Fi nor BLE.
-The host supplies fresh nonce-bound identity/clock and private one-boot network
-settings; nothing persists those credentials. The HTTPS transport accepts the
-explicitly authorized release destination only as canonical`CP_API_ORIGIN`
-(`https://pulse.anend.net`, implicit443) using the system CA bundle with strict
-hostname and certificate-date checks. Isolated LAN tests may use an optional
-private test CA with full verification.
+USB provides fresh nonce-bound identity/time and one-boot private settings.
 
-The user explicitly authorized production deployment and two-board integration
-for this release. This authorization does not convert earlier isolated tests
-into production acceptance or prove sustained board reliability. The host runner
-requires `--allow-production` before it opens a serial port for the official
-origin; `backend-bootstrap.json` must specify `tls:"public_ca_bundle"` and must
-contain no `server_ca_*` fields. Explicit`:443`, other ports, trailing slashes,
-aliases and custom test CAs are rejected. `--allow-public-test` permits isolated
-public HTTPS with the system CA bundle and never authorizes production by itself.
-Without either explicit flag the runner accepts only RFC1918 LAN IPv4 origins.
-Every actual network request and control ACK remains board-owned; policy gates
-and credential enrollment are independent of this destination permission.
+The formal production path is native MQTT/TLS to the fixed Hangzhou EMQX broker
+and the Cloudflare gateway bound to the real Worker/D1 service. No computer relay,
+local proxy or direct production HTTPS fallback is used. The USB frame selects
+`uplink_transport:"mqtt_tls"` and supplies `mqtt_uri`, `mqtt_username`,
+`mqtt_password`, `mqtt_namespace`; the broker must equal the shared
+`CP_MQTT_PRODUCTION_URI`. Missing/partial credentials, namespace injection,
+custom CA fields and production HTTPS mode are rejected before networking.
+The host defaults to MQTT and requires `--allow-production`, canonical
+`CP_API_ORIGIN` and `tls:"public_ca_bundle"` in its private backend bundle.
+Secrets are wiped after the run and are never logged or persisted by this app.
 
-Startup registration freezes its capability body, sequence and uptime once.
-Transient failures permit at most three exact attempts through the ordinary
-charged request path, with1s/2s backoff. Canonical`CP_API_ORIGIN` selects a30s
-request deadline (the shared transport's existing maximum); isolated origins
-retain15s. The same selected limit includes DNS/TCP/TLS/HTTP for each attempt.
-Stop, preflight/budget failures, explicit certificate-verification flags and
-non-retryable server errors stop this exchange. The SDK may finish a socket
-`select` after the outer deadline, so this is an attempt bound rather than a
-hard wall-clock guarantee. A successful HTTP reply still requires the strict
-registration receipt check before requesting any policy.
+Nonproduction diagnostics may explicitly select `uplink_transport:"https"`
+without MQTT fields. RFC1918 LAN tests retain the reviewed optional test CA;
+public isolated tests require `--allow-public-test` and the system CA bundle.
+Both transports retain strict certificate, hostname and date checks. Historical
+HTTPS/DNS trials remain historical evidence and do not prove MQTT acceptance.
 
-Failure logs expose only numeric stage/timing, DNS result/resolved IPv4, TLS connect result,
-I/O/read/write counts and TLS error/verification flags. Transport stage2 covers
-both TCP connection and TLS handshake; it is not proof that either completed.
-For the pinned ESP-IDF5.5.3 MbedTLS implementation, `cfg.common_name` supplies
-the hostname to `mbedtls_ssl_set_hostname`, retaining both SNI and certificate
-hostname checks while TCP connects to a freshly resolved address. The logs
-include the resolved IPv4 only as an unsigned diagnostic (`a.b.c.d` becomes
-`(a<<24)|(b<<16)|(c<<8)|d`), to distinguish fake/private/public DNS answers; it
-never controls routing or pins an address. They omit SSID, device identity,
-credentials and request/response contents. A Mac HTTPS pass is separate from
-board connectivity.
+Capabilities declare only the actually selected uplink. A new policy's
+`transport` must match both capability and runtime selection. The shared control
+core exposes `mqtt_tls` to both board adapters; historical HTTP-authorized
+frozen bodies may still recover their original receipts through MQTT without
+changing their body, boot, sequence, policy hash or authority. Native transport
+framing uses the existing request topic and a bounded CPV3 header internally;
+MQTT PUBACK alone never grants collection or reclaims a durable queue record.
+The full correlated Cloudflare receipt still passes the original strict matcher.
+No synthetic HTTP Date is created for MQTT.
 
-This bounded application is the sole outbound network client: it does not start
-the old HTTP/MQTT runtime or SNTP. It explicitly enables the shared transport's
-default-off`flush_dns_on_network_failure` only for canonical`CP_API_ORIGIN`.
-An eligible failed request may flush the **whole SDK DNS cache**, which can
-cancel other pending DNS queries; this option must not be copied into a shared
-network-client application without a separate ownership review. The callback
-runs on the TCP/IP task, rechecks owner/cancel state, and does not change DHCP
-DNS servers, pin an IP or weaken CA/hostname verification. Each following exact
-retry resolves through the existing DNS configuration; a different A answer or
-success is not guaranteed. Numeric attempted/succeeded flags report the actual
-flush outcome. Any parsed HTTP status suppresses this flush. Incomplete2xx
-receipts and transient408/425/429/5xx can still be retried exactly; redirects and
-other known4xx headers terminate registration even if their body is incomplete.
+Registration freezes one body/sequence/uptime and permits at most three exact,
+budgeted attempts with1s/2s backoff. Production selects the existing30s request
+limit; isolated HTTPS retains15s. Explicit certificate flags and permanent4xx
+responses terminate the exchange. Incomplete2xx and transient408/425/429/5xx
+may retry exactly; complete2xx with an invalid receipt remains a strict failure.
+Numeric failure logs include the selected transport, MQTT connection/PUBACK/
+outbox/callback-stack state and transport errors, never credentials or payloads.
+
+Persistent MQTT state/reply/frame buffers use explicit external memory. Before
+capture allocation, the owner requests a transport memory phase: hot MQTT is
+accepted only for an actually connected/subscribed session with an empty outbox.
+Its internal floor retains20KiB plus the8200byte current frame and256byte margin,
+and a17058byte largest block. Cold MQTT retains56KiB/20KiB, and isolated HTTPS
+keeps its original56000/20000byte floors. The SDK IO gate is held only through
+capture allocation, with no MQTT/transport calls while held, and always released.
+Persistent external transport bytes count against the policy working budget;
+PSRAM still needs512KiB free and a128KiB largest block after preparation. Phase
+logs and real-device acceptance remain necessary; a build cannot prove headroom.
 
 The first implementation applies one real small-statistics policy per boot:
 30/60-second windows, 5-second bins, capacity up to512, and only
@@ -80,7 +72,7 @@ request does not block later eligible batches. A recognized non-retryable
 server rejection remains frozen and pending at its original TTL, with retries
 deferred for this boot; it is neither reclaimed nor assigned a new identity.
 The network owner copies frozen records under the TF mutex, releases it before
-HTTPS, waits for conservative UTC aging, and requires exact durable receipts
+uplink, waits for conservative UTC aging, and requires exact durable receipts
 before reclamation. Its first controlled window is retransmitted unchanged and
 must return the same receipt. Attempts use bounded exponential delay and the
 policy's persistent daily logical byte allowance. Separate node-scoped NVS
@@ -118,7 +110,7 @@ general credit. This is logical lifecycle authorization on the creation day,
 not a physical Flash-write or wear guarantee for each calendar day.
 Optional policy-controlled TF raw uses the independent `local_raw` adapter,
 shared TF mutex and `/sdcard/cpraw-v3` only. Raw quotas, failures and counters
-stay separate from aggregation; raw bytes never enter HTTPS. Host clock alone
+stay separate from aggregation; raw bytes never enter either uplink. Host clock alone
 never produces a claimed verified RTC anchor: the board must set/read back its
 RTC, and second-resolution quantization remains in the UTC uncertainty. Battery
 voltage and a coarse percentage are displayed; ETA stays unknown without a
