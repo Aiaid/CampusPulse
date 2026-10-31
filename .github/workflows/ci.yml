@@ -20,6 +20,8 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
+      - name: Install uv for Python parity and pinned firmware host regressions
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: npm test
       - name: Verify compact vehicle evidence with C sanitizers
         run: sh firmware/tests/run-vehicle.sh
@@ -36,8 +38,6 @@ jobs:
         run: |
           node --test relay/emqx-cloud/test/*.test.mjs
           node_modules/.bin/tsc -p relay/emqx-cloud/tsconfig.json
-      - name: Install uv for pinned firmware host regressions
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: Prepare pinned SDK sources for host checks
         run: |
           sudo apt-get update -qq
