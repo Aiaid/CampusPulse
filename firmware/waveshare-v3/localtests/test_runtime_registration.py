@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 PROJECT = Path(__file__).resolve().parents[1]
+ROOT = PROJECT.parents[1]
 
 
 class RegistrationRetry(unittest.TestCase):
@@ -14,6 +15,8 @@ class RegistrationRetry(unittest.TestCase):
             subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
                             '-fsanitize=address,undefined', '-fno-omit-frame-pointer',
                             '-I' + str(PROJECT / 'main'),
+                            '-I' + str(PROJECT / 'localtests/stubs'),
+                            '-I' + str(ROOT / 'firmware/components/cp_settings/include'),
                             str(PROJECT / 'localtests/runtime_registration_test.c'),
                             '-o', str(executable)], check=True)
             subprocess.run([str(executable)], check=True)

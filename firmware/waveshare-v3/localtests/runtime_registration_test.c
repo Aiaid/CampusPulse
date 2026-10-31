@@ -33,6 +33,10 @@ static bool run(fake_t *f) {
     return edge_registration_exchange(&io,f->body,f->bytes);
 }
 int main(void) {
+    assert(edge_request_timeout_ms(CP_API_ORIGIN)==30000);
+    const char *isolated[]={NULL,"","https://192.168.1.2:8799","https://isolated.example",
+        CP_API_ORIGIN ":443",CP_API_ORIGIN ":8443",CP_API_ORIGIN "/","https://test.pulse.anend.net"};
+    for(size_t i=0;i<sizeof isolated/sizeof *isolated;i++)assert(edge_request_timeout_ms(isolated[i])==15000);
     const char body[]="{\"registration_seq\":1,\"uptime_ms\":100,\"capabilities\":{\"synthetic\":true}}";
     fake_t f=make(body);f.success_at=3;
     assert(run(&f)&&f.attempts==3&&f.waits==2&&f.waited_ms==3000);

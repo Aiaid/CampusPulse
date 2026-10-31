@@ -24,11 +24,13 @@ and credential enrollment are independent of this destination permission.
 
 Startup registration freezes its capability body, sequence and uptime once.
 Transient failures permit at most three exact attempts through the ordinary
-charged request path, with1s/2s backoff and the same15s configured deadline.
+charged request path, with1s/2s backoff. Canonical`CP_API_ORIGIN` selects a30s
+request deadline (the shared transport's existing maximum); isolated origins
+retain15s. The same selected limit includes DNS/TCP/TLS/HTTP for each attempt.
 Stop, preflight/budget failures, explicit certificate-verification flags and
 non-retryable server errors stop this exchange. The SDK may finish a socket
 `select` after the outer deadline, so this is an attempt bound rather than a
-hard48s wall-clock guarantee. A successful HTTP reply still requires the strict
+hard wall-clock guarantee. A successful HTTP reply still requires the strict
 registration receipt check before requesting any policy.
 
 Failure logs expose only numeric stage/timing, DNS result/resolved IPv4, TLS connect result,

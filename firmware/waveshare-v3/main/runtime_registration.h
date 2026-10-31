@@ -2,11 +2,19 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
+#include "cp_settings.h"
+
+/* Destination selection only; the transport still validates origin and TLS.
+ * Never extend an isolated/alias origin's timeout by substring matching. */
+static inline uint32_t edge_request_timeout_ms(const char *origin) {
+    return origin && !strcmp(origin,CP_API_ORIGIN) ? 30000u : 15000u;
+}
 
 /* Startup only: preserve the caller's one frozen registration body. Every
  * attempt still passes through the ordinary charged, strict-TLS request path.
- * At most three attempts retain the configured15s request deadline, with1s/2s
- * backoff. SDK socket select may overrun that deadline;48s is not a hard wall
+ * At most three attempts retain the selected request deadline, with1s/2s
+ * backoff. SDK socket select may overrun that deadline; this is not a hard wall
  * guarantee. No new policy, capability, boot, sequence or uptime is generated. */
 typedef struct {
     void *context;
