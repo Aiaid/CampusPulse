@@ -44,9 +44,25 @@ jobs:
           sudo apt-get install -y clang pkg-config libssl-dev
           CP_CI_IDF="$RUNNER_TEMP/campuspulse-esp-idf-v5.5.3"
           git clone --depth 1 --filter=blob:none --sparse --branch v5.5.3 https://github.com/espressif/esp-idf.git "$CP_CI_IDF"
-          git -C "$CP_CI_IDF" sparse-checkout set components/json components/tcp_transport
+          git -C "$CP_CI_IDF" sparse-checkout set components/json components/tcp_transport components/http_parser
           git -C "$CP_CI_IDF" submodule update --init --depth 1 components/json/cJSON
           echo "IDF_PATH=$CP_CI_IDF" >> "$GITHUB_ENV"
+      - name: Verify shared V3 C components on host with sanitizers
+        env:
+          CC: clang
+          UV_PYTHON_DOWNLOADS: never
+        run: |
+          # Python stdlib, installed OpenSSL/Node and the pinned SDK HTTP parser.
+          # This does not run board UI rendering or vendor mbedTLS suites.
+          uv run --no-project python firmware/components/cp_v3_evidence/tests/test_evidence.py
+          uv run --no-project python firmware/components/cp_v3_control/tests/test_control.py
+          uv run --no-project python firmware/components/cp_v3_stats/tests/test_stats.py
+          uv run --no-project python firmware/components/cp_v3_temporal/tests/test_temporal.py
+          uv run --no-project python firmware/components/cp_v3_budget/tests/test_budget.py
+          uv run --no-project python firmware/components/cp_v3_capture/tests/test_capture.py
+          uv run --no-project python firmware/components/cp_v3_queue/tests/test_queue.py
+          uv run --no-project python firmware/components/cp_v3_small_results/tests/test_small_results.py
+          uv run --no-project python firmware/components/cp_v3_transport/tests/test_protocol.py
       - name: Verify production MQTT settings and firmware ownership on host
         run: |
           bash firmware/components/cp_settings/tests/run-host.sh
