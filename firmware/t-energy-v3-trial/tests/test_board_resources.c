@@ -10,7 +10,9 @@ size_t cp_v3_stats_memory_bytes(uint16_t n) { return n==512 ? stats_bytes : 0; }
 size_t cp_v3_stats_memory_alignment(void) { return stats_align; }
 size_t cp_v3_temporal_memory_alignment(void) { return temporal_align; }
 bool cp_v3_temporal_memory_layout(const cp_v3_temporal_config_t *c,cp_v3_temporal_memory_t *m) {
-    if (!c || !layout_ok) return false; *m=(cp_v3_temporal_memory_t){.total_bytes=temporal_bytes}; return true;
+    if (!c || !layout_ok) return false;
+    *m=(cp_v3_temporal_memory_t){.total_bytes=temporal_bytes};
+    return true;
 }
 static alignas(64) unsigned char blocks[3][256];
 static unsigned allocations,releases,fail_at,misalign_at,not_external_at,measure_calls,measure_fail_at;
