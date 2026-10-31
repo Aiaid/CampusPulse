@@ -25,6 +25,13 @@ unchanged. Do not apply another board's partition layout.
    the applied ACK before POST; require stateful plus stateless receipt checks
    and durable reclamation. Do the same for a separate lease. Wait through the
    conservative server-time activation guard before starting the scanner.
+   Registration retains one exact capability/body/sequence/uptime across at most
+   three attempts, with1s/2s backoff. Every attempt uses the same real persistent
+   budget preauthorization as ordinary POSTs. A budget rejection clears response
+   diagnostics to IDLE and sends nothing. Cancellation, certificate/TLS failures
+   and known terminal HTTP status stop retrying. Partial2xx or transient408/425/
+   429/5xx may be retried unchanged; only a complete strict registration receipt
+   advances the control state.
 5. Serialize one unknown-only result per window. Assign UUID/sequence once,
    commit exact body, reopen/compare, then release the exact handoff. Uncertain
    writes retain the same in-memory identity and stop. POST frozen bytes only

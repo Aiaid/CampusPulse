@@ -22,3 +22,6 @@ bool cp_v3_http_eof(cp_v3_http_response_t *);
 /* Incomplete data cannot be treated as a response/clock, but numeric evidence
  * must survive cleanup so retry investigation does not erase its failure. */
 void cp_v3_transport_clear_response(cp_v3_transport_response_t *);
+void cp_v3_transport_note_headers(cp_v3_transport_response_t *, const cp_v3_http_response_t *);
+bool cp_v3_transport_should_flush_dns(const cp_v3_transport_config_t *, const cp_v3_transport_response_t *,
+    bool network_failure, bool is_owner, bool cancelled);

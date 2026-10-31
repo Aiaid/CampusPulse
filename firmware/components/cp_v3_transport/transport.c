@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "network_failure.h"
 #include "sdkconfig.h"
 #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
 #include "esp_crt_bundle.h"
@@ -95,6 +96,17 @@ static esp_err_t resolve(char address[16], uint64_t deadline) {
     if (!before(deadline)) return cancelled_or_timeout();
     if (ready < 0) return ESP_ERR_NOT_FOUND;
     return ipaddr_ntoa_r(&result, address, 16) ? ESP_OK : ESP_FAIL;
+}
+typedef struct { TaskHandle_t owner; bool flushed; } dns_flush_context_t;
+static esp_err_t dns_flush_cache(void *arg) {
+    dns_flush_context_t *context = arg;
+    /* This runs on the TCP/IP task, so owner() would compare the wrong task.
+     * Recheck the remembered application owner and cancellation after queuing. */
+    if (!context || !context->owner || !active() ||
+        __atomic_load_n(&s_owner, __ATOMIC_ACQUIRE) != context->owner) return ESP_ERR_INVALID_STATE;
+    dns_clear_cache(); /* Whole SDK cache: may cancel other clients' queries. */
+    context->flushed = true;
+    return ESP_OK;
 }
 static esp_err_t set_wall_clock(const cp_v3_time_t *seed) {
     cp_v3_time_t current;
@@ -324,6 +336,7 @@ static esp_err_t request_mode(cp_v3_http_method_t method, const char *path,
         if (!count) { result = cp_v3_http_eof(&parsed) ? ESP_OK : ESP_ERR_INVALID_RESPONSE; break; }
         out->received_bytes += (uint32_t)count;
         bool parsed_ok = cp_v3_http_feed(&parsed, chunk, (size_t)count);
+        cp_v3_transport_note_headers(out, &parsed);
         if (parsed.headers_done) out->stage = CP_V3_TRANSPORT_RESPONSE_BODY;
         if (!parsed_ok) { result = ESP_ERR_INVALID_RESPONSE; break; }
     }
@@ -354,6 +367,14 @@ done:
         }
     }
     (void)esp_tls_conn_destroy(tls);
+    bool network_failure = cp_v3_transport_network_failure(result, out);
+    if (cp_v3_transport_should_flush_dns(&s_config, out, network_failure, owner(), !active())) {
+        dns_flush_context_t context = {.owner = xTaskGetCurrentTaskHandle()};
+        out->whole_flush_attempted = true;
+        esp_err_t flushed = esp_netif_tcpip_exec(dns_flush_cache, &context);
+        out->whole_flush_error = flushed;
+        out->whole_flush_succeeded = flushed == ESP_OK && context.flushed;
+    }
     return result;
 }
 esp_err_t cp_v3_transport_request(cp_v3_http_method_t method,const char *path,

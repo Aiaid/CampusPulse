@@ -14,5 +14,6 @@ with tempfile.TemporaryDirectory(prefix="cp-v3-transport-tests-") as directory:
         "-I", str(component / "tests/host"), "-I", str(component / "include"), "-I", str(component),
         "-I", str(component.parent / "cp_settings/include"), "-I", str(component.parent / "cp_v3_evidence/include"),
         "-I", str(parser), str(component / "protocol.c"), str(parser / "http_parser.c"),
+        "-I", str(idf / "components/esp-tls"), "-I", str(idf / "components/mbedtls/mbedtls/include"),
         str(component / "tests/protocol_test.c"), "-o", str(executable)], check=True)
     subprocess.run([str(executable)], check=True)

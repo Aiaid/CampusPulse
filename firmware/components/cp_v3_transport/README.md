@@ -56,6 +56,34 @@ certificate-date checking, which ESP-IDF otherwise disables by default. A
 bundle-disabled build accepts explicit PEM for isolated servers only, rejects
 NULL CA at start and cannot connect to production.
 
+`flush_dns_on_network_failure` defaults to false. An application that owns all
+outbound network clients may explicitly enable it for canonical`CP_API_ORIGIN`.
+After its own DNS resolution has completed, a failed TLS/HTTP transport attempt
+with no received HTTP status and no certificate-verification flags can request
+one whole SDK DNS cache flush, after TLS cleanup and on the TCP/IP task through
+`esp_netif_tcpip_exec`. Both the caller's owner/cancel state and the callback's
+remembered owner/cancel state are checked. No flush occurs for cancellation,
+successful requests, any parsed HTTP status (including401/403/409 with a broken
+body), failed DNS resolution, an isolated origin or verification flags.
+
+This is **a whole-cache operation**, not a targeted or completed-entry-only
+operation. In the pinned SDK, `dns_clear_cache()` can cancel other pending DNS
+queries as well as removing completed cache entries. Do not enable this option
+for an application sharing networking with other HTTP/MQTT/SNTP/DNS clients.
+It does not change DHCP DNS servers, insert a fixed address or change TLS/SNI.
+The next exact request resolves the same hostname using the existing DNS setup;
+the DNS server may return the same address again. `whole_flush_attempted` means
+TCP/IP execution was requested; `whole_flush_succeeded` requires that the
+callback actually executed the flush successfully. A cancelled/failed dispatch
+never reports success; `whole_flush_error` retains its numeric dispatch/callback
+result. Neither flag proves that a later retry will work. Local allocation,
+SHA, certificate parser/configuration and HTTP parser failures are excluded;
+flags0 alone does not classify an arbitrary failure as a network failure.
+
+`parsed_http_status` is independent of `http_status`/`complete`: a parsed status
+is retained through header/body errors for retry classification, while an
+incomplete response cannot become a valid receipt or trusted clock sample.
+
 ## Bounded requests and clock boundaries
 
 Allowed routes are POST capabilities, configuration ACK, explicit lease and

@@ -405,11 +405,14 @@ static bool request_mode(cp_v3_http_method_t method,const char *path,const void 
         cp_v3_transport_request(method,path,body,bytes,s_reply,CP_V3_TRANSPORT_RESPONSE_MAX,r);
     if(e!=ESP_OK||!r->complete||r->http_status<200||r->http_status>=300){
         if(e==ESP_OK&&r->complete)s_error_code=edge_error_code(s_reply,r->body_bytes,&s_error_retryable);
+        int status=r->complete?r->http_status:r->parsed_http_status;
+        s_error_retryable=edge_http_response_retryable(status,s_error_retryable);
         s_upload_failures++;
-        ESP_LOGW(TAG,"request_failed error=%ld status=%d stage=%u retryable=%u elapsed_ms=%llu dns=%ld resolved_ipv4=%lu tls_connected=%ld io=%ld last_read=%ld last_write=%ld rx=%lu tx=%lu tls_esp_error=%ld tls_stack_error=%ld tls_verify_flags=%ld",
-            (long)e,r->http_status,(unsigned)r->stage,(unsigned)s_error_retryable,(unsigned long long)(monotonic_ms()-started),
+        ESP_LOGW(TAG,"request_failed error=%ld status=%d parsed_http_status=%d stage=%u retryable=%u elapsed_ms=%llu dns=%ld resolved_ipv4=%lu tls_connected=%ld io=%ld last_read=%ld last_write=%ld rx=%lu tx=%lu tls_esp_error=%ld tls_stack_error=%ld tls_verify_flags=%ld whole_flush_attempted=%u whole_flush_succeeded=%u whole_flush_error=%ld",
+            (long)e,r->http_status,r->parsed_http_status,(unsigned)r->stage,(unsigned)s_error_retryable,(unsigned long long)(monotonic_ms()-started),
             (long)r->dns_error,(unsigned long)r->resolved_ipv4,(long)r->tls_connected,(long)r->io_error,(long)r->last_read,(long)r->last_write,
-            (unsigned long)r->received_bytes,(unsigned long)r->written_bytes,(long)r->tls_esp_error,(long)r->tls_stack_error,(long)r->tls_verify_flags);
+            (unsigned long)r->received_bytes,(unsigned long)r->written_bytes,(long)r->tls_esp_error,(long)r->tls_stack_error,(long)r->tls_verify_flags,
+            (unsigned)r->whole_flush_attempted,(unsigned)r->whole_flush_succeeded,(long)r->whole_flush_error);
         return false;
     }return true;
 }
@@ -618,7 +621,7 @@ static bool upload_one(cp_v3_queue_kind_t kind) {
     ESP_LOGI(TAG,"durable_acked stream=%u bytes=%u historical=%u window_acks=%lu status_acks=%lu",(unsigned)kind,(unsigned)bytes,(unsigned)historical,(unsigned long)s_window_acks,(unsigned long)s_status_acks);return true;
 }
 static bool run(void) {
-    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.server_ca_pem=s_bootstrap.server_ca_pem[0]?s_bootstrap.server_ca_pem:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=edge_request_timeout_ms(s_bootstrap.origin),.server_clock_error_ms=100};
+    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.server_ca_pem=s_bootstrap.server_ca_pem[0]?s_bootstrap.server_ca_pem:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=edge_request_timeout_ms(s_bootstrap.origin),.server_clock_error_ms=100,.flush_dns_on_network_failure=!strcmp(s_bootstrap.origin,CP_API_ORIGIN)};
     phase("WIFI CONNECT");if(cp_v3_transport_start(&s_bootstrap.settings,&config)!=ESP_OK)return false;s_transport_started=true;
     ui_network_snapshot();
     cp_v3_time_t t;if(!current(&t))return false;

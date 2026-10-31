@@ -10,6 +10,15 @@
 static inline uint32_t edge_request_timeout_ms(const char *origin) {
     return origin && !strcmp(origin,CP_API_ORIGIN) ? 30000u : 15000u;
 }
+/* A parsed status does not imply a complete receipt. Failed2xx bodies may be
+ * retried exactly; redirects and permanent4xx headers are terminal. */
+static inline bool edge_parsed_http_retryable(int status) {
+    return (status >= 200 && status < 300) || status == 408 || status == 425 || status == 429 ||
+        (status >= 500 && status <= 599);
+}
+static inline bool edge_http_response_retryable(int status,bool body_retryable) {
+    return body_retryable&&(!status||edge_parsed_http_retryable(status));
+}
 
 /* Startup only: preserve the caller's one frozen registration body. Every
  * attempt still passes through the ordinary charged, strict-TLS request path.

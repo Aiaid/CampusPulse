@@ -25,6 +25,10 @@ typedef struct {
     uint32_t wifi_timeout_ms; /* 1000..60000 */
     uint32_t request_timeout_ms; /* 1000..30000, whole DNS/TCP/TLS/HTTP attempt */
     uint32_t server_clock_error_ms; /* 1..3000; declared server-clock error bound */
+    /* Default false. Only an application owning ALL outbound network clients
+     * may opt in. Production network failures can flush the WHOLE SDK DNS
+     * cache, including other pending queries; never a per-host/DONE-only flush. */
+    bool flush_dns_on_network_failure;
 } cp_v3_transport_config_t;
 
 /* Pure USB preflight: validates origin syntax and production's bundle-only rule.
@@ -54,6 +58,13 @@ typedef struct {
     /* DNS diagnostic only: a.b.c.d -> (a<<24)|(b<<16)|(c<<8)|d.
      * Zero means unresolved/0.0.0.0. Never used to select or pin a destination. */
     uint32_t resolved_ipv4;
+    /* A parsed HTTP status may be known while headers/body are incomplete.
+     * This diagnostic never makes http_status/complete valid on failure. */
+    int parsed_http_status;
+    /* Attempt means TCP/IP execution was requested; success requires that the
+     * callback actually flushed. No claim that a DNS server returns another A. */
+    bool whole_flush_attempted, whole_flush_succeeded;
+    int32_t whole_flush_error; /* TCP/IP dispatch/callback result;0 alone is not proof of an attempt. */
 } cp_v3_transport_response_t;
 
 /* One application task exclusively owns start/request/time/stop. It must stop

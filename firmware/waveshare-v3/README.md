@@ -45,6 +45,20 @@ never controls routing or pins an address. They omit SSID, device identity,
 credentials and request/response contents. A Mac HTTPS pass is separate from
 board connectivity.
 
+This bounded application is the sole outbound network client: it does not start
+the old HTTP/MQTT runtime or SNTP. It explicitly enables the shared transport's
+default-off`flush_dns_on_network_failure` only for canonical`CP_API_ORIGIN`.
+An eligible failed request may flush the **whole SDK DNS cache**, which can
+cancel other pending DNS queries; this option must not be copied into a shared
+network-client application without a separate ownership review. The callback
+runs on the TCP/IP task, rechecks owner/cancel state, and does not change DHCP
+DNS servers, pin an IP or weaken CA/hostname verification. Each following exact
+retry resolves through the existing DNS configuration; a different A answer or
+success is not guaranteed. Numeric attempted/succeeded flags report the actual
+flush outcome. Any parsed HTTP status suppresses this flush. Incomplete2xx
+receipts and transient408/425/429/5xx can still be retried exactly; redirects and
+other known4xx headers terminate registration even if their body is incomplete.
+
 The first implementation applies one real small-statistics policy per boot:
 30/60-second windows, 5-second bins, capacity up to512, and only
 `cp-v3-stats/1` / `unclassified-v1`. All retained address/type keys are unknown;

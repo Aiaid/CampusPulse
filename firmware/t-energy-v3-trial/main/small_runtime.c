@@ -3,6 +3,8 @@
  * loss, GC endurance and whole-medium rollback protection are not certified. */
 #include "small_runtime.h"
 #include "small_runtime_logic.h"
+#include "small_runtime_requests.h"
+#include "small_runtime_requests_json.h"
 #include "trial_bootstrap.h"
 #include "board_budget.h"
 #include "board_small_queue.h"
@@ -46,7 +48,7 @@ static size_t frozen_bytes;
 static cp_v3_expected_t frozen;
 static uint64_t frozen_expiry;
 static uint32_t window_seq,status_seq,control_seq,contact_seq,windows_acked,status_acked,retries,failures,ack_failures;
-static bool transport_started,retry_verified,window_frozen;
+static bool transport_started,retry_verified,window_frozen,request_stop;
 
 static uint64_t mono(void){return (uint64_t)esp_timer_get_time()/1000u;}
 static void *external(size_t n){return heap_caps_aligned_calloc(8,1,n,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);}
@@ -140,13 +142,36 @@ static bool open_storage(void){
     if(te_v3_small_queue_open(queue,node,boot,&qcfg)!=TE_SMALL_QUEUE_OK||queue->queue.corrupt_slots||queue->queue.retired_slots)return false;
     return true;
 }
-static bool request(cp_v3_http_method_t method,const char *path,const void *bytes,size_t n,bool receipt_only,cp_v3_transport_response_t *r){
-    if(method==CP_V3_HTTP_POST&&te_board_budget_charge(&budgets,TE_BUDGET_UPLINK,n)!=TE_BOARD_BUDGET_OK){ESP_LOGE(TAG,"uplink_budget_denied=1 no_http=1");return false;}
+static bool request_stopped(void *p){(void)p;return request_stop||cancelled();}
+static bool charge_post(void *p,size_t n){
+    (void)p;te_board_budget_result_t result=te_board_budget_charge(&budgets,TE_BUDGET_UPLINK,n);
+    if(result!=TE_BOARD_BUDGET_OK){failures++;ESP_LOGE(TAG,"uplink_budget_denied=%u no_http=1",(unsigned)result);return false;}return true;
+}
+static esp_err_t transport_exchange(void *p,cp_v3_http_method_t method,const char *path,const void *bytes,size_t n,bool receipt_only,cp_v3_transport_response_t *r){
+    (void)p;uint64_t started=mono();
     esp_err_t e=receipt_only?cp_v3_transport_request_receipt_only(method,path,bytes,n,reply,TE_RESPONSE,r):
         cp_v3_transport_request(method,path,bytes,n,reply,TE_RESPONSE,r);
-    if(e!=ESP_OK||!r->complete||r->http_status<200||r->http_status>=300){
-        failures++;ESP_LOGW(TAG,"request_failed error=%ld status=%d stage=%u tls=%ld",(long)e,r->http_status,(unsigned)r->stage,(long)r->tls_verify_flags);return false;
-    }return true;
+    if(e==ESP_ERR_INVALID_STATE)request_stop=true;
+    if(e!=ESP_OK||!r->complete||r->http_status<200||r->http_status>=300||r->tls_verify_flags){
+        failures++;ESP_LOGW(TAG,"request_failed error=%ld status=%d parsed_http_status=%d stage=%u elapsed_ms=%llu dns=%ld resolved_ipv4=%lu tls_connected=%ld io=%ld last_read=%ld last_write=%ld rx=%lu tx=%lu tls_esp_error=%ld tls_stack_error=%ld tls_verify_flags=%ld whole_flush_attempted=%u whole_flush_succeeded=%u whole_flush_error=%ld",
+            (long)e,r->http_status,r->parsed_http_status,(unsigned)r->stage,(unsigned long long)(mono()-started),
+            (long)r->dns_error,(unsigned long)r->resolved_ipv4,(long)r->tls_connected,(long)r->io_error,(long)r->last_read,(long)r->last_write,
+            (unsigned long)r->received_bytes,(unsigned long)r->written_bytes,(long)r->tls_esp_error,(long)r->tls_stack_error,(long)r->tls_verify_flags,
+            (unsigned)r->whole_flush_attempted,(unsigned)r->whole_flush_succeeded,(long)r->whole_flush_error);
+    }return e;
+}
+static bool server_retryable(void *p,const cp_v3_transport_response_t *r){(void)p;return te_small_server_retryable(reply,r->body_bytes);}
+static const te_small_request_io_t http_io={NULL,request_stopped,charge_post,transport_exchange,server_retryable};
+static bool request(cp_v3_http_method_t method,const char *path,const void *bytes,size_t n,bool receipt_only,cp_v3_transport_response_t *r){
+    return te_small_request_once(&http_io,method,path,bytes,n,receipt_only,r)==TE_REQUEST_OK;
+}
+static bool registration_wait(void *p,uint32_t delay){
+    (void)p;while(delay&&!request_stopped(NULL)){uint32_t step=delay<100?delay:100;vTaskDelay(pdMS_TO_TICKS(step));delay-=step;}
+    return !request_stopped(NULL);
+}
+static void registration_attempt(void *p,unsigned index,size_t n){
+    (void)p;if(index)retries++;
+    ESP_LOGI(TAG,"registration_attempt=%u frozen_body_bytes=%u",index+1,(unsigned)n);
 }
 static bool control_match(void *p,const cp_v3_expected_t *e,const void *bytes,size_t n,const void *receipt,size_t rn){
     (void)p;return cp_v3_control_match_frozen_receipt(workspace,&e->scope,bytes,n,receipt,rn,cp_v3_transport_sha256,NULL)==CP_V3_CONTROL_OK;
@@ -341,16 +366,18 @@ void app_main(void){
 }
 static bool run(void){
     cp_v3_transport_config_t cfg={.origin=bootstrap.origin,.server_ca_pem=bootstrap.server_ca_pem[0]?bootstrap.server_ca_pem:NULL,
-        .clock_seed=bootstrap.clock_seed,.wifi_timeout_ms=10000,.request_timeout_ms=te_small_request_timeout_ms(bootstrap.origin),.server_clock_error_ms=1000};
+        .clock_seed=bootstrap.clock_seed,.wifi_timeout_ms=10000,.request_timeout_ms=te_small_request_timeout_ms(bootstrap.origin),.server_clock_error_ms=1000,
+        .flush_dns_on_network_failure=!strcmp(bootstrap.origin,CP_API_ORIGIN)};
     transport_started=true;if(cp_v3_transport_start(&bootstrap.settings,&cfg)!=ESP_OK)return false;
     if(!recover())return false;
     cp_v3_time_t t;if(!current(&t))return false;
     size_t n=capabilities(t);if(!n||cp_v3_control_init(control,workspace,node,boot,reply,n,t,cp_v3_transport_sha256,NULL)!=CP_V3_CONTROL_OK)return false;
     const char *bytes;if(cp_v3_control_registration(control,1,t.mono_ms,&bytes,&n)!=CP_V3_CONTROL_OK)return false;
     cp_v3_transport_response_t r={0};phase("REGISTER");
-    if(!request(CP_V3_HTTP_POST,"/api/v3/device/capabilities",bytes,n,false,&r)||!current(&t)||cp_v3_control_registration_receipt(control,reply,r.body_bytes,t)!=CP_V3_CONTROL_OK)return false;
+    te_small_registration_io_t registration={&http_io,NULL,registration_wait,registration_attempt};
+    if(!te_small_registration_exchange(&registration,bytes,n,&r)||!current(&t)||cp_v3_control_registration_receipt(control,reply,r.body_bytes,t)!=CP_V3_CONTROL_OK)return false;
     char path[128];snprintf(path,sizeof path,"/api/v3/device/config?boot_id=%s",boot);bool offered=false;phase("WAIT POLICY");
-    for(unsigned i=0;i<180;i++){
+    for(unsigned i=0;i<180&&!request_stopped(NULL);i++){
         if(request(CP_V3_HTTP_GET,path,NULL,0,false,&r)&&current(&t)&&cp_v3_control_offer(control,reply,r.body_bytes,t)==CP_V3_CONTROL_OK){offered=true;break;}
         vTaskDelay(pdMS_TO_TICKS(1000));
     }

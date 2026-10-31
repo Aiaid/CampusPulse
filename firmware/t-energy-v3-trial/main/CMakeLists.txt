@@ -11,5 +11,5 @@ idf_component_register(
          "../flash_queue/write_budget/write_budget.c" "../identity/identity.c" "../history/local_guard.c"
     INCLUDE_DIRS "." "../../components/cp_v3_stats/include" "../../components/cp_v3_capture/include" "../../components/cp_v3_temporal/include" "../flash_queue" "../flash_queue/nvs_store" "../flash_queue/write_budget" "../identity" "../history"
     REQUIRES cp_v3_capture cp_v3_budget cp_v3_small_results cp_v3_stats cp_v3_temporal cp_settings cp_v3_evidence cp_v3_control cp_v3_queue cp_v3_transport
-             bt nvs_flash json bootloader_support esp_timer esp_psram esp_partition mbedtls)
+             bt nvs_flash json bootloader_support esp_timer esp_psram esp_partition mbedtls esp-tls)
 endif()

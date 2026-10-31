@@ -8,6 +8,7 @@ trap 'rm -rf -- "$OUT"' EXIT
 CC_BIN="${CC:-cc}"
 FLAGS=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined)
 bash "$TEST_DIR/run_maintenance_host_test.sh"
+bash "$TEST_DIR/run_requests_host_test.sh"
 "$CC_BIN" "${FLAGS[@]}" -I "$PROJECT/main" -I "$TEST_DIR" \
   -I "$FIRMWARE/components/cp_v3_control/include" -I "$FIRMWARE/components/cp_v3_evidence/include" \
   -I "$FIRMWARE/components/cp_v3_queue/include" \

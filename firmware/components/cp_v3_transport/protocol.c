@@ -165,3 +165,15 @@ void cp_v3_transport_clear_response(cp_v3_transport_response_t *s) {
     s->complete = s->date_known = false;
     memset(&s->server_time, 0, sizeof s->server_time);
 }
+void cp_v3_transport_note_headers(cp_v3_transport_response_t *out, const cp_v3_http_response_t *parsed) {
+    if (out && parsed && parsed->parser.status_code >= 200 && parsed->parser.status_code <= 599)
+        out->parsed_http_status = (int)parsed->parser.status_code;
+}
+bool cp_v3_transport_should_flush_dns(const cp_v3_transport_config_t *config, const cp_v3_transport_response_t *r,
+    bool network_failure, bool is_owner, bool cancelled) {
+    return config && r && config->flush_dns_on_network_failure && config->origin &&
+        !strcmp(config->origin, CP_API_ORIGIN) && network_failure && is_owner && !cancelled &&
+        r->stage >= CP_V3_TRANSPORT_TLS && r->stage <= CP_V3_TRANSPORT_RESPONSE_BODY &&
+        !r->dns_error && r->resolved_ipv4 && !r->complete && !r->http_status && !r->parsed_http_status &&
+        !r->tls_verify_flags && !r->whole_flush_attempted;
+}

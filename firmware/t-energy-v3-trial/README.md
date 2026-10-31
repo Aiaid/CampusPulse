@@ -58,6 +58,20 @@ verification stay enabled.
 The configured request deadline is30 seconds for that exact production origin
 and15 seconds for other test origins. SDK socket/select calls can overrun it;
 this setting is not a guaranteed hard wall-clock bound.
+Startup registration makes at most three attempts with the same frozen
+capability/body/sequence/uptime, with1s/2s backoff and the original persistent
+POST budget charged before every attempt. Known terminal HTTP status, explicit
+nonretryable errors, cancellation and non-network certificate/TLS failures stop
+retries. A partial2xx receipt can trigger an exact retry but never counts as
+registration success or collection authority.
+
+Only this bounded runtime's exact canonical production origin opts into the
+transport's whole SDK DNS-cache flush after a qualifying network failure. It
+keeps DHCP DNS servers and strict hostname/CA checks. The SDK flush affects
+the entire cache and can cancel unrelated in-flight DNS queries; this app owns
+all outbound requests and runs no other DNS client. The option defaults false
+and is unsuitable for a shared network owner. Any parsed HTTP status prevents
+flushing; no claim is made that the next DNS response selects a different IP.
 
 Build with activated ESP-IDF 5.5.3 and `./build.sh`; temporary separate images
 and partition-boundary checks run without opening a device. From the repository
