@@ -14,4 +14,4 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 idf_build_set_property(CP_LAN_BLE_LOAD "${CP_LAN_BLE_LOAD}")
 project(CampusPulse-LAN-HTTPS-Diagnostic)
 # Pin the existing async retry/error repair without linking cp_network.
-include("${CMAKE_CURRENT_LIST_DIR}/../../components/cp_network/cmake/transport_async_errors.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../common/cmake/transport_async_errors.cmake")

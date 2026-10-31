@@ -1,2 +1,0 @@
-# Current application options; sdkconfig.defaults disables Passport UI.
-rsource "../../ai-passport-radar/main/Kconfig.projbuild"

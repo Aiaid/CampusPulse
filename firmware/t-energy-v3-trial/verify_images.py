@@ -16,7 +16,7 @@ def require(value: bool, message: str) -> None:
 
 def verify(build: Path) -> dict:
     build = build.resolve()
-    existing = Path(__file__).resolve().parent.parent / "t-energy-s3" / "verify_images.py"
+    existing = Path(__file__).resolve().parent.parent / "tools" / "verify_tenergy_partitions.py"
     spec = importlib.util.spec_from_file_location("te_existing_layout", existing)
     require(spec is not None and spec.loader is not None, "Existing layout verifier missing")
     module = importlib.util.module_from_spec(spec)

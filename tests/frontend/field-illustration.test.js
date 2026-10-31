@@ -14,7 +14,7 @@ const baseline = (extra = {}) => ({ status: 'historical_estimate', source: 'manu
 const state = data => ({ data, error: '', loading: false });
 const read = (data, extra = {}) => fieldIllustration({ now, mode: 'field', live: state(data), ...extra });
 const render = illustration => renderToStaticMarkup(createElement(FieldIllustration, { illustration, point: { left: 150, top: 50 }, width: 300, height: 210, compact: true, placeName: '图书馆' }));
-const reported = extra => sensor({ node_id: 'node', boot_id: 'boot', placement_id: 'placement', capture_config_id: 'config',
+const reported = extra => sensor({ node_id: 'node', boot_id: 'boot', placement_id: 'placement', protocol: 'campuspulse/3', assignment_generation: 1, policy_id: 'config',
   seq: 1, observed_at: null, valid_until: null, uncertainty_ms: null, received_at: iso(-1000), time_status: 'unknown', freshness: 'unverified',
   reports_aggregated: 30, aggregation_drops: 0, quality_flags: [], unique_table_overflow: false, ...extra });
 

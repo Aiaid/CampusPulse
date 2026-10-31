@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Env } from './types';
-import { authorizeResearch, device, json } from './ingest';
-import { IngestError } from './ingest-validation';
+import { authorizeResearch, device, json } from './http';
+import { IngestError } from './strict-json';
 import { CprawValidator } from './cpraw-format';
 import { CPRAW_CHUNK_BYTES, CPRAW_PROTOCOL, CPRAW_SHA256, CPRAW_UUID, parseCprawManifest, readCprawBody, type CprawChunk, type CprawManifest } from './cpraw-manifest';
 

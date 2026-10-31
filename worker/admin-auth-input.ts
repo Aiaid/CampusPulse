@@ -1,5 +1,5 @@
-import { IngestError, parseIngestJson } from './ingest-validation';
-import { readBytes } from './ingest';
+import { IngestError, parseIngestJson } from './strict-json';
+import { readBytes } from './http';
 
 export function authObject(value: unknown, required: string[], optional: string[] = []): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new IngestError(422, 'invalid_auth_input', 'Provide the supported authentication fields.');

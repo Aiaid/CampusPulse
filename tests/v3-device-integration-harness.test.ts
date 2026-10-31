@@ -6,7 +6,7 @@ import path from 'node:path';
 import { build } from 'esbuild';
 import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from 'miniflare';
 import { createAdminSession } from '../worker/admin-auth';
-import { sha256 } from '../worker/ingest';
+import { sha256 } from '../worker/http';
 import { readPrivateJson, runIntegration, validateConfig, fixtureTools } from '../scripts/v3-device-integration.mjs';
 import { INGEST_V3_FLAGS } from './helpers/v3-ingest-fixtures';
 let mf: Miniflare, db: D1Database, privateDir: string, cookie: string;

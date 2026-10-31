@@ -6,7 +6,7 @@ import {RpcGuard, RpcGuardError} from '../rpc-guard.mjs';
 const boot = value => `${value.toString(16).padStart(8, '0')}-1111-4111-8111-111111111111`;
 const hash = value => createHash('sha256').update(value).digest('hex');
 const request = (overrides = {}) => ({node: 'node1', boot: boot(1), op: 'ingest',
-  rpc: 1, digest: hash('synthetic'), bytes: 9, publishedAtMs: 120000, ...overrides});
+  rpc: 1, digest: hash('synthetic'), bytes: 9, v3:{subop:5,receiptOnly:false}, publishedAtMs: 120000, ...overrides});
 const rejected = (code, status) => error => {
   assert.ok(error instanceof RpcGuardError);
   assert.equal(error.code, code);
@@ -60,7 +60,7 @@ test('latest RPC survives restart and permits only identical retries', async () 
   assert.deepEqual(await restarted.begin(request({rpc: 7})), {duplicate: true});
   await assert.rejects(restarted.begin(request({rpc: 6})), rejected('rpc_conflict', 409));
   await assert.rejects(restarted.begin(request({rpc: 7, digest: hash('changed')})), rejected('rpc_conflict', 409));
-  await assert.rejects(restarted.begin(request({rpc: 7, op: 'activation'})), rejected('rpc_conflict', 409));
+  await assert.rejects(restarted.begin(request({rpc: 7, digest:hash('other frame subop')})), rejected('rpc_conflict', 409));
   assert.deepEqual(await restarted.begin(request({rpc: 8, digest: hash('changed')})), {duplicate: false});
   await assert.rejects(f.restart().begin(request({rpc: 7})), rejected('rpc_conflict', 409));
   assert.equal(f.state().rate.attempts, 7);
@@ -168,7 +168,7 @@ test('legacy v1 state migrates conservatively without clearing replay or rate hi
 
 test('600 attempts per fixed minute include duplicates and survive restart', async () => {
   const f = fixture();
-  const input = request({op: 'config', bytes: 0, digest: hash('')});
+  const input = request({op:'ingest',v3:{subop:2,receiptOnly:false},bytes:8,digest:hash('CPV3 config')});
   for (let i = 0; i < 600; i++) await f.guard.begin(input);
   await assert.rejects(f.restart().begin(input), rejected('rate_limit', 429));
   assert.equal(f.state().rate.attempts, 601);
@@ -187,11 +187,11 @@ test('4 MiB per fixed minute counts exact body lengths and duplicate attempts', 
   const input = request({bytes: 8192});
   for (let i = 0; i < 512; i++) await f.guard.begin(input);
   assert.equal(f.state().rate.bytes, 4 * 1024 * 1024);
-  await assert.rejects(f.restart().begin(request({rpc: 2, bytes: 1})), rejected('rate_limit', 429));
+  await assert.rejects(f.restart().begin(request({rpc: 2, bytes: 8})), rejected('rate_limit', 429));
   assert.equal(f.state().boots[0].rpc, 1); // rejected request cannot advance replay state
   assert.equal(f.state().rate.bytes, 4 * 1024 * 1024 + 1);
   f.setTime(180000);
-  assert.deepEqual(await f.restart().begin(request({rpc: 2, bytes: 1})), {duplicate: false});
+  assert.deepEqual(await f.restart().begin(request({rpc: 2, bytes: 8})), {duplicate: false});
 });
 
 test('CPV3 guard accepts only framed ingest and charges full wire lengths',async()=>{
@@ -215,11 +215,11 @@ test('CPV3 guard accepts only framed ingest and charges full wire lengths',async
 
 test('rejected replay attempts consume the persistent admission budget', async () => {
   const f = fixture();
-  await f.guard.begin(request({rpc: 10, bytes: 0}));
+  await f.guard.begin(request({rpc: 10, bytes: 8}));
   for (let i = 0; i < 599; i++) {
-    await assert.rejects(f.guard.begin(request({rpc: 9, bytes: 0})), rejected('rpc_conflict', 409));
+    await assert.rejects(f.guard.begin(request({rpc: 9, bytes: 8})), rejected('rpc_conflict', 409));
   }
-  await assert.rejects(f.restart().begin(request({rpc: 10, bytes: 0})), rejected('rate_limit', 429));
+  await assert.rejects(f.restart().begin(request({rpc: 10, bytes: 8})), rejected('rate_limit', 429));
   assert.equal(f.state().boots[0].rpc, 10);
 });
 
@@ -236,12 +236,12 @@ test('clock rollback cannot replenish an exhausted budget', async () => {
 
 test('validates canonical identities, operations, hashes, sizes and nonzero uint32 RPCs', async () => {
   const f = fixture();
-  const invalid = [null, {node: ''}, {node: 'Node1'}, {node: 'n'.repeat(65)},
+  const invalid = [null, {v3:undefined}, {node: ''}, {node: 'Node1'}, {node: 'n'.repeat(65)},
     {boot: boot(1).toUpperCase().replace('8111', 'A111')},
     {boot: boot(1).replace('-4111-', '-5111-')}, {boot: boot(1).replace('-8111-', '-7111-')},
     {op: 'delete'}, {rpc: '1'}, {rpc: 0}, {rpc: -1}, {rpc: 1.5}, {rpc: 0x100000000},
     {rpc: Number.NaN}, {digest: 'a'.repeat(63)}, {digest: 'A'.repeat(64)},
-    {bytes: -1}, {bytes: 8193}, {bytes: 0.1}, {bytes: '9'}, {op: 'config', bytes: 1},
+    {bytes: -1}, {bytes: 8201}, {bytes: 0.1}, {bytes: '9'}, {op: 'config', bytes: 1},
     {publishedAtMs: undefined}, {publishedAtMs: 0}, {publishedAtMs: -1}, {publishedAtMs: 0.1},
     {publishedAtMs: '120000'}, {publishedAtMs: Number.NaN}, {publishedAtMs: Number.MAX_SAFE_INTEGER + 1}];
   for (const item of invalid) {

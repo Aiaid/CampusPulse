@@ -1,9 +1,9 @@
 /** Experimental control-only protocol. Opt-in never enables v3 data ingestion. */
 import type { Env } from './types';
 import { adminOrigin, adminSecret, requireAdminSession, sessionAssertion, type AuthAssertion } from './admin-auth';
-import { device, json, readBytes, sha256 } from './ingest';
-import { IngestError } from './ingest-validation';
-import { object, string, integer, choice } from './device-v2-validation';
+import { device, json, readBytes, sha256 } from './http';
+import { IngestError } from './strict-json';
+import { object, string, integer, choice } from './validation';
 import { capabilityDigestV3, DeviceV3ConfigError, freezeDeviceConfigV3, negotiateDeviceConfigV3, parseDeviceV3Json,
   validateDeviceCapabilitiesV3, validateFrozenDeviceConfigV3, type DeviceConfigV3, type FrozenDeviceConfigV3 } from './device-v3-config';
 import { assertV3IngestPolicy, supportsV3IngestPolicy, v3IngestEnabled, type V3IngestPolicy } from './device-v3-ingest-validation';
@@ -484,7 +484,7 @@ export async function handleDeviceV3Control(request: Request, env: DeviceV3Contr
 
 function controlError(error: unknown): Response {
   if (error instanceof DeviceV3ConfigError) return json({ error: { code: error.code, message: error.message, retryable: false } }, 422);
-  if (error instanceof IngestError) return json({ error: { code: error.code === 'invalid_device_v2' ? 'invalid_device_v3' : error.code, message: error.message, retryable: error.status >= 500 } }, error.status);
+  if (error instanceof IngestError) return json({ error: { code: error.code, message: error.message, retryable: error.status >= 500 } }, error.status);
   return json({ error: { code: 'storage_unavailable', message: 'Service temporarily unavailable.', retryable: true } }, 503);
 }
 

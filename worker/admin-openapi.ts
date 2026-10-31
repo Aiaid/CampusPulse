@@ -29,9 +29,6 @@ export function createAdminOpenApi() {
       responses: { [status]: json(method === 'get' ? 'Current server state; no credential digests or raw identifiers.' : 'Committed server result.', object), ...errors },
     };
   }
-  const draftBody = entity({ config: ref('AnyCaptureConfig'), raw_retention_hours: { type: 'integer', minimum: 1, maximum: 8760 }, aggregate_retention_days: { type: 'integer', minimum: 1, maximum: 3650 } }, ['config']);
-  const draftUpdate = entity({ ...draftBody.properties, revision: integer }, ['config', 'revision']);
-  const revision = entity({ revision: integer });
   const anchor = entity({ x: { type: 'number', minimum: 0, maximum: 1 }, y: { type: 'number', minimum: 0, maximum: 1 } });
   const observationKinds = { type: 'array', minItems: 1, maxItems: 3, uniqueItems: true, items: { type: 'string', enum: ['activity', 'parking', 'elevator'] } };
   const placeFields = { name: string, kind: { type: 'string', enum: ['activity', 'parking', 'elevator'], description: 'Legacy primary purpose; must belong to observation_kinds when both are supplied.' }, observation_kinds: observationKinds, anchor, gis_anchor: { anyOf: [entity({ ...anchor.properties, verified: { type: 'boolean', const: true } }), { type: 'null' }] } };
@@ -55,7 +52,7 @@ export function createAdminOpenApi() {
       '/api/v1/admin/overview': { get: operation('getAdminOverview', 'Read fleet contact and configuration overview', 'get', undefined, 'Contact freshness uses server receipt time and the configured threshold. Recent contact is not proof of current scan activity or radio completeness.') },
       '/api/v1/admin/devices': {
         get: { ...operation('listAdminDevices', 'List devices, latest health and configuration state', 'get'), parameters: [{ name: 'after', in: 'query', required: false, schema: id, description: 'Use the previous next_cursor; each response contains at most 200 devices.' }] },
-        post: operation('registerAdminDevice', 'Register a device with a verified independent MQTT identity', 'post', entity({ id, name: string, board: string }), 'Requires fresh verification. Device, independent broker identity and audit commit atomically. Returns device, legacy upload credential and mqtt:{uri,username,password,namespace}. If no broker-verified pool row is ready, mqtt_pool_empty (503) creates no device. Secrets are never present in list or audit responses.', '201'),
+        post: operation('registerAdminDevice', 'Register a device with a verified independent MQTT identity', 'post', entity({ id, name: string, board: string }), 'Requires fresh verification. Device, independent broker identity and audit commit atomically. Returns device, device HTTP credential and mqtt:{uri,username,password,namespace}. If no broker-verified pool row is ready, mqtt_pool_empty (503) creates no device. Secrets are never present in list or audit responses.', '201'),
       },
       '/api/v1/admin/mqtt/pool': {
         get: operation('listAdminMqttPool', 'List safe MQTT pool metadata and ready count', 'get', undefined, 'No passwords, encrypted credentials, upload tokens or one-time CSV exports are returned. Entries are bounded to 500 and report truncation.'),
@@ -73,19 +70,11 @@ export function createAdminOpenApi() {
         get: operation('getAdminDevice', 'Read device details, policy and placement history', 'get'),
         patch: operation('updateAdminDevice', 'Edit device metadata or enable/disable future authentication', 'patch', entity({ name: string, board: string, enabled: { type: 'boolean' } }, [])),
       },
-      '/api/v1/admin/devices/{id}/batches': {
-        parameters: [pathId], get: { ...operation('listAdminDeviceBatches', 'List committed upload receipts for one device', 'get', undefined, 'Authenticated private diagnostics. Lists receipt metadata only; no R2 object reads, raw identifiers or credentials. Keyset pagination is bounded to 50 receipts. Local pending data is not available to this API.'),
-          parameters: [{ name: 'stream', in: 'query', schema: { type: 'string', enum: ['ble_windows','address_summaries','node_status','ble_reports'] } }, { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50, default: 20 } }, { name: 'before', in: 'query', schema: { type: 'string', maxLength: 256 }, description: 'Opaque next_cursor from the preceding page.' }] },
-      },
-      '/api/v1/admin/devices/{id}/batches/{batchId}': {
-        parameters: [pathId, { name: 'batchId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
-        get: { ...operation('getAdminDeviceBatch', 'Inspect one retained upload payload and its provenance', 'get', undefined, 'Administrator-only private read. May contain BLE identifiers or advertisement bytes. Returns retention-limited normalized D1 projection, separately labeled from one original R2 body. Exact UTF-8 text is returned only after a bounded 65536-byte read and matching receipt SHA-256. Missing, expired, corrupted or credential-bearing archives return explicit unavailability; no reconstructed wire bytes. Never includes network or device credentials.'), responses: { '200': json('Committed receipt with normalized projection and independently verified original body when available.'), ...errors } },
-      },
       '/api/v1/admin/devices/{id}/rotate-credential': {
         parameters: [pathId], post: operation('rotateAdminDeviceCredential', 'Invalidate the old device credential and return a new one once', 'post', entity({})),
       },
       '/api/v1/admin/devices/{id}/placements': {
-        parameters: [pathId], post: operation('createAdminPlacement', 'Register a deployment and close an earlier open deployment', 'post', entity({ id, place_id: { type: ['string', 'null'] }, observation_kinds: observationKinds, valid_from_ms: { type: 'integer', minimum: 0 }, valid_until_ms: { type: ['integer', 'null'], minimum: 0 } }, ['id','place_id','valid_from_ms','valid_until_ms']), 'Selected observation_kinds must be a subset of the target place purposes. Omission selects all target purposes, or activity when unlocated. Every placement response and device placement history returns observation_kinds. Scope is immutable and separate from firmware capture_config JSON; changing place or work purposes requires a new placement and a new published policy. Keeps old batch placement/config references intact. A registry change alone does not move a physical device or make firmware split capture windows.', '201'),
+        parameters: [pathId], post: operation('createAdminPlacement', 'Register a deployment and close an earlier open deployment', 'post', entity({ id, place_id: { type: ['string', 'null'] }, observation_kinds: observationKinds, valid_from_ms: { type: 'integer', minimum: 0 }, valid_until_ms: { type: ['integer', 'null'], minimum: 0 } }, ['id','place_id','valid_from_ms','valid_until_ms']), 'Selected observation_kinds must be a subset of the target place purposes. Omission selects all target purposes, or activity when unlocated. Every placement response and device placement history returns observation_kinds. Scope is immutable and separate from firmware V3 policy JSON; changing place or work purposes requires a new placement and a new published policy. Keeps old batch placement/config references intact. A registry change alone does not move a physical device or make firmware split capture windows.', '201'),
       },
       '/api/v1/admin/places': {
         get: operation('listAdminPlaces', 'List logical places and registered anchors', 'get'),
@@ -94,36 +83,14 @@ export function createAdminOpenApi() {
       '/api/v1/admin/places/{id}': {
         parameters: [pathId], patch: operation('updateAdminPlace', 'Edit place metadata, observation purposes and anchors', 'patch', entity(placeFields, []), 'observation_kinds replaces enabled purposes; array-only updates select its first entry as primary. A legacy kind-only update selects that single purpose. Disabling a purpose preserves historical observations and placement scope, but rejects new manual entries of that purpose.'),
       },
-      '/api/v1/admin/configs': {
-        get: { ...operation('listAdminConfigs', 'Read editable drafts and published historical policies', 'get'), parameters: [{ name: 'node_id', in: 'query', required: false, schema: id }] },
-        post: operation('createAdminConfigDraft', 'Create an editable capture-policy draft', 'post', draftBody, 'Omitted retention values use current site defaults. Drafts do not authorize ingestion until published.', '201'),
-      },
-      '/api/v1/admin/configs/{id}': {
-        parameters: [pathId], put: operation('updateAdminConfigDraft', 'Edit a draft using its current revision', 'put', draftUpdate),
-      },
-      '/api/v1/admin/configs/{id}/validate': {
-        parameters: [pathId], post: operation('validateAdminConfigDraft', 'Validate a saved draft and registered associations', 'post', revision),
-      },
-      '/api/v1/admin/configs/{id}/publish': {
-        parameters: [pathId], post: operation('publishAdminConfigDraft', 'Publish a policy version and set the desired device policy', 'post', revision, 'Publication does not confirm device activation. Clone to a fresh ID for the next version; already queued batches retain their exact historical policy. The UI distinguishes pending, batch-reported, explicitly applied and failed.'),
-      },
+      '/api/v1/admin/device-v3/prepare': { post: operation('prepareAdminV3Policy', 'Prepare a capability-bound native MQTT small-statistics policy', 'post', entity({node_id:id,placement_id:id,dataset:{type:'string',enum:['controlled_test','field','demo']}},['node_id','placement_id']), 'Read-only preparation from the actual registered capability snapshot. Default controlled_test, unclassified-v1, raw off. Returns valid, issues, policy, policy_sha256, expected_generation, applied:false and requires_device_ack:true. No assignment is created.') },
+      '/api/v1/admin/device-v3/validate': { post: operation('validateAdminV3Policy', 'Validate V3 generation, capability, placement and policy', 'post', entity({policy:object,expected_generation:{type:'integer',minimum:0}}), 'Read-only capability negotiation. The assignment endpoint independently repeats all compatibility and transactional authorization checks. Compatible is never an applied ACK.') },
       '/api/v1/admin/settings': {
         get: operation('getAdminSettings', 'Read runtime settings and revision', 'get'),
-        put: operation('updateAdminSettings', 'Save validated runtime settings using the current revision', 'put', entity({ settings: ref('AdminRuntimeSettings'), revision: integer }), 'Affects public defaults, contact freshness and new manual records/new draft defaults. Does not rewrite historical observation expiry or retention.'),
+        put: operation('updateAdminSettings', 'Save validated runtime settings using the current revision', 'put', entity({ settings: ref('AdminRuntimeSettings'), revision: integer }), 'Affects public defaults, contact freshness and new manual records. Does not rewrite historical observation expiry or retention.'),
       },
       '/api/v1/admin/audit': {
         get: { ...operation('listAdminAudit', 'Read bounded redacted management audit entries', 'get'), parameters: [{ name: 'before', in: 'query', required: false, schema: string }] },
-      },
-      '/api/v1/device/config/ack': {
-        post: {
-          operationId: 'acknowledgeDeviceConfig', tags: ['Device ingestion'], summary: 'Report whether this node applied its assigned capture policy',
-          description: 'Authenticated device report only, not independent hardware validation. A queued batch referencing a policy is not an activation acknowledgement. Only registered assigned versions can be acknowledged.',
-          security: [{ DeviceToken: [] }], requestBody: body(entity({ capture_config_id: id, state: { type: 'string', enum: ['applied', 'failed'] }, message: { type: 'string', maxLength: 80, pattern: '^[a-z0-9][a-z0-9_.:-]{0,79}$' } }, ['capture_config_id', 'state'])),
-          responses: { '200': json('Server saved the device activation report.'), ...errors,
-            '401': json('Device credential is missing, invalid or disabled.'),
-            '403': json('Configuration was not assigned to this node, or a supplied Origin differs from the request origin.'),
-          },
-        },
       },
       ...identity.paths,
     },

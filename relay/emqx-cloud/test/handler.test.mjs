@@ -7,7 +7,7 @@ const namespace='synthetic_mqtt';const node='registered_factory_node';
 const boot='11111111-1111-4111-8111-111111111111';const key='k'.repeat(43);
 const bytes=value=>new TextEncoder().encode(value);
 const frame=(subop,body=subop===2?'':'{}',flags=0)=>Buffer.concat([Buffer.from([67,80,86,51,1,subop,flags,0]),Buffer.from(body)]);
-function event(op='config',body='',changes={}) {
+function event(op='ingest',body=frame(2),changes={}) {
   return {username:'synthetic_user',topic:`cp/v1/${namespace}/${boot}/req/${op}/1`,
     qos:1,retain:false,published_at_ms:Date.now(),payload_b64:Buffer.from(body).toString('base64'),...changes};
 }
@@ -30,20 +30,24 @@ const decode=reply=>({status:reply.payload[0]*256+reply.payload[1],body:Buffer.f
 test('dynamic authorized namespace resolves factory node without a device-token map',async()=>{
   const original=' {"lease":"synthetic", "unicode":"测试"}\n';const s=setup(()=>({status:200,body:bytes(original)}));
   assert.equal((await run(s)).status,204);
-  assert.deepEqual(s.calls[0],{username:'synthetic_user',namespace,boot,op:'config',rpc:1,body:new Uint8Array()});
+  assert.deepEqual(s.calls[0],{username:'synthetic_user',namespace,boot,op:'ingest',rpc:1,body:new Uint8Array(),v3:{subop:2,receiptOnly:false}});
   assert.equal('DEVICE_MAP' in s.env,false);assert.equal('token' in s.calls[0],false);
-  assert.deepEqual(decode(s.replies[0]),{status:200,body:original});assert.match(s.replies[0].topic,/\/rep\/config\/1$/);
+  assert.deepEqual(decode(s.replies[0]),{status:200,body:original});assert.match(s.replies[0].topic,/\/rep\/ingest\/1$/);
   assert.equal((await run(s)).status,204);assert.equal(s.calls.length,2);
 });
 test('frozen old-boot ingest bytes reach private API unchanged',async()=>{
   const body=` {"node_id":"${node}", "boot_id":"22222222-2222-4222-8222-222222222222", "data":"测试"}\n`;
   const s=setup(()=>({status:201,body:bytes(' {"receipt":"synthetic"}\n')}));
-  assert.equal((await run(s,event('ingest',body))).status,204);assert.equal(Buffer.from(s.calls[0].body).toString(),body);
+  assert.equal((await run(s,event('ingest',frame(5,body)))).status,204);assert.equal(Buffer.from(s.calls[0].body).toString(),body);
   assert.equal(s.calls[0].namespace,namespace);assert.equal(decode(s.replies[0]).status,201);
 });
-for(const op of ['contact','activation'])test(`${op} retains current topic boot and fixed operation`,async()=>{
-  const s=setup();const body=JSON.stringify({boot_id:boot});assert.equal((await run(s,event(op,body))).status,204);
-  assert.equal(s.calls[0].op,op);assert.equal((await run(s,event(op,'{"boot_id":"old"}'))).status,400);assert.equal(s.calls.length,1);
+for(const op of ['contact','config','activation'])test(`legacy ${op} topics are retired before authorization`,async()=>{
+  const s=setup();assert.equal((await run(s,event(op,'{}'))).status,400);
+  assert.equal(s.calls.length,0);assert.equal(s.checks.length,0);assert.equal(s.replies.length,0);
+});
+test('unframed legacy ingest is retired before registry or storage',async()=>{
+  const s=setup();assert.equal((await run(s,event('ingest','{"protocol":"campuspulse/2"}'))).status,400);
+  assert.equal(s.calls.length,0);assert.equal(s.checks.length,0);assert.equal(s.replies.length,0);
 });
 for(const status of [401,403,409,422,500,503,302])test(`private API ${status} stays exact status/body`,async()=>{
   const body='{"error":"synthetic_'+status+'"}';const s=setup(()=>({status,body:bytes(body)}));
@@ -70,13 +74,13 @@ test('streaming event bound applies before registry authorization',async()=>{
 test('8192-byte ingest stays exact and8193 is rejected',async()=>{
   for(const size of [8192,8193]){
     const prefix=`{"node_id":"${node}","padding":"`;const body=prefix+'x'.repeat(size-Buffer.byteLength(prefix)-2)+'"}';
-    const s=setup();assert.equal(Buffer.byteLength(body),size);assert.equal((await run(s,event('ingest',body))).status,size===8192?204:400);
+    const s=setup();assert.equal(Buffer.byteLength(body),size);assert.equal((await run(s,event('ingest',frame(5,body)))).status,size===8192?204:400);
     assert.equal(s.calls.length,size===8192?1:0);
   }
 });
 for(const variant of ['throw','overflow','wrong_type','invalid_status'])test(`uncertain private API ${variant} never fabricates custody`,async()=>{
   const s=setup(()=>{if(variant==='throw')throw new Error('private exception');
-    if(variant==='overflow')return {status:200,body:new Uint8Array(2049)};
+    if(variant==='overflow')return {status:200,body:new Uint8Array(8193)};
     if(variant==='wrong_type')return {status:200,body:'incorrect type'};
     return {status:999,body:new Uint8Array()};});
   assert.equal((await run(s)).status,204);assert.deepEqual(decode(s.replies[0]),{status:504,body:'{"error":"gateway_outcome_unknown"}'});
@@ -96,7 +100,7 @@ test('registry revocation is rechecked after routing before forward',async()=>{
 });
 test('guard sees canonical identity and exact digest without credentials',async()=>{
   const s=setup();let guard;const result=await handleBrokerEvent(bytes(JSON.stringify(event())),s.env,s.publish,async rpc=>{guard=rpc;return 409;});
-  assert.equal(result,409);assert.deepEqual({...guard,publishedAtMs:undefined},{node,boot,op:'config',rpc:1,digest:createHash('sha256').update('').digest('hex'),bytes:0,publishedAtMs:undefined});
+  assert.equal(result,409);assert.deepEqual({...guard,publishedAtMs:undefined},{node,boot,op:'ingest',rpc:1,digest:createHash('sha256').update(frame(2)).digest('hex'),bytes:8,v3:{subop:2,receiptOnly:false},publishedAtMs:undefined});
   assert.ok(Math.abs(Date.now()-guard.publishedAtMs)<1000);
   assert.equal(s.calls.length,0);
 });

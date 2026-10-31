@@ -38,6 +38,10 @@ async function checkV3Gates() {
     checkError('/api/v3/ingest', 'POST', false, 'v3_ingest_disabled'),
     checkError('/api/v1/cpraw/uploads/00000000-0000-4000-8000-000000000000', 'POST', false, 'archive_disabled'),
   ]);
+  for (const [path,method] of [['/api/v1/ingest','POST'],['/api/v1/device/config','GET'],['/api/v2/ingest','POST'],['/api/v2/device/contact','POST'],['/api/v2/device/config','GET']]) {
+    const retired=await fetch(new URL(path,base),{method,signal:AbortSignal.timeout(15000)});
+    assert.equal(retired.status,404,'Retired device protocol must stay unavailable');
+  }
   const response = await get('/api/v3/places/deployment-smoke-unknown-8f2c97/statistics');
   const body = await response.json();
   assert.ok(body?.schema === 'public-statistics/3' && body.state === 'unavailable' &&

@@ -1,6 +1,6 @@
 import type { Env } from './types';
-import { IngestError } from './ingest-validation';
-import { json } from './ingest';
+import { IngestError } from './strict-json';
+import { json } from './http';
 import {
   accountAssertion, adminCookie, adminTokenMatches, authAtomic, authAudit, authRateLimit, base64url,
   createAdminSession, findAdminAccount, publicAccount, requireAdminSession, requireFreshSession,

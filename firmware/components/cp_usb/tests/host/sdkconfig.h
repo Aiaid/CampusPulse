@@ -1,2 +1,0 @@
-#pragma once
-#define CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG 1

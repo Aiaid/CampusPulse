@@ -1,8 +1,8 @@
 /** Read-only administrator evidence. No device credentials or opaque source JSON. */
 import type {Env} from './types';
 import type {AuthAssertion} from './admin-auth';
-import {IngestError} from './ingest-validation';
-import {json} from './ingest';
+import {IngestError} from './strict-json';
+import {json} from './http';
 type Row=Record<string,unknown>;
 const ID=/^[a-z0-9][a-z0-9_-]{0,63}$/;
 const HASH=/^[0-9a-f]{64}$/;

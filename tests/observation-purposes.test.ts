@@ -3,7 +3,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../worker/index';
 import { authState, Client, json, ORIGIN } from './admin-auth-helpers';
-import { fixture } from './helpers/ingestion';
+import { DEVICE_TOKEN } from './helpers/ingestion';
+import { statisticsCapabilities } from './helpers/v3-statistics-policy-fixtures';
+import { v3Registration } from './helpers/device-v3-fixtures';
 
 let state: Awaited<ReturnType<typeof authState>>;
 let client: Client;
@@ -138,14 +140,15 @@ describe('concurrent observation purposes', () => {
     const from = Date.now() - 2000;
     const created = await json(await placement('all-work', from), 201);
     expect(created.placement.observation_kinds).toEqual(purposes);
-    expect(created.requires_capture_config).toBe(true);
-    const config = { ...structuredClone(state.config), capture_config_id: 'all-work-policy', placement_id: 'all-work' };
-    const draft = await json(await client.call('/configs', 'POST', { config }), 201);
-    await json(await client.call('/configs/all-work-policy/publish', 'POST', { revision: draft.draft.revision }));
-    await json(await placement('selected-work', from + 1000, ['parking', 'elevator']), 201);
-    const nextConfig = { ...config, capture_config_id: 'selected-work-policy', placement_id: 'selected-work' };
-    const next = await json(await client.call('/configs', 'POST', { config: nextConfig }), 201);
-    await json(await client.call('/configs/selected-work-policy/publish', 'POST', { revision: next.draft.revision }));
+    expect(created.requires_v3_assignment).toBe(true);
+    Object.assign(state.env,{DEVICE_V3_CONTROL_ENABLED:'true',DEVICE_V3_STATISTICS_ENABLED:'true',DEVICE_V3_PRODUCER_VERSIONS:'["synthetic-statistics/1"]'});
+    const caps=statisticsCapabilities(state.config.node_id);caps.uplink!.transports=['mqtt_tls'];
+    await json(await worker.fetch(new Request(`${ORIGIN}/api/v3/device/capabilities`,{method:'POST',headers:{Authorization:`Bearer ${DEVICE_TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify(v3Registration(caps))}),state.env));
+    const first=await json(await client.call('/device-v3/prepare','POST',{node_id:state.config.node_id,placement_id:'all-work'}));
+    await json(await client.call('/device-v3/assignments','POST',{policy:first.policy,expected_generation:first.expected_generation}));
+    await json(await placement('selected-work', from+1000, ['parking','elevator']),201);
+    const next=await json(await client.call('/device-v3/prepare','POST',{node_id:state.config.node_id,placement_id:'selected-work'}));
+    await json(await client.call('/device-v3/assignments','POST',{policy:next.policy,expected_generation:next.expected_generation}));
     await json(await client.call('/places/library', 'PATCH', { observation_kinds: ['activity'] }));
     const detail = await json(await client.call(`/devices/${state.config.node_id}`));
     expect(detail.placements).toEqual(expect.arrayContaining([
@@ -154,11 +157,9 @@ describe('concurrent observation purposes', () => {
       expect.objectContaining({ id: state.config.placement_id, observation_kinds: ['activity'], effective_valid_until_ms: from }),
     ]));
     expect(JSON.stringify(detail.placements)).not.toContain('observation_kinds_json');
-    expect(detail.device.desired_config_id).toBe('selected-work-policy');
-    expect(state.db.prepare('SELECT config_json FROM capture_configs WHERE id=?').get(config.capture_config_id)?.config_json).toBe(JSON.stringify(config));
-    expect(Object.keys(nextConfig)).not.toContain('observation_kinds');
-    const wire = fixture('node-status.request');
-    expect(wire.capture_config_id).toBe(state.config.capture_config_id);
+    expect(detail.device.desired_policy_id).toBe(next.policy.policy_id);
+    expect(JSON.parse(String(state.db.prepare('SELECT envelope_json FROM device_assignments_v3 WHERE node_id=? AND generation=1').get(state.config.node_id)?.envelope_json)).policy).toEqual(first.policy);
+    expect(Object.keys(next.policy)).not.toContain('observation_kinds');
     expect(state.db.prepare('SELECT placement_id FROM capture_configs WHERE id=?').get(state.config.capture_config_id)?.placement_id).toBe(state.config.placement_id);
   });
 

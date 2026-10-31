@@ -18,7 +18,7 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'no-preference' });
   const now = Date.now(), iso = offset => new Date(now + offset).toISOString();
   const place = { id: 'library', name: '图书馆', kind: 'activity', observation_kinds: ['activity', 'parking'], gis_anchor: { x: 15656 / 24576, y: 9059 / 24576, verified: true } };
-  const sensor = { source: 'sensor', dataset: 'field', node_id: 'synthetic-node', boot_id: 'synthetic-boot', placement_id: 'synthetic-placement', capture_config_id: 'synthetic-config', seq: 1,
+  const sensor = { source: 'sensor', dataset: 'field', node_id: 'synthetic-node', boot_id: 'synthetic-boot', placement_id: 'synthetic-placement', protocol: 'campuspulse/3', assignment_generation: 1, policy_id: 'synthetic-config', seq: 1,
     observed_at: iso(-1000), valid_until: iso(89000), duration_ms: 30000, scan_enabled_ms: 30000, visible_identifiers: 16,
     reports_aggregated: 100, uncertainty_ms: 0, aggregation_drops: 0, quality_flags: [], unique_table_overflow: false };
   let scenario = 'known';

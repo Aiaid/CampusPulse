@@ -3,8 +3,8 @@ import {
   type RegistrationResponseJSON, type AuthenticationResponseJSON,
 } from '@simplewebauthn/server';
 import type { Env } from './types';
-import { IngestError, parseIngestJson } from './ingest-validation';
-import { json, sha256 } from './ingest';
+import { IngestError, parseIngestJson } from './strict-json';
+import { json, sha256 } from './http';
 import { authBody, authName, authObject } from './admin-auth-input';
 import {
   accountAssertion, adminCookie, authAtomic, authAudit, authRateLimit, base64url, createAdminSession, decode64,

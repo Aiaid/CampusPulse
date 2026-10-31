@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { build } from 'esbuild';
 import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from 'miniflare';
 import { createAdminSession } from '../worker/admin-auth';
-import { sha256 } from '../worker/ingest';
+import { sha256 } from '../worker/http';
 import { v3Ack, v3Registration } from './helpers/device-v3-fixtures';
 import { statisticsCapabilities, statisticsPolicy } from './helpers/v3-statistics-policy-fixtures';
 let mf: Miniflare, cookie: string, db: Awaited<ReturnType<Miniflare['getD1Database']>>;

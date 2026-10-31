@@ -1,4 +1,4 @@
-.build/
-.wrangler/
-.dev.vars*
-.env*
+*
+!.gitignore
+!*.md
+!LICENSE*

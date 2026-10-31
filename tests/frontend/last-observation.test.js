@@ -20,7 +20,7 @@ const unavailable = (record, reason = 'summaries_pending') => ({ ...record, stat
 
 describe('last observation presentation cache', () => {
   test('retains reported windows only within a place and preserves upload/time uncertainty through failures', () => {
-    const report = { ...sensor(), node_id: 'node', boot_id: 'boot', placement_id: 'placement', capture_config_id: 'config',
+    const report = { ...sensor(), node_id: 'node', boot_id: 'boot', placement_id: 'placement', protocol: 'campuspulse/3', assignment_generation: 1, policy_id: 'config',
       duration_ms: 30000, scan_enabled_ms: 30000, reports_aggregated: 70, aggregation_drops: 0, quality_flags: [], unique_table_overflow: false,
       observed_at: null, valid_until: null, received_at: iso(-1000), uncertainty_ms: null, time_status: 'unknown', freshness: 'unverified' };
     const previous = summary({ sensor: null, last_reported_sensor: report });

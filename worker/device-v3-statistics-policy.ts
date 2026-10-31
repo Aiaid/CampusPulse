@@ -1,6 +1,6 @@
 import type { Env } from './types';
 import type { AuthAssertion } from './admin-auth';
-import { IngestError } from './ingest-validation';
+import { IngestError } from './strict-json';
 import { capabilityDigestV3, negotiateDeviceConfigV3, validateDeviceCapabilitiesV3, validateFrozenDeviceConfigV3,
   type DeviceCapabilitiesV3, type DeviceConfigV3 } from './device-v3-config';
 import type { DeviceV3IngestEnv } from './device-v3-ingest-validation';

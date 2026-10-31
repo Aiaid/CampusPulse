@@ -1,5 +1,5 @@
 import { scryptSync, timingSafeEqual } from 'node:crypto';
-import { IngestError } from './ingest-validation';
+import { IngestError } from './strict-json';
 
 // OWASP's scrypt N=2^15,r=8,p=3 equivalent baseline. Native workerd crypto has
 // been exercised with these exact parameters. Require sufficient Worker CPU;

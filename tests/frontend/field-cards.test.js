@@ -10,7 +10,7 @@ const iso = offset => new Date(now + offset).toISOString();
 const place = { id: 'mixed', name: '综合观察点', kind: 'activity', observation_kinds: ['activity', 'parking', 'elevator'] };
 const parking = { id: 'parking-1', place_id: place.id, source: 'manual', status: 'active', kind: 'parking', parking_min: 3, parking_max: 5, observed_at: iso(-120_000), valid_until: iso(-10_000) };
 const elevator = { id: 'elevator-1', place_id: place.id, source: 'manual', status: 'active', kind: 'elevator', wait_seconds: 42, observed_at: iso(-30_000), valid_until: iso(10_000) };
-const sensor = { source: 'sensor', dataset: 'field', node_id: 'node-1', boot_id: 'boot-1', seq: 1, observed_at: iso(-20_000), valid_until: iso(30_000), duration_ms: 30_000, scan_enabled_ms: 30_000, reports_aggregated: 7, visible_identifiers: 2, uncertainty_ms: 0, aggregation_drops: 0, quality_flags: [], unique_table_overflow: false };
+const sensor = { protocol:'campuspulse/3', policy_id:'fixture-policy', assignment_generation:1, source: 'sensor', dataset: 'field', node_id: 'node-1', boot_id: 'boot-1', seq: 1, observed_at: iso(-20_000), valid_until: iso(30_000), duration_ms: 30_000, scan_enabled_ms: 30_000, reports_aggregated: 7, visible_identifiers: 2, uncertainty_ms: 0, aggregation_drops: 0, quality_flags: [], unique_table_overflow: false };
 const state = data => ({ data, error: '', loading: false });
 const summary = () => normalizeFieldResponse({ place, as_of: iso(0), sensor, latest_observation: elevator, latest_observations: { parking, elevator } }, { placeId: place.id, mode: 'live' });
 const history = observations => normalizeFieldResponse({ place_id: place.id, from: iso(-120_000), to: iso(0), observations, sensor_windows: [sensor], truncated: false, sensor_truncated: false }, { placeId: place.id, mode: 'replay' });
@@ -18,7 +18,7 @@ const renderPanel = (session, props = {}) => renderToStaticMarkup(createElement(
 
 describe('independent public observation cards', () => {
   test('shows last uploaded quantity and receipt time while leaving unknown observation time unknown', () => {
-    const last_reported_sensor = { ...sensor, placement_id: 'placement', capture_config_id: 'config', observed_at: null,
+    const last_reported_sensor = { ...sensor, placement_id: 'placement', protocol: 'campuspulse/3', assignment_generation: 1, policy_id: 'config', observed_at: null,
       valid_until: null, received_at: iso(-1000), uncertainty_ms: null, time_status: 'unknown', freshness: 'unverified' };
     const data = { ...summary(), sensor: null, last_reported_sensor, latest_observation: null, latest_observations: { parking: null, elevator: null } };
     const html = renderPanel({ now, live: state(data), history: state(null), refresh() {} });

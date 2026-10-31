@@ -1,5 +1,5 @@
 import { capabilityDigestV3, freezeDeviceConfigV3, type DeviceCapabilitiesV3, type DeviceConfigV3 } from '../../worker/device-v3-config';
-import { sha256 } from '../../worker/ingest';
+import { sha256 } from '../../worker/http';
 import { v3Ack, v3Capabilities, v3Policy } from './device-v3-fixtures';
 import type { V3Envelope, V3FeatureItem, V3StatusItem, DeviceV3IngestEnv } from '../../worker/device-v3-ingest-validation';
 

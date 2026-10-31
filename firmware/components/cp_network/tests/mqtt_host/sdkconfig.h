@@ -1,9 +1,0 @@
-#pragma once
-#ifndef CONFIG_CP_NETWORK_MQTT_WSS
-#define CONFIG_CP_NETWORK_MQTT_WSS 1
-#endif
-#ifndef CONFIG_CP_NETWORK_MQTT_NATIVE_TLS
-#define CONFIG_CP_NETWORK_MQTT_NATIVE_TLS 0
-#endif
-#define CONFIG_CP_NETWORK_MQTT_WSS_URI "wss://gateway.example/mqtt"
-#define CONFIG_MBEDTLS_DYNAMIC_BUFFER 1

@@ -3,8 +3,8 @@ import { handleDeviceV3Ingest, expireDeviceV3Ingest } from '../worker/device-v3-
 import { assertV3IngestPolicy, supportsV3IngestPolicy, type DeviceV3IngestEnv } from '../worker/device-v3-ingest-validation';
 import { handleDeviceV3Control } from '../worker/device-v3-control';
 import { capabilityDigestV3 } from '../worker/device-v3-config';
-import { handleIngestion, sha256 } from '../worker/ingest';
-import { handleDeviceV2 } from '../worker/device-v2';
+import { sha256 } from '../worker/http';
+import { handleApi } from '../worker/index';
 import worker from '../worker/index';
 import { DEVICE_TOKEN, fixture, setup } from './helpers/ingestion';
 import { featureBatchV3, ingestV3Fixture, INGEST_V3_FLAGS, seedIngestV3, statusBatchV3, type IngestV3Fixture } from './helpers/v3-ingest-fixtures';
@@ -232,18 +232,18 @@ describe('private default-off v3 ingestion', () => {
     const second = await expireDeviceV3Ingest(env, f.now);
     expect(second).toMatchObject({ deleted_private_rows: 1001, rounds: 1, expired_backlog: false, oldest_expired_age_ms: null });
   });
-  it('runs v3 cleanup through the actual scheduled entry even when old ingestion cleanup fails', async () => {
+  it('runs v3 cleanup through the actual scheduled entry even when a separate CPRAW cleanup fails', async () => {
     await seedIngestV3(env.DB, f); const original = await expectResponse(await featureBatchV3(f));
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse(original.expires_at) + 1);
     const prepare = env.DB.prepare.bind(env.DB);
     vi.spyOn(env.DB, 'prepare').mockImplementation(sql => {
-      if (sql.startsWith('SELECT node_id,batch_id,raw_object_key FROM ingestion_batches WHERE')) throw new Error('Synthetic legacy cleanup failure');
+      if (sql.startsWith('SELECT * FROM cpraw_uploads WHERE')) throw new Error('Synthetic CPRAW cleanup failure');
       return prepare(sql);
     });
-    await expect(worker.scheduled({ scheduledTime: Date.now(), cron: 'synthetic', noRetry() {} }, env)).rejects.toThrow('Synthetic legacy cleanup failure');
+    await expect(worker.scheduled({ scheduledTime: Date.now(), cron: 'synthetic', noRetry() {} }, env)).rejects.toThrow('Synthetic CPRAW cleanup failure');
     expect(count('ingestion_items_v3')).toBe(0); expect(count('ingestion_batches_v3')).toBe(1);
   });
-  it.each([1, 2])('returns non-retryable conflicts through the legacy v%i HTTP route', async version => {
+  it.each([1, 2])('rejects the retired v%i HTTP route without writing source data', async version => {
     await seedIngestV3(env.DB, f); const committed = await statusBatchV3(f); await expectResponse(committed);
     const config = version === 1 ? state.config : fixture('capture-config-v2.fixture');
     if (version === 2) {
@@ -258,25 +258,11 @@ describe('private default-off v3 ingestion', () => {
       old.batch_id = useBatchId ? committed.batch_id : crypto.randomUUID(); old.items[0].seq = useBatchId ? 2 : 1;
       const body = JSON.stringify(old), req = new Request(ORIGIN + `/api/v${version}/ingest`, { method: 'POST', body,
         headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, 'Content-Type': 'application/json', 'X-Body-SHA256': await sha256(new TextEncoder().encode(body)) } });
-      const response = (await (version === 1 ? handleIngestion(req, env) : handleDeviceV2(req, env)))!;
-      const result = await response.json(); expect(response.status, JSON.stringify(result)).toBe(409);
-      expect(result).toMatchObject({ error: { code: useBatchId ? 'batch_conflict' : 'seq_range_overlap', retryable: false } });
+      const response = (await handleApi(req, env))!;
+      const result = await response.json(); expect(response.status, JSON.stringify(result)).toBe(404);
+      expect(result).toMatchObject({ error: { code: 'not_found', retryable: false } });
     }
     expect(count('ingestion_batches')).toBe(0); expect(count('ingestion_batches_v2')).toBe(0);
-  });
-  it('keeps legacy ingestion and error handling valid before migration 0015', async () => {
-    state.db.exec('DROP TRIGGER ingestion_v1_v3_namespace; DROP TRIGGER ingestion_v2_v3_namespace; DROP TABLE ingestion_items_v3; DROP TABLE ingestion_batches_v3');
-    const old = fixture('node-status.request'); old.capture_config_id = state.config.capture_config_id;
-    const upload = async (b: unknown) => {
-      const body = JSON.stringify(b);
-      return (await handleIngestion(new Request(ORIGIN + '/api/v1/ingest', { method: 'POST', body,
-        headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, 'Content-Type': 'application/json', 'X-Body-SHA256': await sha256(new TextEncoder().encode(body)) } }), env))!;
-    };
-    expect((await upload(old)).status).toBe(200);
-    expect((await upload({ ...old, batch_id: crypto.randomUUID() })).status).toBe(409);
-    vi.spyOn(env.DB, 'batch').mockRejectedValueOnce(new Error('Synthetic storage failure'));
-    old.batch_id = crypto.randomUUID(); old.items[0].seq++;
-    expect((await upload(old)).status).toBe(503);
   });
   it('guards applied ACKs against earlier ACK and committed-window regressions', async () => {
     await seedIngestV3(env.DB, f); await expectResponse(await featureBatchV3(f, 1, 10));

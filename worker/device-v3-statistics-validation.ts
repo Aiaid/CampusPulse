@@ -1,5 +1,5 @@
 /** Strict compact statistics/1 validation. No authorization, persistence or radio-truth claim. */
-import { IngestError, parseIngestJson } from './ingest-validation';
+import { IngestError, parseIngestJson } from './strict-json';
 
 export const STATISTICS_V3_STREAMS = ['window_statistics', 'candidate_events', 'node_status'] as const;
 export type StatisticsV3Stream = typeof STATISTICS_V3_STREAMS[number];

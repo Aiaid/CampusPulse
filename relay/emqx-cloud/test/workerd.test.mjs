@@ -43,7 +43,8 @@ test('real Worker/DO routes authenticate, serialize, persist replay and return e
     },
   },{name:'mqtt-api-fixture',modules:true,scriptPath:root+'.wrangler/backend-fixture.mjs',
     compatibilityDate:date,compatibilityFlags:['nodejs_compat'],serviceBindings:{UPSTREAM:backend}}]}));
-  const send=async(rpc,op='config',body='',secret=key)=>{
+  const frame=(subop,body='',flags=0)=>Buffer.concat([Buffer.from([67,80,86,51,1,subop,flags,0]),Buffer.from(body)]);
+  const send=async(rpc,op='ingest',body=frame(2),secret=key)=>{
     return mf.dispatchFetch('https://test.invalid/emqx',{method:'POST',
       headers:{'Content-Type':'application/json','X-CP-Webhook-Key':secret},
       body:JSON.stringify({...base,published_at_ms:Date.now(),topic:`cp/v1/${node}/${boot}/req/${op}/${rpc}`,payload_b64:Buffer.from(body).toString('base64')})});
@@ -57,7 +58,7 @@ test('real Worker/DO routes authenticate, serialize, persist replay and return e
     assert.equal(replies[0].bytes.subarray(2).toString(),original);
     assert.equal((await send(1)).status,204); // duplicate fetches a fresh lease
     assert.equal(calls.length,2);
-    assert.equal((await send(1,'contact',JSON.stringify({boot_id:boot}))).status,409);
+    assert.equal((await send(1,'contact',JSON.stringify({boot_id:boot}))).status,400);
     assert.equal(calls.length,2);
     wait=true;const pending=send(3);await entry;
     assert.equal((await send(4)).status,503); // one owner across external await
@@ -66,7 +67,6 @@ test('real Worker/DO routes authenticate, serialize, persist replay and return e
     assert.equal(calls.length,3);
     assert.equal((await send(4)).status,204);
     assert.equal(calls.length,4);
-    const frame=(subop,body='',flags=0)=>Buffer.concat([Buffer.from([67,80,86,51,1,subop,flags,0]),Buffer.from(body)]);
     const frozen=' {"synthetic":"测试", "boot_id":"old-frozen-body"}\n';
     assert.equal((await send(5,'ingest',frame(3,frozen,1))).status,204);
     assert.deepEqual(calls.at(-1),{url:'https://pulse.anend.net/api/v3/device/config/ack',body:frozen,receiptOnly:'true'});

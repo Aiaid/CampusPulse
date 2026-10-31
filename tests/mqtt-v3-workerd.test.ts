@@ -4,7 +4,7 @@ import {resolve} from 'node:path';
 import {build} from 'esbuild';
 import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
 import {capabilityDigestV3} from '../worker/device-v3-config';
-import {sha256} from '../worker/ingest';
+import {sha256} from '../worker/http';
 import {seedStatistics,statisticsBatch,statisticsFixture,statisticsStatus,STATISTICS_FLAGS} from './helpers/v3-statistics-fixtures';
 import {v3Ack,v3Registration} from './helpers/device-v3-fixtures';
 let mf:Miniflare,db:Awaited<ReturnType<Miniflare['getD1Database']>>;

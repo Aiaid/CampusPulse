@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { build } from 'esbuild';
 import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from 'miniflare';
-import { sha256 } from '../worker/ingest';
+import { sha256 } from '../worker/http';
 import { featureBatchV3, ingestV3Fixture, INGEST_V3_FLAGS, seedIngestV3, statusBatchV3, type IngestV3Fixture } from './helpers/v3-ingest-fixtures';
 import { fixture } from './helpers/ingestion';
 let mf: Miniflare, db: D1Database, f: IngestV3Fixture;

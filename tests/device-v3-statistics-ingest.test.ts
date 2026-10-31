@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { expireDeviceV3Statistics, handleDeviceV3Statistics, type DeviceV3StatisticsEnv } from '../worker/device-v3-statistics';
-import { handleIngestion, sha256 } from '../worker/ingest';
-import { handleDeviceV2 } from '../worker/device-v2';
+import { sha256 } from '../worker/http';
+import { handleApi } from '../worker/index';
 import { handleDeviceV3Ingest } from '../worker/device-v3-ingest';
 import { capabilityDigestV3 } from '../worker/device-v3-config';
 import { ingestV3Fixture, seedIngestV3, statusBatchV3, INGEST_V3_FLAGS } from './helpers/v3-ingest-fixtures';
@@ -171,7 +171,7 @@ describe('compact v3 statistics custody', () => {
     const featureId = crypto.randomUUID(); feature(featureId);
     await expectResponse({ ...await statisticsBatch(f), b: featureId }, 409);
   });
-  it.each([1, 2])('returns non-retryable legacy v%i HTTP conflicts, including after receipt cleanup', async version => {
+  it.each([1, 2])('rejects retired v%i HTTP routes, including after receipt cleanup', async version => {
     await seedStatistics(env.DB, f); const compact = await statisticsStatus(f), ack = await expectResponse(compact);
     const config = version === 1 ? state.config : fixture('capture-config-v2.fixture');
     if (version === 2) {
@@ -185,8 +185,8 @@ describe('compact v3 statistics custody', () => {
       old.capture_config_id = config.capture_config_id; old.boot_id = f.caps.boot_id; old.batch_id = batch; old.items[0].seq = seq;
       const body = JSON.stringify(old), req = new Request(`https://statistics.example.test/api/v${version}/ingest`, { method: 'POST', body,
         headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, 'Content-Type': 'application/json', 'X-Body-SHA256': await sha256(new TextEncoder().encode(body)) } });
-      const response = (await (version === 1 ? handleIngestion(req, env) : handleDeviceV2(req, env)))!, value = await response.json();
-      expect(response.status, JSON.stringify(value)).toBe(409); expect(value).toMatchObject({ error: { retryable: false } });
+      const response = (await handleApi(req, env))!, value = await response.json();
+      expect(response.status, JSON.stringify(value)).toBe(404); expect(value).toMatchObject({ error: { code: 'not_found', retryable: false } });
     };
     await upload(1); await upload(2, compact.b);
     await expireDeviceV3Statistics(env, Date.parse(ack.retain_until) + 1);

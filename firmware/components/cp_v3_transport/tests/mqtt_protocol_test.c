@@ -1,9 +1,8 @@
 #include "mqtt_protocol.h"
-#include "mqtt_rpc.h"
+#include "mqtt_lifetime.h"
 #include <assert.h>
 #include <openssl/sha.h>
 #include <stdio.h>
-_Static_assert(CP_MQTT_REPLY_MAX==2048,"The v2 default must stay unchanged");
 _Static_assert(CP_V3_MQTT_RESPONSE_MAX==8192,"Independent v3 reply bound");
 static cp_v3_mqtt_rpc_t state;
 static uint8_t frame[CP_V3_MQTT_FRAME_MAX],body[8192],reply_wire[8194];

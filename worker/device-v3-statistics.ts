@@ -1,6 +1,6 @@
 /** Compact source custody; no identifiers, raw objects, inference or public writes. */
-import { device, json, readBytes, sha256 } from './ingest';
-import { IngestError } from './ingest-validation';
+import { device, json, readBytes, sha256 } from './http';
+import { IngestError } from './strict-json';
 import { DeviceV3ConfigError } from './device-v3-config';
 import type { AuthAssertion } from './admin-auth';
 import { assertV3StatisticsPolicy, loadStatisticsAuthority, statisticsCaptureAssertion, STATISTICS_NOW_SQL as NOW,
@@ -265,13 +265,13 @@ export async function expireDeviceV3Statistics(env: DeviceV3StatisticsEnv, now =
     deleted += cleared.meta.changes;
     backlog ||= !!await env.DB.prepare(`SELECT 1 FROM ${table} WHERE expires_at_ms<=? AND item_json IS NOT NULL LIMIT 1`).bind(now).first();
   }
-  // Cross-protocol batch IDs cannot be reclaimed while an old capture policy is
-  // still allowed to submit. New v3 identities remain bounded by known boot caps.
+  // V3 feature and statistics identities share a namespace. Retired V1/V2
+  // policies no longer grant uploads and must not block current receipt cleanup.
   const candidates = await env.DB.prepare(`SELECT node_id,batch_id,boot_id,stream,seq_last FROM statistics_batches_v3 b
-    WHERE b.retain_until_ms<=? AND NOT EXISTS(SELECT 1 FROM capture_configs c WHERE c.node_id=b.node_id AND c.accept_until_ms>=?)
+    WHERE b.retain_until_ms<=?
     AND NOT EXISTS(SELECT 1 FROM device_assignments_v3 a WHERE a.node_id=b.node_id
       AND json_extract(a.envelope_json,'$.policy.evidence.mode')='features' AND json_extract(a.envelope_json,'$.policy.custody.accept_until')>=?)
-    ORDER BY b.retain_until_ms LIMIT 100`).bind(now, now, new Date(now).toISOString()).all<{ node_id: string; batch_id: string; boot_id: string; stream: string; seq_last: number }>();
+    ORDER BY b.retain_until_ms LIMIT 100`).bind(now, new Date(now).toISOString()).all<{ node_id: string; batch_id: string; boot_id: string; stream: string; seq_last: number }>();
   const counterColumns = ['uptime_ms', 'clock_epoch', ...STATISTICS_V3_STATUS_LOSSES, ...STATISTICS_V3_RAW_COUNTERS.map(k => `raw_${k}`)];
   for (const b of candidates.results) await env.DB.batch([
     ...(b.stream === 'window_statistics' ? [env.DB.prepare(`INSERT INTO statistics_sequence_floors_v3(node_id,boot_id,stream,seq_floor,uptime_ms,clock_epoch,window_end_utc_ms,window_uncertainty_ms,window_seq_floor)

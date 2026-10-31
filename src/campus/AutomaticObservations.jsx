@@ -4,6 +4,8 @@ import { recordFreshness } from './field-data.js';
 const stamp = value => new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 const seconds = value => Number.isFinite(value) ? new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 1 }).format(value) : '—';
 const reasons = {
+  classification_unavailable: '当前识别规则尚未校准，暂不提供车辆数量',
+  no_field_statistics: '还没有有效的 V3 现场统计',
   vehicle_features_not_reported: '设备尚未上报识别所需的广播特征',
   summaries_pending: '采集窗口已到达，仍在等待配套地址摘要',
   stale_sensor_window: '最近的采集窗口已过期，等待新窗口',

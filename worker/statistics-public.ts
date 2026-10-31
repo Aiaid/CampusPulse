@@ -1,19 +1,39 @@
-import { json } from './ingest';
-import { IngestError } from './ingest-validation';
+import { json } from './http';
+import { IngestError } from './strict-json';
 import { statisticsLimits } from './device-v3-statistics';
 import { loadStatisticsAuthority, statisticsCaptureAssertion, v3StatisticsEnabled,
   type DeviceV3StatisticsEnv } from './device-v3-statistics-policy';
 import { validateStatisticsV3Window, type StatisticsV3Window } from './device-v3-statistics-validation';
 
 export const ACTIVITY_VERSION = 'ble-bin-activity-ema120s/1';
-const FLAGS = ['partial_window', 'uncertain_clock', 'scan_gap', 'identifier_overflow', 'callback_loss', 'aggregation_loss'];
+export const STATISTICS_QUALITY_FLAGS = ['partial_window', 'uncertain_clock', 'scan_gap', 'identifier_overflow', 'callback_loss', 'aggregation_loss'];
 const activityEligible = (w: StatisticsV3Window) => !(w.quality_mask & ~2) && w.time.utc_ms !== null &&
   w.time.uncertainty_ms !== null && w.time.uncertainty_ms <= 5000 && w.losses.scan_coverage_ms === w.duration_ms;
-interface Row {
+export interface StatisticsPublicRow {
   node_id: string; boot_id: string; generation: number; placement_id: string;
   window_seq: number; clock_epoch: number; seq: number; end_utc_ms: number; uncertainty_ms: number;
   duration_ms: number; received_at_ms: number; expires_at_ms: number; quality_mask: number;
   extractor_version: string; ruleset_version: string; item_json: string; policy_id: string; policy_sha256: string;
+}
+
+/** Verify the stored normalized record against its frozen wire limits and indexed columns. */
+export function decodeStatisticsPublicWindow(row: StatisticsPublicRow, limits: Parameters<typeof validateStatisticsV3Window>[1]): StatisticsV3Window {
+  if (row.item_json.length > 8192) throw new Error('Unbounded source');
+  const w: StatisticsV3Window = JSON.parse(row.item_json);
+  const checked = validateStatisticsV3Window({ q: w.seq, w: w.window_seq,
+    t: [w.time.mono_ms, w.time.utc_ms, w.time.clock_epoch, w.time.uncertainty_ms], d: w.duration_ms, b: w.bin_ms,
+    c: ['phone_candidate','e_bike_candidate','car_candidate','other','unknown','conflicting'].map(k => w.categories[k as keyof typeof w.categories]),
+    r: [w.reports.received,w.reports.worker,w.reports.adv,w.reports.scan_response],
+    x: w.bins.map(b => [b.worker_reports,b.visible_identifiers,b.rssi_samples,b.rssi_sum_dbm]),
+    s: [w.rssi.samples,w.rssi.sum_dbm,w.rssi.min_dbm,w.rssi.max_dbm],
+    l: [w.losses.scan_coverage_ms,w.losses.callback_drops,w.losses.aggregation_drops,w.losses.address_overflow_reports],
+    f: w.quality_mask,v: [w.versions.extractor_version,w.versions.ruleset_version] }, limits);
+  if (checked.seq !== row.seq || checked.window_seq !== row.window_seq || checked.time.utc_ms !== row.end_utc_ms ||
+      checked.time.clock_epoch !== row.clock_epoch || checked.time.uncertainty_ms !== row.uncertainty_ms ||
+      checked.duration_ms !== row.duration_ms || checked.quality_mask !== row.quality_mask ||
+      checked.versions.extractor_version !== row.extractor_version || checked.versions.ruleset_version !== row.ruleset_version ||
+      checked.time.uncertainty_ms === null || checked.time.uncertainty_ms > 5000) throw new Error('Inconsistent source');
+  return checked;
 }
 
 /** Causal, bounded smoothing of per-bin identifier activity; never a population estimate. */
@@ -60,7 +80,7 @@ export async function readPlaceStatistics(env: DeviceV3StatisticsEnv, placeId: s
     WHERE w.dataset='field' AND w.collection_mode='fixed_point' AND w.item_json IS NOT NULL
       AND w.expires_at_ms>? AND w.received_at_ms<=? AND w.end_utc_ms>=? AND w.end_utc_ms<=?
     ORDER BY w.end_utc_ms DESC,w.node_id,w.window_seq DESC LIMIT 13`)
-    .bind(JSON.stringify(primary), now, now, now - 3600000, now).all<Row>();
+    .bind(JSON.stringify(primary), now, now, now - 3600000, now).all<StatisticsPublicRow>();
   const latest = rows.results[0];
   if (!latest) return unavailable('no_field_statistics', now);
   let authority;
@@ -75,25 +95,11 @@ export async function readPlaceStatistics(env: DeviceV3StatisticsEnv, placeId: s
   if (policy.custody.dataset !== 'field' || policy.collection.mode !== 'fixed_point' ||
       policy.custody.placement_id !== latest.placement_id) return unavailable('inconsistent_source_scope', now);
   const limits = { ...statisticsLimits(policy), max_bins: authority.capabilities.summary?.max_bins };
-  const decoded: Array<{ row: Row; value: StatisticsV3Window }> = [];
+  const decoded: Array<{ row: StatisticsPublicRow; value: StatisticsV3Window }> = [];
   try {
     for (const row of rows.results.filter(r => r.node_id === latest.node_id && r.boot_id === latest.boot_id &&
       r.generation === latest.generation && r.clock_epoch === latest.clock_epoch).slice(0, 12)) {
-      if (row.item_json.length > 8192) throw new Error('Unbounded source');
-      const w: StatisticsV3Window = JSON.parse(row.item_json);
-      const checked = validateStatisticsV3Window({ q: w.seq, w: w.window_seq,
-        t: [w.time.mono_ms, w.time.utc_ms, w.time.clock_epoch, w.time.uncertainty_ms], d: w.duration_ms, b: w.bin_ms,
-        c: ['phone_candidate','e_bike_candidate','car_candidate','other','unknown','conflicting'].map(k => w.categories[k as keyof typeof w.categories]),
-        r: [w.reports.received,w.reports.worker,w.reports.adv,w.reports.scan_response],
-        x: w.bins.map(b => [b.worker_reports,b.visible_identifiers,b.rssi_samples,b.rssi_sum_dbm]),
-        s: [w.rssi.samples,w.rssi.sum_dbm,w.rssi.min_dbm,w.rssi.max_dbm],
-        l: [w.losses.scan_coverage_ms,w.losses.callback_drops,w.losses.aggregation_drops,w.losses.address_overflow_reports],
-        f: w.quality_mask,v: [w.versions.extractor_version,w.versions.ruleset_version] }, limits);
-      if (checked.seq !== row.seq || checked.window_seq !== row.window_seq || checked.time.utc_ms !== row.end_utc_ms ||
-          checked.time.clock_epoch !== row.clock_epoch || checked.time.uncertainty_ms !== row.uncertainty_ms ||
-          checked.duration_ms !== row.duration_ms || checked.quality_mask !== row.quality_mask ||
-          checked.versions.extractor_version !== row.extractor_version || checked.versions.ruleset_version !== row.ruleset_version ||
-          checked.time.uncertainty_ms === null || checked.time.uncertainty_ms > 5000) throw new Error('Inconsistent source');
+      const checked = decodeStatisticsPublicWindow(row, limits);
       decoded.push({ row, value: checked });
     }
   } catch { return unavailable('invalid_statistics_source', now); }
@@ -128,7 +134,7 @@ export async function readPlaceStatistics(env: DeviceV3StatisticsEnv, placeId: s
     visible_identifiers: w.visible_identifiers, candidates: w.categories, estimated_total: null,
     reports_per_second: w.reports.worker * 1000 / w.duration_ms,
     activity: complete ? smoothStatisticsActivity(history.reverse()) : null,
-    quality: { flags: FLAGS.filter((_, i) => w.quality_mask & (1 << i)), ...w.losses },
+    quality: { flags: STATISTICS_QUALITY_FLAGS.filter((_, i) => w.quality_mask & (1 << i)), ...w.losses },
     versions: w.versions, source: { receivers: 1, selection: 'stable-active-placement-order/1', window_ms: w.duration_ms, bin_ms: w.bin_ms } };
 }
 

@@ -1,5 +1,5 @@
 /** Offline-only v3 policy core. No routes, assignments, persistence or device ACKs. */
-import { parseIngestJson } from './ingest-validation';
+import { parseIngestJson } from './strict-json';
 
 export const V3_POLICY_SCHEMA = 'device-config/3' as const;
 export const V3_CAPABILITY_SCHEMA = 'device-capabilities/1' as const;

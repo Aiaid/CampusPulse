@@ -1,8 +1,0 @@
-# Name, Type, SubType, Offset, Size, Flags
-nvs, data, nvs, 0x9000, 0x6000,
-phy_init, data, phy, 0xf000, 0x1000,
-factory, app, factory, 0x10000, 0x300000,
-# Protected device data: never erase or overwrite this partition.
-cardid, data, nvs, 0x356000, 0x4000,
-# Dedicated queue: unknown existing bytes are quarantined, never auto-formatted.
-cpqueue, data, 0x40, 0x360000, 0x400000,

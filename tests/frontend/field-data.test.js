@@ -4,7 +4,7 @@ import { createFieldReader, fieldReadPath, fieldRecordKey, latestManualObservati
 const now = Date.parse('2026-10-25T10:00:00.000Z');
 const iso = offset => new Date(now + offset).toISOString();
 const sensor = overrides => ({
-  source: 'sensor', dataset: 'field', node_id: 'node-1', boot_id: 'boot-1', placement_id: 'placement-1', capture_config_id: 'config-1', seq: 3,
+  source: 'sensor', dataset: 'field', node_id: 'node-1', boot_id: 'boot-1', placement_id: 'placement-1', protocol: 'campuspulse/3', assignment_generation: 1, policy_id: 'config-1', seq: 3,
   observed_at: iso(-30_000), valid_until: iso(30_000), uncertainty_ms: 0, duration_ms: 30_000,
   scan_enabled_ms: 29_000, reports_aggregated: 17, visible_identifiers: 5, unique_table_overflow: false,
   aggregation_drops: 0, quality_flags: [], freshness: 'fresh', ...overrides,
@@ -37,7 +37,7 @@ describe('public field response semantics', () => {
     { received_at: 'invalid' }, { received_at: '2026-10-25' }, { valid_until: iso(90000) },
     { observed_at: iso(-1000) }, { uncertainty_ms: -1 }, { duration_ms: 0 }, { scan_enabled_ms: 31000 },
     { visible_identifiers: -1 }, { visible_identifiers: 1.5 }, { node_id: '' }, { boot_id: null },
-    { capture_config_id: undefined }, { placement_id: '' }, { quality_flags: [3] }, { unique_table_overflow: 'true' },
+    { protocol: 'campuspulse/3', assignment_generation: 1, policy_id: undefined }, { placement_id: '' }, { quality_flags: [3] }, { unique_table_overflow: 'true' },
   ])('rejects malformed receipt fallback %#', overrides => {
     expect(() => normalizeFieldResponse(summary({ sensor: null, last_reported_sensor: reported(overrides) }), options)).toThrow('无效记录');
   });

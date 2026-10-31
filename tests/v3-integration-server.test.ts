@@ -8,7 +8,7 @@ import { capabilityDigestV3 } from '../worker/device-v3-config';
 import { ingestV3Fixture, featureBatchV3 } from './helpers/v3-ingest-fixtures';
 import { v3Registration, v3Ack } from './helpers/device-v3-fixtures';
 import { concatCpraw, cprawHeader, cprawReport, cprawManifest } from './helpers/cpraw-fixtures';
-import { sha256 } from '../worker/ingest';
+import { sha256 } from '../worker/http';
 import { statisticsFixture, statisticsBatch, statisticsStatus } from './helpers/v3-statistics-fixtures';
 
 let directory: string, identityPath: string, server: Awaited<ReturnType<typeof startIntegrationServer>>;
@@ -38,7 +38,7 @@ it('serves real HTTPS with private credentials, complete migrations and no publi
   expect(result.status).toBe(200); expect(JSON.parse(result.body)).toEqual({ ready: true, draining: false, isolation: 'synthetic-controlled-test' });
   for (const path of ['/__synthetic_cleanup', '/admin', '/api/v1/admin/session', '/api/v1/places']) expect((await send(path)).status).toBe(404);
   expect((await send('/api/v1/admin/device-v3/nodes/test-controlled-device')).status).toBe(401);
-  expect(await server.db.prepare('SELECT COUNT(*) n FROM v3_integration_migrations').first()).toEqual({ n: 17 });
+  expect(await server.db.prepare('SELECT COUNT(*) n FROM v3_integration_migrations').first()).toEqual({ n: 18 });
   expect(await server.db.prepare('SELECT COUNT(*) n FROM device_capabilities_v3').first()).toEqual({ n: 0 });
   expect(await server.db.prepare('SELECT COUNT(*) n FROM device_acknowledgements_v3').first()).toEqual({ n: 0 });
   expect(server.config.device.nodeId).toBe('test-controlled-device');

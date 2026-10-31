@@ -6,8 +6,3 @@ idf_component_register(
     REQUIRES bt nvs_flash fatfs sdmmc esp_driver_sdmmc esp_timer
              esp_hw_support esp_driver_gpio esp_driver_spi esp_driver_usb_serial_jtag esp_driver_i2c esp_psram esp_adc lvgl__lvgl
 )
-if(CONFIG_RAW_USB_PROVISION_V2)
-    target_sources(${COMPONENT_LIB} PRIVATE "raw_setup.c" "raw_setup_adapter.c" "raw_setup_radio.c"
-        "../../components/cp_usb/controller.c")
-    idf_component_optional_requires(PRIVATE cp_provision cp_network cp_settings cp_core json bootloader_support)
-endif()

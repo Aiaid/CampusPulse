@@ -1,6 +1,6 @@
 import type { Env } from './types';
-import { IngestError } from './ingest-validation';
-import { sha256 } from './ingest';
+import { IngestError } from './strict-json';
+import { sha256 } from './http';
 
 export const ADMIN_COOKIE = 'cp_admin_session';
 export const ADMIN_SESSION_SECONDS = 8 * 60 * 60;

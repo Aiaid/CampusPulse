@@ -1,7 +1,7 @@
 import type { Env } from './types';
 import type { DeviceConfigV3 } from './device-v3-config';
 import { validateFeatureEvidenceV3, type FeatureEvidenceV3 } from './device-v3-evidence';
-import { IngestError } from './ingest-validation';
+import { IngestError } from './strict-json';
 
 export type DeviceV3IngestEnv = Env & {
   DEVICE_V3_CONTROL_ENABLED?: string; DEVICE_V3_INGEST_ENABLED?: string;

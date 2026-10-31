@@ -11,8 +11,3 @@ export function mqttSettings(value) {
   }
   return { uri: value.uri, username: value.username, password: value.password, namespace: value.namespace };
 }
-
-export function provisionAuthorization(mode, credential, mqtt) {
-  return { ...(mode === 'saved' ? { reuse_saved_credential: true } : { device_token: credential }),
-    ...(mqtt ? { mqtt: mqttSettings(mqtt) } : {}) };
-}

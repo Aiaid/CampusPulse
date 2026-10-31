@@ -6,7 +6,7 @@ import struct
 import sys
 
 build = Path(sys.argv[1]).resolve()
-spec = importlib.util.spec_from_file_location('existing', Path(__file__).resolve().parent.parent / 't-energy-s3/verify_images.py')
+spec = importlib.util.spec_from_file_location('existing', Path(__file__).resolve().parent.parent / 'tools/verify_tenergy_partitions.py')
 existing = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(existing)
 args = json.loads((build / 'flasher_args.json').read_text())

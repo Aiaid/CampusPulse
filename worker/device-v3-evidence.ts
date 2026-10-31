@@ -9,7 +9,7 @@
  * parser's extractor version. A reviewed, provenance-preserving adapter is
  * required before classification; names/templates have no current counterpart.
  */
-import { parseIngestJson } from './ingest-validation';
+import { parseIngestJson } from './strict-json';
 import { validateFrozenDeviceConfigV3, V3_FEATURE_FIELDS } from './device-v3-config';
 
 export const V3_FEATURE_EVIDENCE_SCHEMA = 'ble-feature-evidence/1' as const;

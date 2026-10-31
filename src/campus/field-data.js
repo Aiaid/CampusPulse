@@ -13,8 +13,8 @@ const waitSeconds = value => Number.isFinite(value) && value >= 0 && value <= 72
 
 /** Receipt evidence has no trustworthy validity interval. Keep it out of history. */
 export function isLastReportedSensor(record) {
-  return object(record) && record.source === 'sensor' && record.dataset === 'field'
-    && ['node_id', 'boot_id', 'placement_id', 'capture_config_id'].every(key => typeof record[key] === 'string' && record[key].trim())
+  return object(record) && record.protocol === 'campuspulse/3' && Number.isSafeInteger(record.assignment_generation) && record.assignment_generation > 0 && record.source === 'sensor' && record.dataset === 'field'
+    && ['node_id', 'boot_id', 'placement_id', 'policy_id'].every(key => typeof record[key] === 'string' && record[key].trim())
     && ['seq', 'visible_identifiers', 'reports_aggregated', 'duration_ms', 'scan_enabled_ms', 'aggregation_drops'].every(key => Number.isSafeInteger(record[key]) && record[key] >= 0)
     && record.duration_ms > 0 && record.scan_enabled_ms <= record.duration_ms
     && timestamp(record.received_at) && new Date(record.received_at).toISOString() === record.received_at
@@ -61,7 +61,7 @@ function validateRecord(record, source, placeId) {
   if (!record || record.source !== source || !timestamp(record.observed_at) || !timestamp(record.valid_until)
     || Date.parse(record.valid_until) <= Date.parse(record.observed_at)) invalid();
   if (source === 'sensor') {
-    if (record.dataset !== 'field' || typeof record.node_id !== 'string' || typeof record.boot_id !== 'string' || !integer(record.seq)
+    if (record.protocol !== 'campuspulse/3' || typeof record.policy_id !== 'string' || !record.policy_id || !Number.isSafeInteger(record.assignment_generation) || record.assignment_generation < 1 || record.dataset !== 'field' || typeof record.node_id !== 'string' || typeof record.boot_id !== 'string' || !integer(record.seq)
       || !integer(record.visible_identifiers) || !integer(record.reports_aggregated)
       || !integer(record.duration_ms) || !integer(record.scan_enabled_ms)
       || !integer(record.uncertainty_ms) || !integer(record.aggregation_drops) || typeof record.unique_table_overflow !== 'boolean'
@@ -126,7 +126,7 @@ export function normalizeFieldResponse(body, { placeId, mode }) {
 }
 
 export function fieldRecordKey(record) {
-  return record.source === 'sensor' ? `sensor:${record.node_id}:${record.boot_id}:${record.seq}` : `manual:${record.id}`;
+  return record.source === 'sensor' ? `sensor:${record.node_id}:${record.boot_id}:${record.assignment_generation}:${record.seq}` : `manual:${record.id}`;
 }
 
 export function fieldReadPath(placeId, mode, minutes = 1440) {

@@ -1,8 +1,11 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import type { Env } from '../../worker/types';
-import { sha256 } from '../../worker/ingest';
-import type { CaptureConfig } from '../../worker/ingest-validation';
+import { sha256 } from '../../worker/http';
+// Historical registry data is retained solely to exercise upgraded databases.
+// This is fixture metadata, not a supported device protocol or runtime validator.
+interface CaptureConfig { capture_config_id: string; node_id: string; placement_id: string; dataset: string;
+  accept_until: string; upload_policy: { max_body_bytes: number }; [key: string]: any }
 
 export const DEVICE_TOKEN = 'synthetic-device-token-only-for-tests';
 export function sqliteD1(db: DatabaseSync): D1Database {

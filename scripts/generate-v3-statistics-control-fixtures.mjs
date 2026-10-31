@@ -18,7 +18,7 @@ globalThis.Date = class SyntheticDate extends ActualDate {
 const bundle = await build({ stdin: { contents: `
   export { handleDeviceV3Control } from './worker/device-v3-control';
   export { createAdminSession } from './worker/admin-auth';
-  export { sha256 } from './worker/ingest';
+  export { sha256 } from './worker/http';
   export { sqliteD1 } from './tests/helpers/ingestion';
   export { v3Ack, v3Registration } from './tests/helpers/device-v3-fixtures';
   export { statisticsCapabilities, statisticsPolicy } from './tests/helpers/v3-statistics-policy-fixtures';`,

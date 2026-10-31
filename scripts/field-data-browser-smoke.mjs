@@ -16,7 +16,7 @@ const places = [
   { id: 'library', name: '图书馆测试点', kind: 'activity', gis_anchor: { x: 15656 / 24576, y: 9059 / 24576, verified: true } },
   { id: 'parking', name: '待定位停车点', kind: 'parking' },
 ];
-const sensor = { source: 'sensor', dataset: 'field', node_id: 'fixture-node', boot_id: 'fixture-boot', seq: 1, observed_at: iso(-5000), valid_until: iso(85000), visible_identifiers: 12, reports_aggregated: 80, duration_ms: 10000, scan_enabled_ms: 9000, uncertainty_ms: 200, aggregation_drops: 2, quality_flags: ['aggregation_drops'], unique_table_overflow: false, freshness: 'fresh' };
+const sensor = { protocol:'campuspulse/3', policy_id:'fixture-policy', assignment_generation:1, source: 'sensor', dataset: 'field', node_id: 'fixture-node', boot_id: 'fixture-boot', seq: 1, observed_at: iso(-5000), valid_until: iso(85000), visible_identifiers: 12, reports_aggregated: 80, duration_ms: 10000, scan_enabled_ms: 9000, uncertainty_ms: 200, aggregation_drops: 2, quality_flags: ['aggregation_drops'], unique_table_overflow: false, freshness: 'fresh' };
 const manual = id => ({ source: 'manual', id: 'fixture-manual', place_id: id, status: 'active', kind: 'parking', parking_min: 3, parking_max: 5, observed_at: iso(-600000), valid_until: iso(-1000) });
 let unavailable = false, empty = false;
 await page.route('https://gis.ccnu.edu.cn/mapdata/**', route => route.fulfill({ contentType: 'image/svg+xml', headers: { 'Access-Control-Allow-Origin': '*' }, body: '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#dce6da"/></svg>' }));

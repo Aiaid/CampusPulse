@@ -13,7 +13,7 @@ globalThis.Date = class extends OriginalDate {
 const bundle = await build({ stdin: { contents: `
   export { handleDeviceV3Control } from './worker/device-v3-control';
   export { createAdminSession } from './worker/admin-auth';
-  export { sha256 } from './worker/ingest';
+  export { sha256 } from './worker/http';
   export { freezeDeviceConfigV3 } from './worker/device-v3-config';
   export { sqliteD1 } from './tests/helpers/ingestion';
   export { v3Ack, v3Registration } from './tests/helpers/device-v3-fixtures';

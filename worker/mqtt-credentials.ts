@@ -1,6 +1,6 @@
 import type { Env } from './types';
 import { base64url, decode64, type AuthAssertion } from './admin-auth';
-import { IngestError } from './ingest-validation';
+import { IngestError } from './strict-json';
 
 export const MQTT_BROKER_HOST = 'q9a692f8.ala.cn-hangzhou.emqxsl.cn';
 export const MQTT_BROKER_URI = `mqtts://${MQTT_BROKER_HOST}:8883`;

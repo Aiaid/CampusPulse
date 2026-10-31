@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { build } from 'esbuild';
 import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from 'miniflare';
 import { createAdminSession } from '../worker/admin-auth';
-import { sha256 } from '../worker/ingest';
+import { sha256 } from '../worker/http';
 import { v3Ack, v3Capabilities, v3Policy, v3Registration } from './helpers/device-v3-fixtures';
 let mf: Miniflare, cookie: string;
 const ORIGIN = 'https://synthetic-v3.example.test', token = 'synthetic-v3-workerd-device-token', secret = 'synthetic-v3-workerd-admin-secret';

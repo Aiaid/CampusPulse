@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_ELEVATOR_POLICY, estimateElevatorWait, extractElevatorCandidates,
-  type ManualWaitObservation, type ScopedElevatorSummary, type ScopedElevatorWindow } from '../worker/elevator-estimation';
+import { DEFAULT_ELEVATOR_POLICY, estimateElevatorWait,
+  type ManualWaitObservation } from '../worker/elevator-estimation';
 
 const DAY = 86_400_000;
 // Thursday 10:30 in Shanghai. All measurements below are synthetic test fixtures.
@@ -99,100 +99,5 @@ describe('manual elevator historical reference', () => {
     const serialized = JSON.stringify(estimate(sampleSet().map(row => ({ ...row, address: 'de:ad:be:ef:00:01' }))));
     expect(serialized).not.toContain('synthetic-manual');
     expect(serialized).not.toContain('de:ad:be:ef');
-  });
-});
-
-const scope = { node_id: 'test-node', boot_id: 'test-boot', placement_id: 'test-elevator', capture_config_id: 'test-config', dataset: 'field' as const };
-const baseUtc = NOW - 300_000;
-function window(seq: number, reports = 6, end = seq * 30_000): ScopedElevatorWindow {
-  return { ...scope, item: { seq, time: { mono_ms: end, utc_ms: baseUtc + end, clock_epoch: 1, uncertainty_ms: 100 },
-    duration_ms: 30_000, scan_enabled_ms: 30_000, reports_seen: reports, reports_aggregated: reports, aggregation_drops: 0,
-    adv_reports: reports, scan_response_reports: 0, visible_identifiers: reports ? 1 : 0,
-    unique_table_capacity: 64, unique_table_overflow: false, rssi: { samples: reports, min_dbm: -75, max_dbm: -55, mean_dbm: -65 },
-    raw_capture: { mode: 'off', selected_reports: 0, intentional_skips: 0, pressure_skips: 0, drops: 0 }, quality_flags: [] } };
-}
-function summary(seq: number, address = 'c0:00:00:00:00:01', end = seq * 30_000): ScopedElevatorSummary {
-  return { ...scope, item: { seq, window_seq: seq, time: { mono_ms: end, utc_ms: baseUtc + end, clock_epoch: 1, uncertainty_ms: 100 },
-    duration_ms: 30_000, bin_ms: 5000, address, address_type: 'random', reports: 6, adv_reports: 6, scan_response_reports: 0,
-    first_offset_ms: 100, last_offset_ms: 29_000, bins: [1, 1, 1, 1, 1, 1], rssi: { samples: 6, min_dbm: -75, max_dbm: -55, mean_dbm: -65 } } };
-}
-const extract = (windows: ScopedElevatorWindow[], summaries: ScopedElevatorSummary[]) => extractElevatorCandidates({ windows, summaries, now_ms: NOW });
-
-describe('private elevator address visibility evidence', () => {
-  it('never turns an empty input into a zero wait', () => {
-    expect(extract([], [])).toMatchObject({ status: 'unavailable', candidates: [], public_summary: { wait_estimate_status: 'unavailable', as_of: null } });
-  });
-
-  it('extracts observed spans with bounded absence evidence, never boarding or wait labels', () => {
-    const result = extract([window(1, 0), window(2), window(3), window(4, 0)], [summary(2), summary(3)]);
-    expect(result.candidates).toHaveLength(1);
-    expect(result.candidates[0]).toMatchObject({ status: 'inferred_candidate', evidence_kind: 'address_visibility_only',
-      first_seen_mono_ms: 30_100, last_seen_mono_ms: 89_000, observed_span_ms: 58_900,
-      start: 'observed_after_absent_window', end: 'not_observed_in_complete_window', wait_seconds: null, boarding_confirmed: false });
-    expect(result.public_summary).toMatchObject({ coverage_status: 'complete', candidate_count: 1, wait_estimate_status: 'unavailable', count_unit: 'address_fragments_not_people' });
-    expect(result.public_summary.reasons).toContain('uncalibrated_ble');
-    expect(result.public_summary.reasons).toContain('count_bins_without_rssi_timeline');
-  });
-
-  it('splits the real-shaped 30s active / 90s pause pattern without a departure claim', () => {
-    const result = extract([window(1), window(2, 6, 150_000)], [summary(1), summary(2, undefined, 150_000)]);
-    expect(result.candidates).toHaveLength(2);
-    expect(result.candidates[0].end).toBe('coverage_interrupted');
-    expect(result.candidates[1].start).toBe('left_censored');
-    expect(result.public_summary).toMatchObject({ coverage_status: 'gaps', wait_estimate_status: 'unavailable' });
-    expect(result.public_summary.reasons).toContain('scan_coverage_gaps');
-  });
-
-  it('preserves boot, placement, configuration and random-address boundaries', () => {
-    for (const change of [{ boot_id: 'new-boot' }, { placement_id: 'new-placement' }, { capture_config_id: 'new-config' }]) {
-      const result = extract([window(1), { ...window(2), ...change }], [summary(1), { ...summary(2), ...change }]);
-      expect(result.candidates).toHaveLength(2);
-      expect(result.candidates.every(candidate => candidate.observed_span_ms === 28_900)).toBe(true);
-      expect(result.public_summary.reasons).toContain('scope_boundaries_preserved');
-    }
-    const rotated = extract([window(1), window(2)], [summary(1), summary(2, 'd0:00:00:00:00:02')]);
-    expect(rotated.candidates).toHaveLength(2);
-    expect(rotated.candidates.every(candidate => candidate.boarding_confirmed === false)).toBe(true);
-  });
-
-  it('does not treat missing summaries, losses, partial scan or table overflow as absence', () => {
-    for (const change of [{ scan_enabled_ms: 20_000 }, { aggregation_drops: 1 }, { unique_table_overflow: true }, { quality_flags: ['scan_paused'] }]) {
-      const middle = window(2, 0);
-      const result = extract([window(1), { ...middle, item: { ...middle.item, ...change } }, window(3)], [summary(1), summary(3)]);
-      expect(result.candidates).toHaveLength(2);
-      expect(result.candidates[0].end).toBe('coverage_interrupted');
-      expect(result.public_summary.reasons).toContain('incomplete_window_evidence');
-    }
-    const missing = extract([window(1), window(2), window(3)], [summary(1), summary(3)]);
-    expect(missing.candidates[0].end).toBe('coverage_interrupted');
-  });
-
-  it('cuts at missing sequence, clock-epoch changes and unknown clocks', () => {
-    expect(extract([window(1), window(3, 6, 60_000)], [summary(1), summary(3, undefined, 60_000)]).public_summary.reasons).toContain('scan_coverage_gaps');
-    const w = window(2), s = summary(2);
-    w.item.time.clock_epoch = 2; s.item.time.clock_epoch = 2;
-    expect(extract([window(1), w], [summary(1), s]).candidates).toHaveLength(2);
-    w.item.time.utc_ms = null;
-    expect(extract([w], [s]).public_summary.reasons).toContain('clock_unavailable');
-  });
-
-  it('excludes stale, future and non-field evidence', () => {
-    const old = window(1), future = window(2), demo = window(3);
-    old.item.time.utc_ms = NOW - 900_000; future.item.time.utc_ms = NOW + 1; demo.dataset = 'demo';
-    expect(extract([old, future, demo], [summary(1), summary(2), summary(3)])).toMatchObject({ status: 'unavailable', candidates: [] });
-  });
-
-  it('keeps singleton/sparse bins and duplicates from manufacturing a duration', () => {
-    const w = window(1, 1), s = summary(1);
-    Object.assign(s.item, { reports: 1, adv_reports: 1, first_offset_ms: 100, last_offset_ms: 100, bins: [1, 0, 0, 0, 0, 0] });
-    expect(extract([w], [s]).candidates).toEqual([]);
-    expect(extract([window(1), window(1)], [summary(1)]).candidates).toEqual([]);
-  });
-
-  it('only exposes aggregate evidence and enforces input bounds', () => {
-    const result = extract([window(1)], [summary(1)]);
-    const publicText = JSON.stringify(result.public_summary);
-    for (const hidden of ['c0:00', 'test-node', 'test-boot', 'test-elevator', 'test-config', 'mono_ms']) expect(publicText).not.toContain(hidden);
-    expect(extract(Array.from({ length: 257 }, () => window(1)), []).public_summary.reasons).toContain('input_limit_exceeded');
   });
 });

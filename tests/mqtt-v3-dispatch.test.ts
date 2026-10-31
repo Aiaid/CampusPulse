@@ -3,7 +3,7 @@ import worker,{MqttDeviceApi} from '../worker/index';
 import {setup} from './helpers/ingestion';
 import {seedMqtt} from './helpers/mqtt';
 import {capabilityDigestV3} from '../worker/device-v3-config';
-import {sha256} from '../worker/ingest';
+import {sha256} from '../worker/http';
 import {v3Ack,v3Registration} from './helpers/device-v3-fixtures';
 import {seedStatistics,statisticsBatch,statisticsFixture,STATISTICS_FLAGS} from './helpers/v3-statistics-fixtures';
 import type {MqttDispatch,MqttV3Operation} from '../worker/mqtt-entrypoint';
@@ -50,7 +50,7 @@ it('rejects malformed private metadata and exact frame/body size violations',asy
  for(const v3 of [null,{subop:0,receiptOnly:false},{subop:6,receiptOnly:false},{subop:2,receiptOnly:true},{subop:5,receiptOnly:true},{subop:2,receiptOnly:false,extra:1}])
   expect((await api.dispatch({...base,v3} as MqttDispatch)).status).toBe(400);
  expect((await api.dispatch({...base,v3:{subop:1,receiptOnly:false},body:new Uint8Array(8193)} as MqttDispatch)).status).toBe(400);
- expect((await api.dispatch({...base,op:'config',v3:{subop:2,receiptOnly:false}} as MqttDispatch)).status).toBe(400);
+ expect((await api.dispatch({...base,op:'config',v3:{subop:2,receiptOnly:false}} as unknown as MqttDispatch)).status).toBe(400);
 });
 it.each(["UPDATE mqtt_credentials SET state='pending_broker',verified_at=NULL","UPDATE mqtt_credentials SET state='ready',node_id=NULL","UPDATE mqtt_credentials SET namespace='changed'","UPDATE device_nodes SET enabled=0"])(
  'rechecks registry authorization inside the final statistics transaction: %s',async sql=>{

@@ -1,5 +1,5 @@
 interface CacheContext { waitUntil(promise: Promise<unknown>): void }
-interface PublicCachePlan { key: Request; ttl: number }
+interface PublicCachePlan { key: Request; ttl: number; sensor: boolean }
 
 const HISTORY_MINUTES = new Set(['1', '5', '15', '60', '1440']);
 const BYPASS = /(?:^|,)\s*(?:no-cache|no-store)\s*(?:=|,|$)/i;
@@ -28,8 +28,8 @@ function publicCachePlan(request: Request): PublicCachePlan | null {
   // A versioned, header-free key shares only the public snapshot. It never
   // incorporates client addresses, credentials, cookies or arbitrary queries.
   url.hash = '';
-  url.searchParams.set('__campuspulse_public_cache', '2');
-  return { key: new Request(url.toString(), { method: 'GET' }), ttl };
+  url.searchParams.set('__campuspulse_public_cache', '3');
+  return { key: new Request(url.toString(), { method: 'GET' }), ttl, sensor: !!route };
 }
 
 function isPublicResponse(response: Response): boolean {
@@ -58,11 +58,11 @@ export async function cachePublicRead(request: Request, read: () => Promise<Resp
 
   try {
     const cached = await cache.match(plan.key);
-    if (cached && isPublicResponse(cached)) return withHeaders(cached, { 'Cache-Control': 'no-store', 'X-CampusPulse-Cache': 'HIT' });
+    if (cached && isPublicResponse(cached) && (!plan.sensor || cached.headers.get('X-CampusPulse-Projection') === 'statistics-v3')) return withHeaders(cached, { 'Cache-Control': 'no-store', 'X-CampusPulse-Cache': 'HIT' });
   } catch { /* Cache availability must not prevent a database read. */ }
 
   const response = await read();
-  if (!isPublicResponse(response)) return withHeaders(response, { 'X-CampusPulse-Cache': 'BYPASS' });
+  if (!isPublicResponse(response) || plan.sensor && response.headers.get('X-CampusPulse-Projection') !== 'statistics-v3') return withHeaders(response, { 'X-CampusPulse-Cache': 'BYPASS' });
   const stored = withHeaders(response.clone(), { 'Cache-Control': `public, max-age=${plan.ttl}` });
   const write = (async () => {
     try { await cache.put(plan.key, stored); }

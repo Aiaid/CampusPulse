@@ -5,7 +5,7 @@ const origin = 'https://public.example.test';
 const summary = '/api/v1/places/library/summary';
 const request = (path = summary, init?: RequestInit) => new Request(origin + path, init);
 const snapshot = (value: unknown, init: ResponseInit = {}) => Response.json(value, {
-  ...init, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...init.headers },
+  ...init, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-CampusPulse-Projection': 'statistics-v3', ...init.headers },
 });
 let now: number;
 let rows: Map<string, { response: Response; expires: number }>;
@@ -143,5 +143,17 @@ it('works without the Worker Cache API and tolerates cache failures', async () =
   cache.match.mockRejectedValue(new Error('synthetic cache unavailable'));
   cache.put.mockRejectedValue(new Error('synthetic cache unavailable'));
   expect(await (await cachePublicRead(request(), read)).json()).toEqual({ value: 3 });
+  expect(read).toHaveBeenCalledTimes(2);
+});
+
+it('never reuses retired projection cache entries during V3 migration', async () => {
+  const old=new URL(origin+summary);old.searchParams.set('__campuspulse_public_cache','2');
+  rows.set(old.toString(),{response:snapshot({sensor:{legacy:true}},{headers:{'X-CampusPulse-Projection':'incremental-v2'}}),expires:now+30000});
+  const read=vi.fn(async()=>snapshot({sensor:{protocol:'campuspulse/3'}}));
+  const result=await cachePublicRead(request(),read);
+  expect(await result.json()).toEqual({sensor:{protocol:'campuspulse/3'}});expect(read).toHaveBeenCalledOnce();
+  const key=new URL(origin+summary);key.searchParams.set('__campuspulse_public_cache','3');
+  rows.set(key.toString(),{response:snapshot({sensor:{legacy:true}},{headers:{'X-CampusPulse-Projection':'incremental-v2'}}),expires:now+30000});
+  expect((await cachePublicRead(request(),read)).headers.get('X-CampusPulse-Cache')).toBe('MISS');
   expect(read).toHaveBeenCalledTimes(2);
 });

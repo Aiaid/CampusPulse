@@ -1,7 +1,7 @@
 /** Opt-in private custody only. No public projection, inference, raw or MQTT. */
-import { device, json, readBytes, sha256 } from './ingest';
-import { IngestError, parseIngestJson } from './ingest-validation';
-import { findV3NamespaceConflict } from './ingest-store';
+import { device, json, readBytes, sha256 } from './http';
+import { IngestError, parseIngestJson } from './strict-json';
+import { findV3NamespaceConflict } from './device-v3-namespace';
 import { supportsV3StatisticsPolicy } from './device-v3-statistics-policy';
 import { capabilityDigestV3, DeviceV3ConfigError, negotiateDeviceConfigV3, validateDeviceCapabilitiesV3, validateFrozenDeviceConfigV3,
   type DeviceConfigV3, type FrozenDeviceConfigV3, type DeviceCapabilitiesV3 } from './device-v3-config';
@@ -290,8 +290,7 @@ export async function expireDeviceV3Ingest(env: DeviceV3IngestEnv, now = Date.no
     env.DB.prepare('DELETE FROM ingestion_status_order_v3 WHERE rowid IN (SELECT rowid FROM ingestion_status_order_v3 WHERE retain_until_ms<=? LIMIT 500)').bind(now),
     env.DB.prepare('DELETE FROM ingestion_quota_v3 WHERE rowid IN (SELECT rowid FROM ingestion_quota_v3 WHERE retain_until_ms<=? LIMIT 500)').bind(now),
     env.DB.prepare(`DELETE FROM ingestion_batches_v3 WHERE rowid IN (SELECT b.rowid FROM ingestion_batches_v3 b
-      WHERE b.retain_until_ms<=? AND NOT EXISTS(SELECT 1 FROM ingestion_items_v3 i WHERE i.node_id=b.node_id AND i.batch_id=b.batch_id)
-      AND NOT EXISTS(SELECT 1 FROM capture_configs c WHERE c.node_id=b.node_id AND c.accept_until_ms>=?) LIMIT 100)`).bind(now, now),
+      WHERE b.retain_until_ms<=? AND NOT EXISTS(SELECT 1 FROM ingestion_items_v3 i WHERE i.node_id=b.node_id AND i.batch_id=b.batch_id) LIMIT 100)`).bind(now),
   ]);
   return result;
 }

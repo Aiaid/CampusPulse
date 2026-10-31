@@ -58,8 +58,7 @@ static inline bool cp_v3_mqtt_frame(unsigned op,bool receipt_only,const void *bo
     const uint8_t header[8]={'C','P','V','3',1,(uint8_t)op,receipt_only?1:0,0};
     memcpy(out,header,8);if(bytes)memcpy(out+8,body,bytes);*length=bytes+8;return true;
 }
-/* Reuses the existing cp_network/mqtt_rpc.h correlation/fragment design with
- * independent V3 storage. The old v2 2048-byte reply default is unchanged. */
+/* Bounded correlation and fragment assembly with independent V3 storage. */
 static inline bool cp_v3_mqtt_begin(cp_v3_mqtt_rpc_t *r,const char *topic){
     if(!r||!topic||strlen(topic)>=sizeof r->topic||r->active)return false;
     memset(r,0,sizeof *r);strcpy(r->topic,topic);r->active=true;r->publish_id=r->puback_id=-1;return true;

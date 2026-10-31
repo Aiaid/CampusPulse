@@ -1,5 +1,5 @@
 import type { Env } from './types';
-import { IngestError } from './ingest-validation';
+import { IngestError } from './strict-json';
 
 export interface RuntimeSettings {
   site_name: string;

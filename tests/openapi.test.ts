@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import worker from '../worker/index';
+import { statisticsFixture, statisticsBatch } from './helpers/v3-statistics-fixtures';
 import { createOpenApiDocument } from '../worker/openapi';
 import type { Env } from '../worker/types';
 
@@ -12,20 +13,19 @@ const implemented = [
   'GET /api/v1/health', 'GET /api/v1/places',
   'GET /api/v1/places/{id}/summary', 'GET /api/v1/places/{id}/history',
   'POST /api/v1/observations', 'DELETE /api/v1/observations/{id}',
-  'POST /api/v1/ingest', 'GET /api/v1/device/config', 'GET /api/v1/research/batches/{id}',
-  'GET /api/v1/settings', 'POST /api/v1/device/config/ack',
-  'GET /api/v2/device/config', 'POST /api/v2/device/contact', 'POST /api/v2/device/config/ack',
-  'POST /api/v2/ingest', 'GET /api/v2/research/batches/{id}',
+  'GET /api/v1/settings', 'GET /api/v3/device/config', 'POST /api/v3/device/capabilities',
+  'POST /api/v3/device/config/ack', 'POST /api/v3/device/lease', 'POST /api/v3/ingest',
+  'POST /api/v3/statistics/ingest', 'GET /api/v3/places/{id}/statistics',
+  'POST /api/v1/admin/device-v3/prepare', 'POST /api/v1/admin/device-v3/validate',
+  'POST /api/v1/admin/device-v3/assignments', 'GET /api/v1/admin/device-v3/nodes/{id}',
+  'GET /api/v1/admin/device-v3/nodes/{id}/evidence',
   'GET /api/v1/admin/session', 'POST /api/v1/admin/session', 'DELETE /api/v1/admin/session',
   'GET /api/v1/admin/overview', 'GET /api/v1/admin/devices', 'POST /api/v1/admin/devices',
   'GET /api/v1/admin/devices/{id}', 'PATCH /api/v1/admin/devices/{id}',
   'GET /api/v1/admin/mqtt/pool', 'POST /api/v1/admin/mqtt/pool', 'POST /api/v1/admin/mqtt/pool/{id}/verify',
   'POST /api/v1/admin/devices/{id}/mqtt',
-  'GET /api/v1/admin/devices/{id}/batches', 'GET /api/v1/admin/devices/{id}/batches/{batchId}',
   'POST /api/v1/admin/devices/{id}/rotate-credential', 'POST /api/v1/admin/devices/{id}/placements',
   'GET /api/v1/admin/places', 'POST /api/v1/admin/places', 'PATCH /api/v1/admin/places/{id}',
-  'GET /api/v1/admin/configs', 'POST /api/v1/admin/configs', 'PUT /api/v1/admin/configs/{id}',
-  'POST /api/v1/admin/configs/{id}/validate', 'POST /api/v1/admin/configs/{id}/publish',
   'GET /api/v1/admin/settings', 'PUT /api/v1/admin/settings', 'GET /api/v1/admin/audit',
   'GET /api/v1/admin/auth/status', 'POST /api/v1/admin/auth/setup', 'POST /api/v1/admin/auth/reauth',
   'GET /api/v1/admin/account', 'PATCH /api/v1/admin/account', 'PUT /api/v1/admin/account/password',
@@ -41,7 +41,7 @@ function noStorageEnv(): Env {
     ASSETS: { fetch: async () => new Response('<html>SPA fallback</html>') } as unknown as Fetcher,
   };
 }
-const fetchWorker = (path: string, init?: RequestInit, env = noStorageEnv()) => worker.fetch(new Request(`http://localhost${path}`, init), env);
+const fetchWorker = (path: string, init?: RequestInit, env = noStorageEnv()) => worker.fetch(new Request(`https://localhost${path}`, init), env);
 function resolve(root: Json, ref: string): Json {
   expect(ref.startsWith('#/'), `Only local references: ${ref}`).toBe(true);
   const value = ref.slice(2).split('/').reduce<any>((node, segment) => node?.[segment.replace(/~1/g, '/').replace(/~0/g, '~')], root);
@@ -132,16 +132,16 @@ describe('same-origin documentation routes', () => {
     expect(code).not.toContain(token);
   });
 
-  it('allows both implemented API versions while blocking off-origin or unsupported documentation requests', async () => {
+  it('allows business V1 and device V3 API versions while blocking off-origin or unsupported documentation requests', async () => {
     const code = await (await fetchWorker('/docs/swagger-init.js')).text();
     const window = { location: { origin: 'https://docs.campuspulse.test' }, ui: undefined as Json | undefined };
     new Function('window', 'SwaggerUIBundle', code)(window, (options: Json) => options);
     const intercept = window.ui!.requestInterceptor as (request: { url: string }) => { url: string };
-    for (const path of ['/openapi.json', '/api/v1/health', '/api/v2/device/config', '/api/v2/ingest']) {
+    for (const path of ['/openapi.json', '/api/v1/health', '/api/v3/device/config', '/api/v3/statistics/ingest']) {
       const request = { url: new URL(path, window.location.origin).href };
       expect(intercept(request)).toBe(request);
     }
-    for (const url of ['https://external.invalid/api/v2/ingest', '/api/v3/ingest', '/api/v20/ingest', '/unrelated']) {
+    for (const url of ['https://external.invalid/api/v3/ingest', '/api/v2/ingest', '/api/v20/ingest', '/unrelated']) {
       expect(() => intercept({ url })).toThrow('Documentation requests must stay on this site and its API.');
     }
   });
@@ -174,7 +174,7 @@ describe('OpenAPI contract and existing authorization', () => {
       const security = operation.security ?? root.security ?? [];
       const publicAdmin = path === '/api/v1/admin/auth/status' || path === '/api/v1/admin/session' && method === 'post' || path.startsWith('/api/v1/admin/passkeys/authentication/');
       const expectedScheme = path.startsWith('/api/v1/admin/') ? publicAdmin ? null : 'AdminSession'
-        : path === '/api/v1/ingest' || path === '/api/v1/device/config' || path === '/api/v1/device/config/ack' || path === '/api/v2/ingest' || path.startsWith('/api/v2/device/') ? 'DeviceToken'
+        : path.startsWith('/api/v3/device/') || path === '/api/v3/ingest' || path === '/api/v3/statistics/ingest' ? 'DeviceToken'
         : path === '/api/v1/research/batches/{id}' || path === '/api/v2/research/batches/{id}' ? 'ResearchToken'
           : method !== 'get' ? 'OperatorToken' : null;
       if (!expectedScheme) expect(security).toEqual([]);
@@ -205,56 +205,37 @@ describe('OpenAPI contract and existing authorization', () => {
       expect((await fetchWorker(path, { method }, { ...noStorageEnv(), OPERATOR_TOKEN: undefined })).status).toBe(503);
       expect((await fetchWorker(path, { method, headers: { Authorization: `Bearer ${token}`, Origin: 'https://other.example' } })).status).toBe(403);
     }
-    for (const [path, method] of [['/api/v1/ingest', 'POST'], ['/api/v1/device/config', 'GET']]) {
-      expect((await fetchWorker(path, { method })).status).toBe(401);
-      expect((await fetchWorker(path, { method, headers: { Authorization: 'Bearer wrong' } })).status).toBe(401);
+    const deviceEnv = { ...noStorageEnv(), DEVICE_V3_CONTROL_ENABLED: 'true', DEVICE_V3_STATISTICS_ENABLED: 'true' };
+    for (const [path, method] of [['/api/v3/statistics/ingest','POST'],['/api/v3/device/config','GET']]) {
+      expect((await fetchWorker(path, { method }, deviceEnv)).status).toBe(401);
+      expect((await fetchWorker(path, { method, headers: { Authorization: 'Bearer wrong' } }, deviceEnv)).status).toBe(401);
     }
-    const research = '/api/v1/research/batches/33333333-3333-4333-8333-333333333333?node_id=cp-demo-01';
-    expect((await fetchWorker(research)).status).toBe(503);
-    expect((await fetchWorker(research, { headers: { Authorization: 'Bearer wrong' } }, { ...noStorageEnv(), RESEARCH_TOKEN: 'private-research-token' })).status).toBe(401);
     expect((await fetchWorker('/api/v1/health')).status).toBe(200);
   });
 
-  it('describes strict wire schemas and exact-byte hashing for each synthetic stream fixture', () => {
-    const root = document();
-    const ingest = root.paths['/api/v1/ingest'].post;
+  it('documents V3 envelopes and source identity without retired schemas', async () => {
+    const root = document(), ingest = root.paths['/api/v3/statistics/ingest'].post;
     expect(ingest.parameters).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'X-Body-SHA256', required: true })]));
-    expect(ingest.description).toMatch(/exact UTF-8 HTTP body bytes/);
-    expect(ingest.responses).toHaveProperty('409');
-    expect(ingest.responses).toHaveProperty('410');
+    expect(ingest.description).toContain('exact UTF-8 HTTP body bytes');
+    expect(ingest.responses).toHaveProperty('409'); expect(ingest.responses).toHaveProperty('410');
+    const b = await statisticsBatch(await statisticsFixture('synthetic-node', 'synthetic-placement'));
     const schema = ingest.requestBody.content['application/json'].schema;
-    for (const file of ['ble-windows.request.json', 'ble-reports.request.json', 'node-status.request.json']) {
-      const value = JSON.parse(readFileSync(new URL(`../docs/specs/examples/${file}`, import.meta.url), 'utf8'));
-      checkSchema(root, schema, value);
-      expect(() => checkSchema(root, schema, { ...value, unexpected: true })).toThrow();
-      expect(() => checkSchema(root, schema, { ...value, stream: 'unknown' })).toThrow();
-    }
-    const reports = JSON.parse(readFileSync(new URL('../docs/specs/examples/ble-reports.request.json', import.meta.url), 'utf8'));
-    expect(() => checkSchema(root, schema, { ...reports, items: [{ ...reports.items[0], payload_hex: 'f' }] })).toThrow();
-    const health = root.components.schemas.Health;
-    expect(health.properties).toMatchObject({ ingestion: { const: 'implemented' }, raw_storage: { enum: ['configured', 'unconfigured'] } });
-    const sensor = {
-      node_id: 'cp-demo-01', boot_id: '11111111-1111-4111-8111-111111111111',
-      placement_id: 'demo-placement-01', capture_config_id: 'demo-capture-raw-v1',
-      source: 'sensor', dataset: 'field', seq: 1,
-      observed_at: '2026-10-23T00:00:00.000Z', valid_until: '2026-10-23T00:01:29.980Z',
-      uncertainty_ms: 20, duration_ms: 30000, scan_enabled_ms: 30000,
-      reports_aggregated: 280, visible_identifiers: 12, unique_table_overflow: false,
-      aggregation_drops: 0, quality_flags: [], freshness: 'fresh',
-    };
+    checkSchema(root, schema, b);
+    expect(() => checkSchema(root, schema, { ...b, extra: true })).toThrow();
+    expect(() => checkSchema(root, schema, { ...b, p: 2 })).toThrow();
+    expect(() => checkSchema(root, schema, { ...b, k: 'ble_windows' })).toThrow();
+    const sensor = { protocol: 'campuspulse/3', policy_id: 'synthetic-policy', assignment_generation: 1,
+      node_id: 'synthetic-node', boot_id: '11111111-1111-4111-8111-111111111111', placement_id: 'synthetic-placement',
+      source: 'sensor', dataset: 'field', seq: 1, observed_at: new Date().toISOString(), valid_until: new Date().toISOString(),
+      uncertainty_ms: 20, duration_ms: 30000, scan_enabled_ms: 30000, reports_aggregated: 280, visible_identifiers: 12,
+      unique_table_overflow: false, aggregation_drops: 0, quality_flags: [], freshness: 'fresh' };
     checkSchema(root, root.components.schemas.PublicSensorWindow, sensor);
     expect(() => checkSchema(root, root.components.schemas.PublicSensorWindow, { ...sensor, uncertainty_ms: null })).toThrow();
-    expect(() => checkSchema(root, root.components.schemas.PublicSensorWindow, { ...sensor, uncertainty_ms: 30001 })).toThrow();
-    const reported = { ...sensor, received_at: '2026-10-23T00:05:00.000Z', observed_at: null,
-      valid_until: null, uncertainty_ms: null, time_status: 'unknown', freshness: 'unverified' };
-    checkSchema(root, root.components.schemas.LastReportedSensorWindow, reported);
-    checkSchema(root, root.components.schemas.LastReportedSensorWindow, { ...reported,
-      observed_at: sensor.observed_at, uncertainty_ms: 30001, time_status: 'uncertain' });
-    expect(root.components.schemas.PlaceSummary.properties.last_reported_sensor).toBeDefined();
-    expect(root.components.schemas.PlaceSummary.required).not.toContain('last_reported_sensor');
-    expect(() => checkSchema(root, root.components.schemas.LastReportedSensorWindow, { ...reported, freshness: 'fresh' })).toThrow();
-    expect(() => checkSchema(root, root.components.schemas.LastReportedSensorWindow, { ...reported, valid_until: sensor.valid_until })).toThrow();
-    expect(() => checkSchema(root, root.components.schemas.LastReportedSensorWindow, { ...reported, address: '02:00:00:00:00:01' })).toThrow();
+    expect(() => checkSchema(root, root.components.schemas.PublicSensorWindow, { ...sensor, uncertainty_ms: 5001 })).toThrow();
+    expect(() => checkSchema(root, root.components.schemas.PublicSensorWindow, { ...sensor, capture_config_id: 'old' })).toThrow();
+    expect(root.components.schemas.PlaceSummary.properties.last_reported_sensor).toMatchObject({ type: 'null' });
+    for (const name of ['CaptureConfig','AnyCaptureConfig','BleWindow','BleReport','IngestBatch','LastReportedSensorWindow']) expect(root.components.schemas).not.toHaveProperty(name);
+    expect(Object.keys(root.paths).some(path => path.startsWith('/api/v2/') || path === '/api/v1/ingest')).toBe(false);
   });
 
   it('documents concurrent place purposes, independent summaries and versioned placement scope', () => {
@@ -269,8 +250,7 @@ describe('OpenAPI contract and existing authorization', () => {
     checkSchema(root, deployment, { id: 'new-work', place_id: 'all-purpose', observation_kinds: ['parking','elevator'], valid_from_ms: 1, valid_until_ms: null });
     expect(root.components.schemas.PlaceSummary.required).toContain('latest_observations');
     expect(root.components.schemas.PlaceSummary.properties.latest_observations.required).toEqual(['parking','elevator']);
-    expect(root.paths['/api/v1/admin/devices/{id}/placements'].post.description).toContain('separate from firmware capture_config');
-    expect(root.components.schemas.AnyCaptureConfig).toBeDefined();
+    expect(root.paths['/api/v1/admin/device-v3/assignments'].post).toBeDefined();
   });
 
   it('matches the contract to actual SQLite-backed responses and both request variants', async () => {

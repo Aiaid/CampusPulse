@@ -70,7 +70,7 @@ export class RpcGuard {
     const framed = v3 !== undefined;
     if (typeof node !== 'string' || !NODE.test(node) ||
         !validEntry({boot, op, rpc, digest}) ||
-        (framed && (!validV3Metadata(v3) || op !== 'ingest')) ||
+        (!framed || !validV3Metadata(v3) || op !== 'ingest') ||
         !Number.isInteger(bytes) || bytes < (framed ? V3_HEADER_BYTES : 0) ||
         bytes > (framed ? MAX_V3_WIRE : MAX_ORIGINAL_BODY) ||
         (framed && v3.subop === 2 && bytes !== V3_HEADER_BYTES) ||

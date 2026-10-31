@@ -1,7 +1,5 @@
 import type { CreateObservation, Env, Observation, Place, PlaceSummary } from './types';
 import { handleDocs } from './docs';
-import { handleIngestion } from './ingest';
-import { handleDeviceV2 } from './device-v2';
 import { handleDeviceV3Control } from './device-v3-control';
 import { handleDeviceV3Ingest, expireDeviceV3Ingest } from './device-v3-ingest';
 import { handleDeviceV3Statistics, expireDeviceV3Statistics } from './device-v3-statistics';
@@ -9,7 +7,6 @@ import { cleanupStatisticsLeaseSpans } from './device-v3-statistics-policy';
 import { handlePublicStatistics } from './statistics-public';
 import { handleCprawArchive, expireCprawArchives } from './cpraw-archive';
 import { readLastReportedSensor, readPublicWindows } from './sensors';
-import { expireIngestion } from './retention';
 import { handleAdmin, readPublicSettings, readRuntimeSettings } from './admin';
 import { readAutomaticObservations } from './place-inference';
 import { cachePublicRead } from './public-cache';
@@ -30,7 +27,7 @@ function json(value: unknown, status = 200) {
 
 function projectionJson(value: unknown) {
   const response = json(value);
-  response.headers.set('X-CampusPulse-Projection', 'incremental-v2');
+  response.headers.set('X-CampusPulse-Projection', 'statistics-v3');
   return response;
 }
 
@@ -134,10 +131,6 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
     if (admin) return admin;
     const cpraw = await handleCprawArchive(request, env);
     if (cpraw) return cpraw;
-    const ingestion = await handleIngestion(request, env);
-    if (ingestion) return ingestion;
-    const deviceV2 = await handleDeviceV2(request, env);
-    if (deviceV2) return deviceV2;
     if (url.pathname === '/api/v1/health' && request.method === 'GET') return json({ status: 'ok', ingestion: 'implemented', raw_storage: env.RAW_BUCKET ? 'configured' : 'unconfigured' });
     if (url.pathname === '/api/v1/settings' && request.method === 'GET') return json(await readPublicSettings(env));
     if (url.pathname === '/api/v1/places' && request.method === 'GET') {
@@ -226,7 +219,7 @@ export default {
     let failed = false, firstFailure: unknown;
     // Each retained stream must get its cleanup attempt even when another
     // storage system fails; preserve the first operational failure for retry.
-    for (const cleanup of [expireIngestion, expireCprawArchives, expireDeviceV3Ingest,
+    for (const cleanup of [expireCprawArchives, expireDeviceV3Ingest,
       expireDeviceV3Statistics, cleanupStatisticsLeaseSpans]) {
       try { await cleanup(env); }
       catch (error) { if (!failed) firstFailure = error; failed = true; }

@@ -4,7 +4,7 @@ import {handleDeviceV3Control,type DeviceV3ControlEnv} from '../worker/device-v3
 import {handleDeviceV3Statistics} from '../worker/device-v3-statistics';
 import {DEVICE_TOKEN} from './helpers/ingestion';
 import {seedStatistics,statisticsFixture,statisticsBatch,statisticsStatus,STATISTICS_FLAGS} from './helpers/v3-statistics-fixtures';
-import {sha256} from '../worker/ingest';
+import {sha256} from '../worker/http';
 let state:Awaited<ReturnType<typeof authState>>,env:DeviceV3ControlEnv,client:Client,f:Awaited<ReturnType<typeof statisticsFixture>>;
 const cookie=()=>[...client.cookies].map(([k,v])=>k+'='+v).join('; ');
 const path=()=>ORIGIN+'/api/v1/admin/device-v3/nodes/'+state.config.node_id+'/evidence';

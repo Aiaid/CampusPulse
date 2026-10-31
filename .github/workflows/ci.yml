@@ -26,14 +26,6 @@ jobs:
       - name: Verify compact vehicle evidence with C sanitizers
         run: sh firmware/tests/run-vehicle.sh
       - run: npm run build
-      - name: Verify ingestion against local workerd D1 and R2
-        run: node scripts/ingest-runtime-smoke.mjs
-      - name: Verify device v2 against local workerd D1 and R2
-        run: node scripts/device-v2-runtime-smoke.mjs
-      - name: Verify D1 write usage and preservation across index migration
-        run: node scripts/d1-usage-smoke.mjs
-      - name: Verify incremental public projections and actual D1 usage
-        run: node scripts/public-projection-runtime-smoke.mjs
       - name: Verify MQTT gateway protocol, registry RPC and replay bounds
         run: |
           node --test relay/emqx-cloud/test/*.test.mjs
@@ -47,6 +39,13 @@ jobs:
           git -C "$CP_CI_IDF" sparse-checkout set components/json components/tcp_transport components/http_parser components/esp-tls components/mbedtls
           git -C "$CP_CI_IDF" submodule update --init --depth 1 components/json/cJSON components/mbedtls/mbedtls
           echo "IDF_PATH=$CP_CI_IDF" >> "$GITHUB_ENV"
+      - name: Build pinned host mbedTLS for real certificate parser checks
+        run: |
+          CP_CI_MBEDTLS="$RUNNER_TEMP/campuspulse-host-mbedtls"
+          cmake -S "$IDF_PATH/components/mbedtls/mbedtls" -B "$RUNNER_TEMP/campuspulse-mbedtls-build" -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$CP_CI_MBEDTLS"
+          cmake --build "$RUNNER_TEMP/campuspulse-mbedtls-build" --parallel 2
+          cmake --install "$RUNNER_TEMP/campuspulse-mbedtls-build"
+          echo "MBEDTLS_PREFIX=$CP_CI_MBEDTLS" >> "$GITHUB_ENV"
       - name: Verify shared V3 C components on host with sanitizers
         env:
           CC: clang
@@ -67,9 +66,9 @@ jobs:
       - name: Verify production MQTT settings and firmware ownership on host
         run: |
           bash firmware/components/cp_settings/tests/run-host.sh
-          bash firmware/components/cp_network/tests/run-host.sh
-          bash firmware/tests/run-capacity.sh
-          bash firmware/tests/runtime/run-host.sh
+          uv run --no-project python firmware/components/cp_v3_transport/tests/test_build_isolation.py
+          bash firmware/t-energy-v3-trial/tests/run_host_tests.sh
+          uv run --no-project --with pyserial python -m unittest discover -s firmware/waveshare-v3/localtests -p 'test_*.py'
       - name: Install browser
         run: npx playwright install --with-deps chromium webkit
       - name: Verify protected provisioning wizard with synthetic peers

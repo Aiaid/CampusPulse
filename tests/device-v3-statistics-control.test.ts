@@ -4,7 +4,7 @@ import { capabilityDigestV3, freezeDeviceConfigV3, negotiateDeviceConfigV3, vali
 import { cleanupStatisticsLeaseSpans, loadStatisticsAuthority, statisticsCaptureAssertion, supportsV3StatisticsPolicy } from '../worker/device-v3-statistics-policy';
 import { authState, Client, ORIGIN, json } from './admin-auth-helpers';
 import { DEVICE_TOKEN } from './helpers/ingestion';
-import { sha256 } from '../worker/ingest';
+import { sha256 } from '../worker/http';
 import { expireDeviceV3Statistics } from '../worker/device-v3-statistics';
 import { v3Ack, v3Registration } from './helpers/device-v3-fixtures';
 import { statisticsCapabilities, statisticsPolicy } from './helpers/v3-statistics-policy-fixtures';

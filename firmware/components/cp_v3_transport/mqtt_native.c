@@ -2,7 +2,7 @@
  * RPC correlation, admission and confirmed-stop design; no cp_network owner. */
 #include "mqtt_native.h"
 #include "mqtt_protocol.h"
-#include "mqtt_rpc.h"
+#include "mqtt_lifetime.h"
 #include "mqtt_client.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"

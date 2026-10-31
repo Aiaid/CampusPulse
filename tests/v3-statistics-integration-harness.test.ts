@@ -8,7 +8,7 @@ import path from 'node:path';
 import { build } from 'esbuild';
 import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from 'miniflare';
 import { createAdminSession } from '../worker/admin-auth';
-import { sha256 } from '../worker/ingest';
+import { sha256 } from '../worker/http';
 import { readPrivateJson, validateConfig, httpsTransport, statisticsTools, expectedStatisticsReceipt, runStatisticsIntegration } from '../scripts/v3-statistics-integration.mjs';
 
 let mf: Miniflare, db: D1Database, folder: string, origin: string, cookie: string, server: Server, ca: Buffer;

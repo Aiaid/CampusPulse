@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { readPlaceStatistics } from '../worker/statistics-public';
 import { handleDeviceV3Statistics } from '../worker/device-v3-statistics';
-import { sha256 } from '../worker/ingest';
+import { sha256 } from '../worker/http';
 import { setup, DEVICE_TOKEN } from './helpers/ingestion';
 import { statisticsFixture, seedStatistics, statisticsBatch, STATISTICS_FLAGS } from './helpers/v3-statistics-fixtures';
 

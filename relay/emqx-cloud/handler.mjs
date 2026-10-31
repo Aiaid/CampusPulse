@@ -7,7 +7,7 @@ const MAX_BODY = MAX_ORIGINAL_BODY;
 const MAX_EVENT = 12288;
 const MAX_REPLY = 2048;
 const BOOT = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
-const TOPIC = new RegExp(`^cp/v1/([a-z0-9_-]{1,15})/(${BOOT})/req/(contact|config|activation|ingest)/([1-9][0-9]{0,9})$`);
+const TOPIC = new RegExp(`^cp/v1/([a-z0-9_-]{1,15})/(${BOOT})/req/(ingest)/([1-9][0-9]{0,9})$`);
 const UNKNOWN = encoder.encode('{"error":"gateway_outcome_unknown"}');
 
 class Rejected extends Error {
@@ -63,17 +63,15 @@ function parseEvent(bytes) {
     const wire = Uint8Array.from(atob(event.payload_b64), char => char.charCodeAt(0));
     if (btoa(String.fromCharCode(...wire)) !== event.payload_b64) throw new Error();
     const frame = parseV3Frame(wire);
-    if (frame && op !== 'ingest') throw new Error();
-    const body = frame ? frame.body : wire;
-    if (body.length > MAX_BODY || (!frame && op === 'config' && body.length !== 0)) throw new Error();
-    if (frame ? frame.v3.subop !== 2 : op !== 'config') {
+    if (!frame || op !== 'ingest') throw new Error();
+    const body = frame.body;
+    if (body.length > MAX_BODY) throw new Error();
+    if (frame.v3.subop !== 2) {
       const payload = JSON.parse(decoder.decode(body));
-      if (!payload || Array.isArray(payload) || typeof payload !== 'object' ||
-          (!frame && op !== 'ingest' && payload.boot_id !== boot) ||
-          (!frame && op === 'ingest' && (typeof payload.node_id !== 'string' || !/^[a-z0-9_-]{1,64}$/.test(payload.node_id)))) throw new Error();
+      if (!payload || Array.isArray(payload) || typeof payload !== 'object') throw new Error();
     }
     return {username:event.username, namespace, boot, op, rpc:Number(rpc), body, wire,
-      ...(frame ? {v3: frame.v3} : {}), publishedAtMs:event.published_at_ms,
+      v3: frame.v3, publishedAtMs:event.published_at_ms,
       replyTopic: event.topic.replace('/req/', '/rep/')};
   } catch (error) {
     throw error instanceof Rejected ? error : new Rejected(400);
@@ -99,7 +97,7 @@ async function forward(rpc, env) {
   try {
     const result=await within(()=>env.INGEST_SERVICE.dispatch({username:rpc.username,
       namespace:rpc.namespace,boot:rpc.boot,op:rpc.op,rpc:rpc.rpc,body:rpc.body,
-      ...(rpc.v3 ? {v3:rpc.v3} : {})}),10000);
+      v3:rpc.v3}),10000);
     const maxReply = rpc.v3?.subop === 2 ? MAX_ORIGINAL_BODY : MAX_REPLY;
     if(!result || !Number.isInteger(result.status) || result.status<100 || result.status>599 ||
       !(result.body instanceof Uint8Array) || result.body.length>maxReply) throw new Error('invalid_response');
@@ -147,7 +145,7 @@ export async function handleBrokerEvent(bytes, env, publishReply, beforeForward)
     if (beforeForward) {
       const status = await beforeForward({node, boot: rpc.boot, op: rpc.op,
         rpc: rpc.rpc, digest: hash, bytes: rpc.wire.length,publishedAtMs:rpc.publishedAtMs,
-        ...(rpc.v3 ? {v3:rpc.v3} : {})});
+        v3:rpc.v3});
       if (status !== undefined) throw new Rejected(status);
     }
     const result = await forward(rpc, env);

@@ -3,7 +3,7 @@ import {readFileSync,readdirSync} from 'node:fs';
 import {build} from 'esbuild';
 import {Miniflare,Log,LogLevel,convertV4MiniflareOptions} from 'miniflare';
 import {createAdminSession} from '../worker/admin-auth';
-import {sha256} from '../worker/ingest';
+import {sha256} from '../worker/http';
 import {seedStatistics,statisticsFixture,statisticsBatch,statisticsStatus,STATISTICS_FLAGS} from './helpers/v3-statistics-fixtures';
 let mf:Miniflare,db:Awaited<ReturnType<Miniflare['getD1Database']>>,cookie:string,sessionHash:string;
 const origin='https://admin-evidence.example.test',secret='synthetic-evidence-admin-secret',token='synthetic-evidence-device-token';

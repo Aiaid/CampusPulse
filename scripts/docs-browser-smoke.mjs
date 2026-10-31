@@ -10,7 +10,7 @@ assert.ok(['localhost', '127.0.0.1'].includes(target.hostname), 'Local target re
 assert.equal(target.protocol, 'http:', 'Use the local HTTP Worker');
 assert.ok(!target.username && !target.password && !target.search && !target.hash && target.pathname === '/', 'Use a plain local origin');
 const origin = target.origin;
-const vars = readFileSync(new URL('../.dev.vars', import.meta.url), 'utf8');
+const vars = readFileSync(process.env.CAMPUSPULSE_BROWSER_ENV_FILE || new URL('../.dev.vars', import.meta.url), 'utf8');
 const token = vars.match(/^\s*OPERATOR_TOKEN\s*=\s*(.+?)\s*$/m)?.[1]?.replace(/^(["'])(.*)\1$/, '$2');
 assert.ok(token, 'Set an ignored local .dev.vars OPERATOR_TOKEN first');
 const args = ['--no-sandbox'];
@@ -51,15 +51,18 @@ try {
   });
   await page.goto(`${origin}/docs?url=https://example.invalid/forbidden.json`);
   await page.locator('.opblock').nth(8).waitFor();
-  assert.equal(await page.locator('.opblock').count(), 56, 'All implemented public, account/Passkey/admin/MQTT, operator, v1/v2 device and research operations');
+  const api=await (await page.request.get(origin+'/openapi.json')).json();
+  const count=Object.values(api.paths).reduce((n,ops)=>n+Object.keys(ops).filter(k=>['get','post','put','patch','delete'].includes(k)).length,0);
+  assert.equal(await page.locator('.opblock').count(),count);
+  assert.ok(!Object.keys(api.paths).some(p=>p.startsWith('/api/v2/')||p==='/api/v1/ingest'||p.startsWith('/api/v1/device/')),'Retired device protocols must not be advertised');
   assert.ok(!(await page.content()).includes(token), 'Credential absent from initial HTML');
   const op = (method, path) => page.locator(`.opblock-${method}`).filter({ has: page.locator(`.opblock-summary-path[data-path="${path}"]`) });
   for (const [method, path] of [
-    ['get', '/api/v2/device/config'],
-    ['post', '/api/v2/device/contact'],
-    ['post', '/api/v2/device/config/ack'],
-    ['post', '/api/v2/ingest'],
-    ['get', '/api/v2/research/batches/{id}'],
+    ['get', '/api/v3/device/config'],
+    ['post', '/api/v3/device/capabilities'],
+    ['post', '/api/v3/device/config/ack'],
+    ['post', '/api/v3/device/lease'],
+    ['post', '/api/v3/statistics/ingest'],
     ['get', '/api/v1/admin/mqtt/pool'],
     ['post', '/api/v1/admin/mqtt/pool'],
     ['post', '/api/v1/admin/mqtt/pool/{id}/verify'],
@@ -88,18 +91,11 @@ try {
 
   // The docs expose protected GETs with independent credentials; neither the
   // operator token nor a synthetic device token is embedded in this page.
-  const deviceConfig = op('get', '/api/v1/device/config');
+  const deviceConfig = op('get', '/api/v3/device/config');
   await open(deviceConfig);
-  assert.equal((await execute(deviceConfig, 'GET', '/api/v1/device/config', 401)).error.code, 'unauthorized');
-  const deviceConfigV2 = op('get', '/api/v2/device/config');
-  await open(deviceConfigV2);
-  assert.equal((await execute(deviceConfigV2, 'GET', '/api/v2/device/config', 401)).error.code, 'unauthorized');
-  const research = op('get', '/api/v1/research/batches/{id}');
-  await open(research);
-  await research.locator('input[placeholder="id"]').fill('33333333-3333-4333-8333-333333333333');
-  await research.locator('input[placeholder="node_id"]').fill('cp-demo-01');
-  assert.ok(['research_not_configured', 'unauthorized'].includes(
-    (await execute(research, 'GET', '/api/v1/research/batches/33333333-3333-4333-8333-333333333333', [401, 503])).error.code));
+  await deviceConfig.locator('input[placeholder="boot_id"]').fill('11111111-1111-4111-8111-111111111111');
+  const denied=await execute(deviceConfig,'GET','/api/v3/device/config',[401,503]);
+  assert.ok(['unauthorized','v3_control_disabled'].includes(denied.error.code));
 
   const post = op('post', '/api/v1/observations');
   await open(post);

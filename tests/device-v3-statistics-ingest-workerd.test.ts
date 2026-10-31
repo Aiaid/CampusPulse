@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { build } from 'esbuild';
 import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from 'miniflare';
-import { sha256 } from '../worker/ingest';
+import { sha256 } from '../worker/http';
 import { seedStatistics, statisticsBatch, statisticsFixture, statisticsEvent, statisticsStatus, STATISTICS_FLAGS, type StatisticsFixture } from './helpers/v3-statistics-fixtures';
 let mf: Miniflare, db: D1Database, f: StatisticsFixture;
 const ORIGIN = 'https://statistics-workerd.example.test', token = 'synthetic-statistics-ingest-workerd';

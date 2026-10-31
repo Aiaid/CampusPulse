@@ -1,4 +1,4 @@
-import { IngestError, parseIngestJson } from './ingest-validation';
+import { IngestError, parseIngestJson } from './strict-json';
 
 export const CPRAW_PROTOCOL = 'campuspulse/cpraw-archive/1';
 export const CPRAW_CHUNK_BYTES = 65_536;
