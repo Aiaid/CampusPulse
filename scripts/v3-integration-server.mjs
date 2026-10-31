@@ -7,9 +7,16 @@ import { build } from 'esbuild';
 import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from 'miniflare';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
-export const DEFAULT_DATA_DIR = join(ROOT, 'data/v3-integration');
+export const DEFAULT_DATA_DIR = join(ROOT, 'data/v3-statistics-integration');
+export const LEGACY_DATA_DIR = join(ROOT, 'data/v3-integration');
 export const INTEGRATION_FLAGS = Object.freeze({
+  DEVICE_V3_CONTROL_ENABLED: 'true', DEVICE_V3_STATISTICS_ENABLED: 'true', DEVICE_V3_INGEST_ENABLED: 'false', CPRAW_ARCHIVE_ENABLED: '0',
+  DEVICE_V3_PRODUCER_VERSIONS: '["synthetic-statistics/1","cp-v3-small/1"]',
+  DEVICE_V3_EXTRACTOR_VERSIONS: '["cp-v3-stats/1"]',
+});
+export const LEGACY_INTEGRATION_FLAGS = Object.freeze({
   DEVICE_V3_CONTROL_ENABLED: 'true', DEVICE_V3_INGEST_ENABLED: 'true', CPRAW_ARCHIVE_ENABLED: '1',
+  DEVICE_V3_STATISTICS_ENABLED: 'false',
   DEVICE_V3_PRODUCER_VERSIONS: '["synthetic-only/1","cp-v3-producer/1"]',
   DEVICE_V3_EXTRACTOR_VERSIONS: '["cp-v3-ad/1","synthetic-extractor/1"]',
 });
@@ -31,12 +38,12 @@ async function privateWrite(path, value) {
   await rename(temp, path);
 }
 
-/** @param {{host?: string, port?: number, dataDir?: string, httpsKeyPath?: string, httpsCertPath?: string, publicOrigin?: string, deviceIdentityPath?: string, maintenanceIntervalMs?: number, shutdownAfterMs?: number}} options */
+/** @param {{profile?: 'statistics'|'legacy-feature', host?: string, port?: number, dataDir?: string, httpsKeyPath?: string, httpsCertPath?: string, publicOrigin?: string, deviceIdentityPath?: string, tenergyIdentityPath?: string, maintenanceIntervalMs?: number, shutdownAfterMs?: number}} options */
 export async function startIntegrationServer({ host = '127.0.0.1', port = 8799,
-  dataDir = DEFAULT_DATA_DIR, httpsKeyPath, httpsCertPath, publicOrigin,
+  profile = 'statistics', dataDir, httpsKeyPath, httpsCertPath, publicOrigin, tenergyIdentityPath,
   maintenanceIntervalMs = 60_000, shutdownAfterMs = 90 * 60_000,
   deviceIdentityPath = join(ROOT, 'captures/v3-device-trial/device-identity.json') } = {}) {
-  if (!host || !Number.isInteger(port) || port < 0 || port > 65535 || !!httpsKeyPath !== !!httpsCertPath ||
+  if (!['statistics', 'legacy-feature'].includes(profile) || !host || !Number.isInteger(port) || port < 0 || port > 65535 || !!httpsKeyPath !== !!httpsCertPath ||
     !Number.isSafeInteger(maintenanceIntervalMs) || maintenanceIntervalMs < 10 ||
     !Number.isSafeInteger(shutdownAfterMs) || shutdownAfterMs < 1 || shutdownAfterMs > 2_147_483_647)
     throw new Error('invalid_server_options');
@@ -44,8 +51,18 @@ export async function startIntegrationServer({ host = '127.0.0.1', port = 8799,
     throw new Error('invalid_public_origin');
   const identity = JSON.parse(await readFile(deviceIdentityPath, 'utf8'));
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(identity.node_id) || identity.node_id === 'v3-synthetic-node') throw new Error('invalid_device_identity');
+  let tenergyIdentity;
+  if (tenergyIdentityPath) {
+    if (profile !== 'statistics') throw new Error('statistics_profile_required');
+    const file = await lstat(tenergyIdentityPath);
+    if (!file.isFile() || (file.mode & 0o777) !== 0o600) throw new Error('private_identity_required');
+    tenergyIdentity = JSON.parse(await readFile(tenergyIdentityPath, 'utf8'));
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(tenergyIdentity.node_id) ||
+      [identity.node_id, 'v3-synthetic-node'].includes(tenergyIdentity.node_id)) throw new Error('invalid_tenergy_identity');
+  }
+  const cohorts = ['synthetic', 'device', ...(tenergyIdentity ? ['tenergy'] : [])];
   // This launcher owns only this directory, including permissions and lock.
-  dataDir = resolve(dataDir);
+  dataDir = resolve(dataDir ?? (profile === 'statistics' ? DEFAULT_DATA_DIR : LEGACY_DATA_DIR));
   process.umask(0o077);
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await protectTree(dataDir);
@@ -66,7 +83,10 @@ export async function startIntegrationServer({ host = '127.0.0.1', port = 8799,
   const maintenancePath = join(dataDir, 'maintenance-status.json'), shutdownPath = join(dataDir, 'shutdown-status.json');
   const inventory = async () => {
     const rows = await db.prepare(`SELECT COUNT(*) source_count,MIN(expires_at_ms) earliest_expiry_ms,MAX(expires_at_ms) latest_expiry_ms
-      FROM (SELECT expires_at_ms FROM ingestion_items_v3 UNION ALL SELECT expires_at_ms FROM cpraw_uploads WHERE state!='expired')`).first();
+      FROM (SELECT expires_at_ms FROM ingestion_items_v3 UNION ALL SELECT expires_at_ms FROM cpraw_uploads WHERE state!='expired'
+        UNION ALL SELECT expires_at_ms FROM statistics_windows_v3 WHERE item_json IS NOT NULL
+        UNION ALL SELECT expires_at_ms FROM statistics_events_v3 WHERE item_json IS NOT NULL
+        UNION ALL SELECT expires_at_ms FROM statistics_status_v3 WHERE item_json IS NOT NULL)`).first();
     return { source_count: Number(rows.source_count), earliest_expiry_ms: rows.earliest_expiry_ms, latest_expiry_ms: rows.latest_expiry_ms };
   };
   const runMaintenance = () => {
@@ -115,16 +135,26 @@ export async function startIntegrationServer({ host = '127.0.0.1', port = 8799,
     try { config = JSON.parse(await readFile(configPath, 'utf8')); }
     catch (error) {
       if (error.code !== 'ENOENT') throw error;
-      config = { schema: 'cp-v3-integration/1', isolation: 'synthetic-controlled-test', operator_confirmed_isolated: true,
+      const archiveIds = profile === 'legacy-feature' ? { synthetic: 'v3-synthetic-cpraw', device: 'v3-device-cpraw' } : {};
+      config = { schema: 'cp-v3-integration/1', profile, isolation: 'synthetic-controlled-test', operator_confirmed_isolated: true,
         adminSigningSecret: secret(), researchBearer: secret(),
-        synthetic: { nodeId: 'v3-synthetic-node', placementId: 'v3-synthetic-placement', deviceBearer: secret(), archivePolicyId: 'v3-synthetic-cpraw' },
-        device: { nodeId: identity.node_id, placementId: 'v3-controlled-placement', deviceBearer: secret(), archivePolicyId: 'v3-device-cpraw' } };
+        synthetic: { nodeId: 'v3-synthetic-node', placementId: 'v3-synthetic-placement', deviceBearer: secret(), ...(archiveIds.synthetic ? { archivePolicyId: archiveIds.synthetic } : {}) },
+        device: { nodeId: identity.node_id, placementId: 'v3-controlled-placement', deviceBearer: secret(), ...(archiveIds.device ? { archivePolicyId: archiveIds.device } : {}) } };
       await privateWrite(configPath, config);
     }
+    if (tenergyIdentity && !config.tenergy) config.tenergy = {
+      nodeId: tenergyIdentity.node_id, placementId: 'v3-tenergy-placement', deviceBearer: secret(),
+    };
     if (config.schema !== 'cp-v3-integration/1' || config.isolation !== 'synthetic-controlled-test' ||
+      (config.profile ?? 'legacy-feature') !== profile ||
       config.operator_confirmed_isolated !== true || !/^[A-Za-z0-9_-]{43}$/.test(config.adminSigningSecret) ||
       config.device?.nodeId !== identity.node_id ||
-      [config.synthetic, config.device].some(n => !n || !/^[A-Za-z0-9_-]{43}$/.test(n.deviceBearer)))
+      (!!config.tenergy !== !!tenergyIdentity) || (tenergyIdentity && config.tenergy?.nodeId !== tenergyIdentity.node_id) ||
+      cohorts.some(name => {
+        const n = config[name];
+        return !n || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(n.nodeId) || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(n.placementId) ||
+          !/^[A-Za-z0-9_-]{43}$/.test(n.deviceBearer);
+      }) || ['nodeId', 'placementId', 'deviceBearer'].some(key => new Set(cohorts.map(name => config[name]?.[key])).size !== cohorts.length))
       throw new Error('invalid_private_config');
     const bundle = await build({ absWorkingDir: ROOT, entryPoints: ['scripts/helpers/v3-integration-worker.ts'],
       bundle: true, write: false, format: 'esm', platform: 'neutral', external: ['node:*'], target: 'es2022', logLevel: 'silent' });
@@ -133,10 +163,16 @@ export async function startIntegrationServer({ host = '127.0.0.1', port = 8799,
       modules: true, script: bundle.outputFiles[0].text, compatibilityDate: '2026-10-23', compatibilityFlags: ['nodejs_compat'],
       host, port, https: true, ...tls, publicUrl: publicOrigin, d1Databases: ['DB'], r2Buckets: ['RAW_BUCKET'],
       resourcePersistencePath: join(dataDir, 'storage'), resourceTmpPath: join(dataDir, 'tmp'),
-      bindings: { ...INTEGRATION_FLAGS, ADMIN_TOKEN: config.adminSigningSecret, RESEARCH_TOKEN: config.researchBearer },
+      bindings: { ...(profile === 'statistics' ? INTEGRATION_FLAGS : LEGACY_INTEGRATION_FLAGS), ADMIN_TOKEN: config.adminSigningSecret, RESEARCH_TOKEN: config.researchBearer },
       log: new Log(LogLevel.NONE), logRequests: false }));
     db = await runtime.getD1Database('DB');
     await db.exec('CREATE TABLE IF NOT EXISTS v3_integration_migrations(name TEXT PRIMARY KEY,sha256 TEXT NOT NULL); CREATE TABLE IF NOT EXISTS v3_integration_state(id TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS v3_integration_maintenance(id INTEGER PRIMARY KEY CHECK(id=1),report_json TEXT NOT NULL CHECK(json_valid(report_json)))');
+    // Isolated diagnostics only: a fixed set of aggregate error counters. Never
+    // retain request bodies, node identities, credentials or arbitrary messages.
+    await db.exec(`CREATE TABLE IF NOT EXISTS v3_integration_rejections(
+      code TEXT PRIMARY KEY CHECK(code IN ('v3_statistics_authority_missing','v3_statistics_capture_unauthorized','v3_statistics_window_conflict','v3_statistics_batch_conflict','v3_statistics_conflict','invalid_v3_statistics','v3_statistics_time_unprovable')),
+      status INTEGER NOT NULL CHECK(status BETWEEN 400 AND 599),
+      count INTEGER NOT NULL CHECK(count BETWEEN 1 AND 1000000),last_at_ms INTEGER NOT NULL)`.replace(/\n/g, ' '));
     await db.prepare("DELETE FROM v3_integration_state WHERE id IN ('ready','draining')").run();
     for (const name of (await readdir(join(ROOT, 'migrations'))).filter(n => /^\d+.*\.sql$/.test(n)).sort()) {
       const sql = await readFile(join(ROOT, 'migrations', name), 'utf8');
@@ -146,7 +182,7 @@ export async function startIntegrationServer({ host = '127.0.0.1', port = 8799,
       await db.prepare('INSERT INTO v3_integration_migrations(name,sha256) VALUES(?,?)').bind(name, hash(sql)).run();
     }
     const now = Date.now();
-    for (const cohort of ['synthetic', 'device']) {
+    for (const cohort of cohorts) {
       const n = config[cohort];
       await db.prepare('INSERT INTO device_nodes(id,credential_sha256) VALUES(?,?) ON CONFLICT(id) DO NOTHING').bind(n.nodeId, hash(n.deviceBearer)).run();
       const actual = await db.prepare('SELECT credential_sha256 FROM device_nodes WHERE id=?').bind(n.nodeId).first();
@@ -154,7 +190,7 @@ export async function startIntegrationServer({ host = '127.0.0.1', port = 8799,
       const placement = await db.prepare('SELECT node_id FROM placements WHERE id=?').bind(n.placementId).first();
       if (!placement) await db.prepare('INSERT INTO placements(id,node_id,valid_from_ms) VALUES(?,?,0)').bind(n.placementId, n.nodeId).run();
       else if (placement.node_id !== n.nodeId) throw new Error('placement_mismatch');
-      await db.prepare(`INSERT INTO cpraw_archive_policies(id,node_id,cpraw_archive,policy_kind,dataset,purpose,accept_until_ms,raw_retention_hours,max_file_bytes,max_files,max_pending_uploads,max_total_bytes,placement_id,placement_provenance)
+      if (profile === 'legacy-feature') await db.prepare(`INSERT INTO cpraw_archive_policies(id,node_id,cpraw_archive,policy_kind,dataset,purpose,accept_until_ms,raw_retention_hours,max_file_bytes,max_files,max_pending_uploads,max_total_bytes,placement_id,placement_provenance)
         VALUES(?,?,1,'offline_import','controlled_test',?,?,1,16780672,100,10,1678067200,?,?) ON CONFLICT(id) DO NOTHING`)
         .bind(n.archivePolicyId, n.nodeId, `${cohort} isolated integration`, now + 7 * 86400000, n.placementId, 'Operator-assigned isolated integration placement; no physical location claim').run();
     }
@@ -164,11 +200,13 @@ export async function startIntegrationServer({ host = '127.0.0.1', port = 8799,
       .bind('v3-isolated-admin', 'v3-isolated-admin', 'Isolated integration administrator', 'disabled-no-login-route', 'v3-isolated-admin', time, time).run();
     await db.prepare("INSERT INTO admin_sessions(token_sha256,created_at,expires_at_ms,role,account_id,auth_version) VALUES(?,?,?,'admin','v3-isolated-admin',1)").bind(hash(id), time, expires).run();
     const url = await runtime.ready;
+    config.profile = profile;
     config.endpoint = publicOrigin ?? url.origin; config.allowedOrigin = config.endpoint; config.localEndpoint = url.origin;
     config.adminCookie = `cp_admin_session=${value}`; config.adminCookieExpiresAt = expires;
-    for (const cohort of ['synthetic', 'device']) Object.assign(config[cohort], {
+    for (const cohort of cohorts) Object.assign(config[cohort], {
       endpoint: config.endpoint, allowedOrigin: config.allowedOrigin, adminCookie: config.adminCookie,
       isolation: config.isolation, operator_confirmed_isolated: true,
+      profile,
     });
     await privateWrite(configPath, config);
     await protectTree(dataDir);
@@ -192,6 +230,7 @@ export async function startIntegrationServer({ host = '127.0.0.1', port = 8799,
     // Explicit local operator operation only. Disable this synthetic node first;
     // never shorten TTLs or touch the controlled device's archive/source rows.
     const retireSyntheticArchives = async () => {
+      if (profile !== 'legacy-feature') throw new Error('legacy_profile_required');
       await db.prepare('UPDATE device_nodes SET enabled=0 WHERE id=?').bind(config.synthetic.nodeId).run();
       // Include previously retired tombstones so an explicit retry can also
       // reconcile any delayed R2 write without changing an immutable receipt.
@@ -228,7 +267,7 @@ export async function startIntegrationServer({ host = '127.0.0.1', port = 8799,
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
-    const options = {}, names = { '--host': 'host', '--port': 'port', '--data-dir': 'dataDir', '--https-key': 'httpsKeyPath', '--https-cert': 'httpsCertPath', '--public-origin': 'publicOrigin', '--device-identity': 'deviceIdentityPath', '--shutdown-after-ms': 'shutdownAfterMs' };
+    const options = {}, names = { '--profile': 'profile', '--host': 'host', '--port': 'port', '--data-dir': 'dataDir', '--https-key': 'httpsKeyPath', '--https-cert': 'httpsCertPath', '--public-origin': 'publicOrigin', '--device-identity': 'deviceIdentityPath', '--tenergy-identity': 'tenergyIdentityPath', '--shutdown-after-ms': 'shutdownAfterMs' };
     let retireSynthetic = false;
     for (let i = 2; i < process.argv.length; i++) {
       if (process.argv[i] === '--retire-synthetic-archives') { retireSynthetic = true; continue; }
@@ -238,9 +277,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       i++;
     }
     if (options.dataDir) {
-      const child = relative(DEFAULT_DATA_DIR, resolve(options.dataDir));
-      if (child.startsWith('..') || isAbsolute(child)) throw new Error('data_dir_outside_isolated_root');
+      const within = [DEFAULT_DATA_DIR, LEGACY_DATA_DIR].some(root => {
+        const child = relative(root, resolve(options.dataDir)); return !child.startsWith('..') && !isAbsolute(child);
+      });
+      if (!within) throw new Error('data_dir_outside_isolated_root');
     }
+    if (retireSynthetic && options.profile !== 'legacy-feature') throw new Error('legacy_profile_required');
     const server = await startIntegrationServer(options);
     if (retireSynthetic && (await server.retireSyntheticArchives()).status !== 'ok') {
       await server.dispose(); throw new Error('synthetic_retirement_failed');

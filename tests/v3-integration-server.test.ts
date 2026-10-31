@@ -3,11 +3,13 @@ import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request as httpsRequest } from 'node:https';
-import { startIntegrationServer } from '../scripts/v3-integration-server.mjs';
+import { startIntegrationServer, INTEGRATION_FLAGS } from '../scripts/v3-integration-server.mjs';
+import { capabilityDigestV3 } from '../worker/device-v3-config';
 import { ingestV3Fixture, featureBatchV3 } from './helpers/v3-ingest-fixtures';
 import { v3Registration, v3Ack } from './helpers/device-v3-fixtures';
 import { concatCpraw, cprawHeader, cprawReport, cprawManifest } from './helpers/cpraw-fixtures';
 import { sha256 } from '../worker/ingest';
+import { statisticsFixture, statisticsBatch, statisticsStatus } from './helpers/v3-statistics-fixtures';
 
 let directory: string, identityPath: string, server: Awaited<ReturnType<typeof startIntegrationServer>>;
 const origin = 'https://isolated-v3.example.test';
@@ -15,7 +17,7 @@ beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), 'cp-v3-integration-'));
   identityPath = join(directory, 'identity.json');
   await writeFile(identityPath, JSON.stringify({ node_id: 'test-controlled-device' }), { mode: 0o600 });
-  server = await startIntegrationServer({ port: 0, dataDir: join(directory, 'state'), publicOrigin: origin, deviceIdentityPath: identityPath });
+  server = await startIntegrationServer({ profile: 'legacy-feature', port: 0, dataDir: join(directory, 'state'), publicOrigin: origin, deviceIdentityPath: identityPath });
 }, 30_000);
 afterAll(async () => { await server?.dispose(); await rm(directory, { recursive: true, force: true }); });
 
@@ -36,7 +38,7 @@ it('serves real HTTPS with private credentials, complete migrations and no publi
   expect(result.status).toBe(200); expect(JSON.parse(result.body)).toEqual({ ready: true, draining: false, isolation: 'synthetic-controlled-test' });
   for (const path of ['/__synthetic_cleanup', '/admin', '/api/v1/admin/session', '/api/v1/places']) expect((await send(path)).status).toBe(404);
   expect((await send('/api/v1/admin/device-v3/nodes/test-controlled-device')).status).toBe(401);
-  expect(await server.db.prepare('SELECT COUNT(*) n FROM v3_integration_migrations').first()).toEqual({ n: 15 });
+  expect(await server.db.prepare('SELECT COUNT(*) n FROM v3_integration_migrations').first()).toEqual({ n: 17 });
   expect(await server.db.prepare('SELECT COUNT(*) n FROM device_capabilities_v3').first()).toEqual({ n: 0 });
   expect(await server.db.prepare('SELECT COUNT(*) n FROM device_acknowledgements_v3').first()).toEqual({ n: 0 });
   expect(server.config.device.nodeId).toBe('test-controlled-device');
@@ -74,7 +76,7 @@ it('accepts authenticated synthetic registration/assignment/ACK/ingest and persi
   const credential = c.deviceBearer;
   await server.dispose();
   await chmod(join(directory, 'state'), 0o755);
-  server = await startIntegrationServer({ port: 0, dataDir: join(directory, 'state'), publicOrigin: origin, deviceIdentityPath: identityPath });
+  server = await startIntegrationServer({ profile: 'legacy-feature', port: 0, dataDir: join(directory, 'state'), publicOrigin: origin, deviceIdentityPath: identityPath });
   expect(server.config.synthetic.deviceBearer).toBe(credential);
   expect(await (await send('/api/v3/ingest', 'POST', bytes)).json()).toEqual(storedReceipt);
   expect(await (await (await server.runtime.getR2Bucket('RAW_BUCKET')).get('test-persistence'))!.text()).toBe('private-test-value');
@@ -89,7 +91,8 @@ it('accepts authenticated synthetic registration/assignment/ACK/ingest and persi
 it('records a redacted scheduled failure while still running the independent CPRAW retention pass', async () => {
   await server.db.exec('ALTER TABLE ingestion_windows_v3 RENAME TO test_missing_windows_v3');
   try {
-    expect(await server.runMaintenance()).toMatchObject({ status: 'failed', v3: { error: 'v3_retention_failed' }, cpraw_reconciled: 0 });
+    expect(await server.runMaintenance()).toMatchObject({ status: 'failed', v3: { error: 'v3_retention_failed' }, cpraw_reconciled: 0,
+      statistics: { deleted_private_rows: 0 }, statistics_leases: { status: 'ok' } });
     const report = await readFile(join(directory, 'state', 'maintenance-status.json'), 'utf8');
     expect(report).not.toContain('no such table'); expect(report).not.toContain(server.config.device.nodeId);
   } finally { await server.db.exec('ALTER TABLE test_missing_windows_v3 RENAME TO ingestion_windows_v3'); }
@@ -126,4 +129,98 @@ it('runs scheduled maintenance on the default-enabled timer and automatically cl
     expect(await Promise.race([timed.closed, timeout])).toMatchObject({ status: 'sources_drained', remaining: { source_count: 0 } });
     expect((await stat(join(timedDir, 'shutdown-status.json'))).mode & 0o777).toBe(0o600);
   } finally { await timed.dispose(); }
+}, 15_000);
+
+it('defaults to statistics without raw policies, feature admission or seeded physical capabilities', async () => {
+  const stats = await startIntegrationServer({ port: 0, dataDir: join(directory, 'statistics'), deviceIdentityPath: identityPath });
+  try {
+    expect(stats.config.profile).toBe('statistics'); expect(stats.config.device.profile).toBe('statistics');
+    expect(stats.config.tenergy).toBeUndefined();
+    expect(INTEGRATION_FLAGS).toMatchObject({ DEVICE_V3_CONTROL_ENABLED: 'true', DEVICE_V3_STATISTICS_ENABLED: 'true', DEVICE_V3_INGEST_ENABLED: 'false', CPRAW_ARCHIVE_ENABLED: '0' });
+    expect(JSON.parse(INTEGRATION_FLAGS.DEVICE_V3_PRODUCER_VERSIONS)).toEqual(['synthetic-statistics/1', 'cp-v3-small/1']);
+    expect(await stats.db.prepare('SELECT COUNT(*) n FROM cpraw_archive_policies').first()).toEqual({ n: 0 });
+    for (const table of ['device_capabilities_v3', 'device_acknowledgements_v3', 'ingestion_items_v3', 'statistics_batches_v3'])
+      expect(await stats.db.prepare(`SELECT COUNT(*) n FROM ${table}`).first()).toEqual({ n: 0 });
+    const feature = await stats.runtime.dispatchFetch(origin + '/api/v3/ingest', { method: 'POST' });
+    expect(feature.status).toBe(503); expect(await feature.json()).toMatchObject({ error: { code: 'v3_ingest_disabled' } });
+    expect((await stats.runtime.dispatchFetch(origin + '/api/v1/cpraw/uploads/11111111-1111-4111-8111-111111111111', { method: 'PUT' })).status).toBe(503);
+    expect((await stats.runtime.dispatchFetch(origin + '/api/v3/statistics/ingest', { method: 'POST' })).status).toBe(401);
+    const publicRead = await stats.runtime.dispatchFetch(origin + '/api/v3/places/test-place/statistics');
+    expect(publicRead.status).toBe(200); expect(await publicRead.json()).toMatchObject({ schema: 'public-statistics/3', state: 'unavailable', reason: 'place_not_found' });
+    expect(await stats.runMaintenance()).toMatchObject({ status: 'ok', statistics: { deleted_private_rows: 0 }, statistics_leases: { status: 'ok' }, v3: { deleted_private_rows: 0 }, cpraw_reconciled: 0 });
+    await stats.db.exec('ALTER TABLE statistics_quota_v3 RENAME TO test_missing_statistics_quota');
+    try {
+      expect(await stats.runMaintenance()).toMatchObject({ status: 'failed', statistics: { error: 'statistics_retention_failed' },
+        statistics_leases: { status: 'ok' }, v3: { deleted_private_rows: 0 }, cpraw_reconciled: 0 });
+    } finally { await stats.db.exec('ALTER TABLE test_missing_statistics_quota RENAME TO statistics_quota_v3'); }
+    await expect(stats.retireSyntheticArchives()).rejects.toThrow('legacy_profile_required');
+  } finally { await stats.dispose(); }
+  await expect(startIntegrationServer({ profile: 'legacy-feature', port: 0, dataDir: join(directory, 'statistics'), deviceIdentityPath: identityPath })).rejects.toThrow('invalid_private_config');
+}, 15_000);
+
+it('registers the optional third statistics node with independent credentials and no fabricated capability or ACK', async () => {
+  const tenergyIdentityPath = join(directory, 'tenergy-identity.json'), dataDir = join(directory, 'three-nodes');
+  await writeFile(tenergyIdentityPath, JSON.stringify({ node_id: 'test-tenergy-device' }), { mode: 0o600 });
+  let stats = await startIntegrationServer({ port: 0, dataDir, publicOrigin: origin, deviceIdentityPath: identityPath, tenergyIdentityPath });
+  const credential = stats.config.tenergy.deviceBearer;
+  try {
+    const cohorts = [stats.config.synthetic, stats.config.device, stats.config.tenergy];
+    for (const key of ['nodeId', 'placementId', 'deviceBearer']) expect(new Set(cohorts.map(n => n[key])).size).toBe(3);
+    for (const n of cohorts) expect(n).toMatchObject({ endpoint: origin, allowedOrigin: origin, profile: 'statistics', adminCookie: stats.config.adminCookie });
+    for (const table of ['device_nodes', 'placements']) expect(await stats.db.prepare(`SELECT COUNT(*) n FROM ${table}`).first()).toEqual({ n: 3 });
+    for (const table of ['device_capabilities_v3', 'device_acknowledgements_v3', 'cpraw_archive_policies'])
+      expect(await stats.db.prepare(`SELECT COUNT(*) n FROM ${table}`).first()).toEqual({ n: 0 });
+    const health = await (await stats.runtime.dispatchFetch(origin + '/health')).text();
+    for (const n of cohorts) { expect(health).not.toContain(n.nodeId); expect(health).not.toContain(n.deviceBearer); }
+    expect((await stat(stats.configPath)).mode & 0o777).toBe(0o600);
+    await stats.dispose();
+    stats = await startIntegrationServer({ port: 0, dataDir, deviceIdentityPath: identityPath, tenergyIdentityPath });
+    expect(stats.config.tenergy.deviceBearer).toBe(credential); expect(stats.config.tenergy.endpoint).toBe(stats.config.endpoint);
+  } finally { await stats.dispose(); }
+  await expect(startIntegrationServer({ port: 0, dataDir, deviceIdentityPath: identityPath })).rejects.toThrow('invalid_private_config');
+  await chmod(tenergyIdentityPath, 0o644);
+  await expect(startIntegrationServer({ port: 0, dataDir, deviceIdentityPath: identityPath, tenergyIdentityPath })).rejects.toThrow('private_identity_required');
+  await chmod(tenergyIdentityPath, 0o600);
+  await expect(startIntegrationServer({ profile: 'legacy-feature', port: 0, dataDir, deviceIdentityPath: identityPath, tenergyIdentityPath })).rejects.toThrow('statistics_profile_required');
+}, 15_000);
+
+it('routes small statistics through actual control and counts all three private source tables while draining', async () => {
+  const stats = await startIntegrationServer({ port: 0, dataDir: join(directory, 'statistics-flow'), publicOrigin: origin, deviceIdentityPath: identityPath });
+  const c = stats.config.synthetic, f = await statisticsFixture(c.nodeId, c.placementId);
+  f.caps.producer_version = 'synthetic-statistics/1'; f.policy.control.capability_sha256 = await capabilityDigestV3(f.caps);
+  async function post(path: string, body: unknown, admin = false) {
+    const text = JSON.stringify(body);
+    return stats.runtime.dispatchFetch(origin + path, { method: 'POST', body: text, headers: {
+      ...(admin ? { Cookie: stats.config.adminCookie, Origin: origin } : { Authorization: `Bearer ${c.deviceBearer}` }),
+      'Content-Type': 'application/json', 'X-Body-SHA256': await sha256(new TextEncoder().encode(text)),
+    } });
+  }
+  try {
+    expect((await post('/api/v3/device/capabilities', v3Registration(f.caps))).status).toBe(200);
+    const assignment = await post('/api/v1/admin/device-v3/assignments', { policy: f.policy, expected_generation: 0 }, true);
+    expect(assignment.status, await assignment.clone().text()).toBe(200);
+    expect((await post('/api/v3/device/config/ack', await v3Ack(f.policy))).status).toBe(200);
+    const window = await statisticsBatch(f), status = await statisticsStatus(f), start = Date.now();
+    window.x[0].t[1] = start + 1000; status.x[0].t[1] = start + 1000;
+    const rejected = await post('/api/v3/statistics/ingest', { ...window, g: 2 });
+    expect(rejected.status).toBe(409);
+    expect(await rejected.json()).toMatchObject({ error: { code: 'v3_statistics_authority_missing' } });
+    expect(await stats.db.prepare('SELECT code,status,count FROM v3_integration_rejections').all()).toMatchObject({
+      results: [{ code: 'v3_statistics_authority_missing', status: 409, count: 1 }],
+    });
+    expect((await stats.db.prepare('PRAGMA table_info(v3_integration_rejections)').all()).results.map(row => row.name))
+      .toEqual(['code', 'status', 'count', 'last_at_ms']);
+    await new Promise(resolve => setTimeout(resolve, 1050));
+    const ingested = await post('/api/v3/statistics/ingest', window);
+    expect(ingested.status, await ingested.clone().text()).toBe(200);
+    expect((await post('/api/v3/statistics/ingest', status)).status).toBe(200);
+    // An isolated synthetic event source exercises custody inventory. It is not
+    // a producer claim and bypasses no state on the actual controlled node.
+    await stats.db.prepare(`INSERT INTO statistics_events_v3(node_id,boot_id,generation,event_id,revision,seq,state,item_json,item_sha256,received_at_ms,expires_at_ms,retain_until_ms)
+      VALUES(?,?,1,?,1,1,'closed',?,?,?, ?,?)`).bind(c.nodeId, f.caps.boot_id, crypto.randomUUID(), '{"synthetic_inventory_fixture":true}', '0'.repeat(64), start, start + 3600000, start + 7200000).run();
+    expect(await stats.runMaintenance()).toMatchObject({ status: 'ok', remaining: { source_count: 3 } });
+    const drained = await stats.shutdownGracefully(); expect(drained).toMatchObject({ status: 'draining_until_source_expiry', remaining: { source_count: 3 } });
+    expect(await stats.db.prepare('SELECT COUNT(*) n FROM device_capabilities_v3 WHERE node_id=?').bind(stats.config.device.nodeId).first()).toEqual({ n: 0 });
+    expect(await stats.db.prepare('SELECT COUNT(*) n FROM cpraw_archive_policies').first()).toEqual({ n: 0 });
+  } finally { await stats.dispose(); }
 }, 15_000);
