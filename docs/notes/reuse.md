@@ -987,3 +987,9 @@ Noto Sans CJK SC Bold2.004 source; the source and original-generator hashes,
 are preserved. The old raw image's fonts and generator are unchanged; no font
 binary is copied into the repository. Synthetic host previews remain outside
 the repository and their final PNG metadata was inspected.
+
+The 2026-10-31 T-Energy `small_runtime.c` is newly authored here and reuses the
+existing board budget/small-queue adapters and `cp_v3_*` components. Only actual
+model/pin facts are referenced from LILYGO's official documentation; no GPL
+vendor application is copied. The earlier strict qualification experiment stays
+in source, separately from the bounded runtime and its physical acceptance.

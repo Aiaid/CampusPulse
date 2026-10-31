@@ -1,0 +1,11 @@
+menu "CampusPulse bounded T-Energy acceptance"
+config TE_SMALL_TEST_HOLD_FIRST_COMMIT
+    bool "Hold after the first committed window for normal-reboot acceptance"
+    default n
+    help
+        Explicit physical acceptance image only. Requires max_windows=1. After
+        committing/reopening and releasing that exact window, pause capture
+        and hold without POST or more NVS writes until a physical reset. The
+        next boot recovers the old exact record before registering new work.
+        This is a normal-reboot checkpoint, not arbitrary power-loss acceptance.
+endmenu

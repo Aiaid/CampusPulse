@@ -1,0 +1,19 @@
+{
+  "protocol": "campuspulse/3",
+  "boot_id": "11111111-1111-4111-8111-111111111111",
+  "policy_id": "synthetic-stats-notregister-2",
+  "policy_sha256": "8bfe2e08377c05e3f41f5370ca17c869d8f8b61a284d7f4461d4dde6c1631c00",
+  "assignment_generation": 2,
+  "apply_seq": 2,
+  "state": "failed",
+  "closed_window_seq": 3,
+  "closed_segment_seq": 2,
+  "window_open": false,
+  "segment_open": false,
+  "error_code": "storage_failed",
+  "node_id": "synthetic-stats-notregister",
+  "body_sha256": "d9d312ff52402c1df2f541bc24f6a3b23c2dc42ec421d874e47100e30d9c9df2",
+  "received_at": "2026-10-30T06:11:01.027Z",
+  "durability": "committed",
+  "evidence": "device_ack"
+}

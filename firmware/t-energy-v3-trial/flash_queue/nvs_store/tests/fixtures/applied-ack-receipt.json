@@ -1,0 +1,21 @@
+{
+  "protocol": "campuspulse/3",
+  "boot_id": "11111111-1111-4111-8111-111111111111",
+  "policy_id": "synthetic-stats-notregister-1",
+  "policy_sha256": "24ecfc98b620758e9813a1227606d83a9e4a534f13504d268f0da391f0a1c5e9",
+  "assignment_generation": 1,
+  "apply_seq": 1,
+  "state": "applied",
+  "closed_window_seq": 3,
+  "closed_segment_seq": 2,
+  "window_open": false,
+  "segment_open": false,
+  "node_id": "synthetic-stats-notregister",
+  "body_sha256": "f0a1bd4785150d3c815b579d433b12b66a8339f8113c5e3595cc94c0421ed9fc",
+  "server_time": "2026-10-30T06:11:01.021Z",
+  "lease_until_ms": 1793340781021,
+  "contact_seq": 0,
+  "received_at": "2026-10-30T06:11:01.020Z",
+  "durability": "committed",
+  "evidence": "device_ack"
+}

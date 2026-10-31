@@ -1,0 +1,17 @@
+# T-Energy-S3 V1.0, 16 MB flash.
+#
+# cp_pipeline does not look the queue partition up by name alone: it also
+# asserts address 0x360000 and size 0x400000 (components/cp_pipeline/pipeline.c
+# in cp_pipeline_init). Until that Passport constant is pushed down into the
+# board layer, this table must keep the same geometry or the journal reports
+# ESP_ERR_NOT_FOUND and every observation is dropped.
+#
+# 0x310000-0x360000 is deliberately unused: it is the gap the Passport layout
+# leaves for its protected cardid region, and 0x760000-0x1000000 (8.6 MB)
+# stays free for the phase that needs more than one queue.
+#
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+factory,    app,  factory, 0x10000,  0x300000,
+cpqueue,    data, 0x40,    0x360000, 0x400000,
