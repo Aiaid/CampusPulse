@@ -110,7 +110,11 @@ async function readVehicles(env: Env, place: Place, windows: PublicSensorWindow[
     if (policy.protocol !== 'campuspulse/2') return result;
     config = validateCaptureConfigV2(policy);
   } catch { return { ...result, reason: 'invalid_vehicle_evidence' }; }
-  if (source.visible_identifiers > 64 || source.visible_identifiers > config.summary.max_addresses) {
+  // The validated policy bounds a whole window (up to 512 addresses), not a
+  // single upload batch. Keep one sentinel row to detect corrupt over-budget
+  // storage without loading an unbounded history or changing query count.
+  const addressBudget = config.summary.max_addresses;
+  if (source.visible_identifiers > addressBudget) {
     return { ...result, reason: 'input_limit_exceeded' };
   }
   // Keep the private lookup outermost on the node/boot/stream/window key. Without
@@ -124,9 +128,9 @@ async function readVehicles(env: Env, place: Place, windows: PublicSensorWindow[
       AND i.stream='address_summaries' AND b.stream='address_summaries'
       AND i.dataset='field' AND b.dataset='field' AND i.expires_at_ms>? AND b.expires_at_ms>?
       AND i.received_at<=? AND b.received_at<=?
-    LIMIT 65`).bind(window.node_id, window.boot_id, window.placement_id, window.capture_config_id,
-      window.seq, now, now, new Date(now).toISOString(), new Date(now).toISOString()).all<SummaryRow>();
-  if (rows.results.length > 64) return { ...result, reason: 'input_limit_exceeded' };
+    LIMIT ?`).bind(window.node_id, window.boot_id, window.placement_id, window.capture_config_id,
+      window.seq, now, now, new Date(now).toISOString(), new Date(now).toISOString(), addressBudget + 1).all<SummaryRow>();
+  if (rows.results.length > addressBudget) return { ...result, reason: 'input_limit_exceeded' };
   if (rows.results.length > source.visible_identifiers) return { ...result, reason: 'inconsistent_vehicle_evidence' };
   if (rows.results.length < source.visible_identifiers) return { ...result, reason: 'summaries_pending' };
   if (!rows.results.length) return { ...result, reason: 'no_usable_vehicle_features' };

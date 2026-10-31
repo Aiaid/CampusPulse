@@ -49,7 +49,7 @@ UTF-8 body bytes. The server ceilings remain 128 items / 65536 bytes, and each
 policy can impose smaller limits.
 
 The server validates a 1–300 second summary window, 1 second minimum bin size,
-exact whole-window divisibility, at most 60 bins and at most 128 addresses. A
+exact whole-window divisibility, at most 60 bins and at most 512 addresses. A
 partially closed item may be shorter and have `ceil(duration_ms/bin_ms)` bins.
 It retains the configured `bin_ms` even when `duration_ms < bin_ms`; that case
 has one partial bin. The server still rejects a bin width that differs from the

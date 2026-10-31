@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readAutomaticObservations } from '../worker/place-inference';
 import { readPublicWindows, type PublicSensorWindow } from '../worker/sensors';
 import { commitBatchV2 } from '../worker/device-v2-store';
-import { validateEnvelopeV2, type AddressSummary, type CaptureConfigV2 } from '../worker/device-v2-validation';
+import { validateConfigBatchV2, validateEnvelopeV2, type AddressSummary, type CaptureConfigV2 } from '../worker/device-v2-validation';
 import type { BleWindow } from '../worker/ingest-validation';
 import type { Place } from '../worker/types';
 import { COMPACT_VEHICLE_SCHEMA_VERSION, type CompactVehicleEvidence } from '../worker/vehicle-rules';
@@ -19,10 +19,11 @@ const compact = (extra: Partial<CompactVehicleEvidence> = {}): CompactVehicleEvi
   schema_version: COMPACT_VEHICLE_SCHEMA_VERSION, parsed_reports: 2, malformed_reports: 0,
   name_brand_mask: 0, exclusion_mask: 0, ecosystem_mask: 0, ...extra,
 });
-async function register(suffix = 'one', purposes = ['parking'], dataset: CaptureConfigV2['dataset'] = 'field') {
+async function register(suffix = 'one', purposes = ['parking'], dataset: CaptureConfigV2['dataset'] = 'field', maxAddresses = 64) {
   const config = fixture('capture-config-v2.fixture') as CaptureConfigV2;
   Object.assign(config, { node_id: `synthetic-node-${suffix}`, placement_id: `synthetic-placement-${suffix}`,
     capture_config_id: `synthetic-config-${suffix}`, dataset, accept_until: new Date(NOW + DAY).toISOString() });
+  config.summary.max_addresses = maxAddresses;
   state.db.prepare('INSERT INTO device_nodes(id,credential_sha256) VALUES(?,?)').run(config.node_id, await sha256(new TextEncoder().encode(suffix)));
   state.db.prepare('INSERT INTO placements(id,node_id,place_id,valid_from_ms,observation_kinds_json) VALUES(?,?,?,?,?)')
     .run(config.placement_id, config.node_id, 'library', 0, JSON.stringify(purposes));
@@ -39,8 +40,9 @@ function windowItem(count: number, extra: Partial<BleWindow> = {}): BleWindow {
     raw_capture: { mode: 'off', selected_reports: 0, intentional_skips: 0, pressure_skips: 0, drops: 0 }, quality_flags: [], ...extra };
 }
 function summaryItem(window: BleWindow, index: number, evidence?: CompactVehicleEvidence): AddressSummary {
-  return { seq: window.seq * 100 + index, time: { ...window.time }, window_seq: window.seq,
-    duration_ms: window.duration_ms, bin_ms: 5000, address: `02:00:00:00:00:${index.toString(16).padStart(2, '0')}`, address_type: 'random',
+  return { seq: window.seq * 1024 + index, time: { ...window.time }, window_seq: window.seq,
+    duration_ms: window.duration_ms, bin_ms: 5000,
+    address: `02:00:00:00:${(index >>> 8).toString(16).padStart(2, '0')}:${(index & 0xff).toString(16).padStart(2, '0')}`, address_type: 'random',
     reports: 2, adv_reports: 2, scan_response_reports: 0, first_offset_ms: 100, last_offset_ms: window.duration_ms - 100,
     bins: Array.from({ length: Math.ceil(window.duration_ms / 5000) }, (_, i) => {
       const end = Math.ceil(window.duration_ms / 5000) - 1;
@@ -52,15 +54,27 @@ async function commit(config: CaptureConfigV2, stream: 'ble_windows' | 'address_
   const batch = validateEnvelopeV2({ protocol: 'campuspulse/2', node_id: config.node_id, boot_id: BOOT,
     placement_id: config.placement_id, capture_config_id: config.capture_config_id, dataset: config.dataset,
     batch_id: crypto.randomUUID(), firmware_version: 'synthetic-compact-fixture', stream, items });
-  return commitBatchV2(state.env.DB, batch, await sha256(new TextEncoder().encode(JSON.stringify(batch))), null, 24, 7, NOW + DAY, received);
+  validateConfigBatchV2(batch, config);
+  const bytes = new TextEncoder().encode(JSON.stringify(batch));
+  expect(bytes.byteLength).toBeLessThanOrEqual(config.upload_policy.max_body_bytes);
+  return commitBatchV2(state.env.DB, batch, await sha256(bytes), null, 24, 7, NOW + DAY, received);
+}
+async function commitSummaries(config: CaptureConfigV2, items: AddressSummary[]) {
+  // Keep fixtures within both upload item and body budgets; large windows must
+  // exercise independently received batches instead of bypassing the protocol.
+  const batchSize = Math.min(config.upload_policy.max_items, 8);
+  for (let offset = 0; offset < items.length; offset += batchSize) {
+    await commit(config, 'address_summaries', items.slice(offset, offset + batchSize));
+  }
 }
 async function seed(evidence: (CompactVehicleEvidence | undefined)[], options: {
   config?: CaptureConfigV2; window?: Partial<BleWindow>; omitSummaries?: boolean;
 } = {}) {
-  const config = options.config ?? await register(), window = windowItem(evidence.length, options.window);
+  const config = options.config ?? await register(), window = windowItem(evidence.length,
+    { unique_table_capacity: config.summary.max_addresses, ...options.window });
   await commit(config, 'ble_windows', [window]);
   const summaries = evidence.map((item, index) => summaryItem(window, index + 1, item));
-  if (summaries.length && !options.omitSummaries) await commit(config, 'address_summaries', summaries);
+  if (!options.omitSummaries) await commitSummaries(config, summaries);
   return { config, window, summaries };
 }
 const windows = (now = NOW) => readPublicWindows(state.env, 'library', now - DAY, now);
@@ -112,6 +126,46 @@ describe('public automatic vehicle projection', () => {
     delete legacy.vehicle_evidence;
     await commit(capture.config, 'address_summaries', [legacy]);
     expect((await read()).vehicles.reason).toBe('vehicle_features_not_reported');
+  });
+
+  it.each([65, 128, 512])('classifies a %i-address window across bounded upload batches', async count => {
+    const config = await register('large', ['parking'], 'field', count);
+    await seed(Array.from({ length: count }, () => compact({ name_brand_mask: 1 })), { config });
+    expect((await read()).vehicles).toMatchObject({ status: 'candidate_estimate', candidate_count: count,
+      car_related_count: 0, ecosystem_count: 0, sample_count: count * 2, evidence_kind: 'compact', reason: null });
+    const batches = state.db.prepare("SELECT COUNT(*) AS count,MAX(accepted_count) AS largest FROM ingestion_batches_v2 WHERE stream='address_summaries'").get()!;
+    expect(Number(batches.count)).toBeGreaterThan(1);
+    expect(Number(batches.largest)).toBeLessThanOrEqual(config.upload_policy.max_items);
+  });
+
+  it('waits for the final summary of a 512-address window without publishing a truncated count', async () => {
+    const config = await register('pending-large', ['parking'], 'field', 512);
+    const capture = await seed(Array.from({ length: 512 }, () => compact({ name_brand_mask: 1 })),
+      { config, omitSummaries: true });
+    await commitSummaries(config, capture.summaries.slice(0, -1));
+    expect((await read()).vehicles).toMatchObject({ status: 'unavailable', reason: 'summaries_pending',
+      candidate_count: null, sample_count: 0 });
+    await commit(config, 'address_summaries', capture.summaries.slice(-1));
+    expect((await read()).vehicles).toMatchObject({ status: 'candidate_estimate', candidate_count: 512,
+      sample_count: 1024, reason: null });
+  });
+
+  it('rejects a source window above its retained configuration budget', async () => {
+    const config = await register('window-budget', ['parking'], 'field', 128);
+    await seed(Array.from({ length: 128 }, () => compact()), { config });
+    // Only corrupted/imported storage can change an immutable assigned policy.
+    state.db.exec('DROP TRIGGER capture_configs_immutable_update');
+    config.summary.max_addresses = 64;
+    state.db.prepare('UPDATE capture_configs SET config_json=? WHERE id=?').run(JSON.stringify(config), config.capture_config_id);
+    expect((await read()).vehicles).toMatchObject({ status: 'unavailable', reason: 'input_limit_exceeded', candidate_count: null });
+  });
+
+  it.each([0, 513])('rejects an invalid retained address budget of %i before reading summaries', async maxAddresses => {
+    const capture = await seed([compact()]);
+    state.db.exec('DROP TRIGGER capture_configs_immutable_update');
+    capture.config.summary.max_addresses = maxAddresses;
+    state.db.prepare('UPDATE capture_configs SET config_json=? WHERE id=?').run(JSON.stringify(capture.config), capture.config.capture_config_id);
+    expect((await read()).vehicles).toMatchObject({ status: 'unavailable', reason: 'invalid_vehicle_evidence', candidate_count: null });
   });
 
   it('publishes a genuine zero only with usable classified input', async () => {
@@ -250,30 +304,35 @@ describe('public automatic vehicle projection', () => {
     expect((await read(NOW, place, [{ ...rows[0], boot_id: crypto.randomUUID() }])).vehicles.reason).toBe('no_field_sensor_windows');
   });
 
-  it('fails closed if retained private rows exceed the bounded address budget', async () => {
-    const capture = await seed(Array.from({ length: 64 }, () => compact()));
+  it.each([64, 512])('fails closed if retained private rows exceed a %i-address budget', async count => {
+    const config = await register('over-budget', ['parking'], 'field', count);
+    const capture = await seed(Array.from({ length: count }, () => compact()), { config });
     // Deliberately emulate corrupted imported storage; normal ingest rejects
-    // the 65th record through the independent per-window budget trigger.
+    // the extra record through the independent per-window budget trigger.
     state.db.exec('DROP TRIGGER ingestion_items_v2_budget');
-    await commit(capture.config, 'address_summaries', [summaryItem(capture.window, 65, compact({ name_brand_mask: 1 }))]);
+    await commit(capture.config, 'address_summaries', [summaryItem(capture.window, count + 1, compact({ name_brand_mask: 1 }))]);
     expect((await read()).vehicles).toMatchObject({ status: 'unavailable', reason: 'input_limit_exceeded', candidate_count: null });
   });
 
-  it('uses the unique private window identity index without the redundant prefix index', async () => {
-    await seed([compact({ name_brand_mask: 1 })]);
+  it.each([64, 512])('keeps the %i-address lookup indexed and bounded to one query', async count => {
+    const config = await register('indexed', ['parking'], 'field', count);
+    await seed(Array.from({ length: count }, () => compact({ name_brand_mask: 1 })), { config });
     state.db.exec('DROP INDEX IF EXISTS ingestion_items_v2_window');
-    const plans: string[] = [], original = state.env.DB.prepare.bind(state.env.DB);
+    const plans: string[] = [], limits: unknown[] = [], original = state.env.DB.prepare.bind(state.env.DB);
     state.env.DB.prepare = ((sql: string) => {
       const statement = original(sql), bind = statement.bind.bind(statement);
       statement.bind = ((...values: unknown[]) => {
         if (sql.includes("i.stream='address_summaries'")) {
+          expect(sql).toMatch(/LIMIT \?$/);
+          limits.push(values.at(-1));
           plans.push(...state.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...values as []).map(row => String(row.detail)));
         }
         return bind(...values as []);
       }) as typeof statement.bind;
       return statement;
     }) as typeof state.env.DB.prepare;
-    expect((await read()).vehicles).toMatchObject({ status: 'candidate_estimate', candidate_count: 1 });
+    expect((await read()).vehicles).toMatchObject({ status: 'candidate_estimate', candidate_count: count });
+    expect(limits).toEqual([count + 1]);
     expect(plans.join('\n')).toMatch(/SEARCH i USING INDEX sqlite_autoindex_ingestion_items_v2_2 \(node_id=\? AND boot_id=\? AND stream=\? AND window_seq=\?\)/);
     expect(plans.join('\n')).not.toMatch(/SCAN i|ingestion_items_v2_expiry/);
   });
