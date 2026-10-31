@@ -106,12 +106,14 @@ int main(void) {
     cp_v3_transport_response_t diagnostic = {.http_status = 200, .body_bytes = 17, .complete = true, .date_known = true,
         .server_time = {.utc_ms = 1704067200000ULL}, .tls_esp_error = 33, .tls_stack_error = -44, .tls_verify_flags = 55,
         .stage = CP_V3_TRANSPORT_RESPONSE_HEADERS, .io_error = -76, .dns_error = 0, .tls_connected = 1,
-        .last_read = -76, .last_write = 512, .received_bytes = 600, .written_bytes = 512};
+        .last_read = -76, .last_write = 512, .received_bytes = 600, .written_bytes = 512,
+        .resolved_ipv4 = UINT32_C(0xc612111c)};
     cp_v3_transport_clear_response(&diagnostic);
     assert(!diagnostic.complete && !diagnostic.http_status && !diagnostic.body_bytes && !diagnostic.date_known && !diagnostic.server_time.utc_ms);
     assert(diagnostic.stage == CP_V3_TRANSPORT_RESPONSE_HEADERS && diagnostic.io_error == -76 && !diagnostic.dns_error && diagnostic.tls_connected == 1);
     assert(diagnostic.last_read == -76 && diagnostic.last_write == 512 && diagnostic.received_bytes == 600 && diagnostic.written_bytes == 512);
     assert(diagnostic.tls_esp_error == 33 && diagnostic.tls_stack_error == -44 && diagnostic.tls_verify_flags == 55);
+    assert(diagnostic.resolved_ipv4 == UINT32_C(0xc612111c));
     puts("v3 transport origin/path/time and fragmented bounded HTTP parser passed");
     return 0;
 }

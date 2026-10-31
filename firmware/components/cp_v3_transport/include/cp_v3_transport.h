@@ -51,6 +51,9 @@ typedef struct {
      * tls_connected is the final async connect return, with 1 meaning connected. */
     int32_t io_error, dns_error, tls_connected, last_read, last_write;
     uint32_t received_bytes, written_bytes;
+    /* DNS diagnostic only: a.b.c.d -> (a<<24)|(b<<16)|(c<<8)|d.
+     * Zero means unresolved/0.0.0.0. Never used to select or pin a destination. */
+    uint32_t resolved_ipv4;
 } cp_v3_transport_response_t;
 
 /* One application task exclusively owns start/request/time/stop. It must stop

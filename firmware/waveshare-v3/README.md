@@ -22,6 +22,27 @@ Without either explicit flag the runner accepts only RFC1918 LAN IPv4 origins.
 Every actual network request and control ACK remains board-owned; policy gates
 and credential enrollment are independent of this destination permission.
 
+Startup registration freezes its capability body, sequence and uptime once.
+Transient failures permit at most three exact attempts through the ordinary
+charged request path, with1s/2s backoff and the same15s configured deadline.
+Stop, preflight/budget failures, explicit certificate-verification flags and
+non-retryable server errors stop this exchange. The SDK may finish a socket
+`select` after the outer deadline, so this is an attempt bound rather than a
+hard48s wall-clock guarantee. A successful HTTP reply still requires the strict
+registration receipt check before requesting any policy.
+
+Failure logs expose only numeric stage/timing, DNS result/resolved IPv4, TLS connect result,
+I/O/read/write counts and TLS error/verification flags. Transport stage2 covers
+both TCP connection and TLS handshake; it is not proof that either completed.
+For the pinned ESP-IDF5.5.3 MbedTLS implementation, `cfg.common_name` supplies
+the hostname to `mbedtls_ssl_set_hostname`, retaining both SNI and certificate
+hostname checks while TCP connects to a freshly resolved address. The logs
+include the resolved IPv4 only as an unsigned diagnostic (`a.b.c.d` becomes
+`(a<<24)|(b<<16)|(c<<8)|d`), to distinguish fake/private/public DNS answers; it
+never controls routing or pins an address. They omit SSID, device identity,
+credentials and request/response contents. A Mac HTTPS pass is separate from
+board connectivity.
+
 The first implementation applies one real small-statistics policy per boot:
 30/60-second windows, 5-second bins, capacity up to512, and only
 `cp-v3-stats/1` / `unclassified-v1`. All retained address/type keys are unknown;

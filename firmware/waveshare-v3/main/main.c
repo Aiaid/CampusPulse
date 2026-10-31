@@ -14,6 +14,7 @@
 #include "runtime_lifecycle.h"
 #include "runtime_budget.h"
 #include "runtime_upload.h"
+#include "runtime_registration.h"
 #include <sys/stat.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -399,15 +400,37 @@ static bool request_mode(cp_v3_http_method_t method,const char *path,const void 
         xSemaphoreTake(s_tf,portMAX_DELAY);bool charged=uplink_charge(bytes);xSemaphoreGive(s_tf);
         if(!charged){s_upload_failures++;ESP_LOGW(TAG,"uplink_budget_denied no_http=1");return false;}
     }
+    uint64_t started=monotonic_ms();
     esp_err_t e=receipt_only?cp_v3_transport_request_receipt_only(method,path,body,bytes,s_reply,CP_V3_TRANSPORT_RESPONSE_MAX,r):
         cp_v3_transport_request(method,path,body,bytes,s_reply,CP_V3_TRANSPORT_RESPONSE_MAX,r);
     if(e!=ESP_OK||!r->complete||r->http_status<200||r->http_status>=300){
         if(e==ESP_OK&&r->complete)s_error_code=edge_error_code(s_reply,r->body_bytes,&s_error_retryable);
-        s_upload_failures++;ESP_LOGW(TAG,"request_failed error=%ld status=%d stage=%u code=%s retryable=%u",(long)e,r->http_status,(unsigned)r->stage,s_error_code,(unsigned)s_error_retryable);return false;
+        s_upload_failures++;
+        ESP_LOGW(TAG,"request_failed error=%ld status=%d stage=%u retryable=%u elapsed_ms=%llu dns=%ld resolved_ipv4=%lu tls_connected=%ld io=%ld last_read=%ld last_write=%ld rx=%lu tx=%lu tls_esp_error=%ld tls_stack_error=%ld tls_verify_flags=%ld",
+            (long)e,r->http_status,(unsigned)r->stage,(unsigned)s_error_retryable,(unsigned long long)(monotonic_ms()-started),
+            (long)r->dns_error,(unsigned long)r->resolved_ipv4,(long)r->tls_connected,(long)r->io_error,(long)r->last_read,(long)r->last_write,
+            (unsigned long)r->received_bytes,(unsigned long)r->written_bytes,(long)r->tls_esp_error,(long)r->tls_stack_error,(long)r->tls_verify_flags);
+        return false;
     }return true;
 }
 static bool request(cp_v3_http_method_t method,const char *path,const void *body,size_t bytes,cp_v3_transport_response_t *r) {
     return request_mode(method,path,body,bytes,r,false);
+}
+static bool registration_stopped(void *ctx) { (void)ctx; return s_stop; }
+static bool registration_attempt(void *ctx,const void *body,size_t bytes,unsigned attempt,bool *retryable) {
+    cp_v3_transport_response_t *r=ctx;
+    if(attempt)s_retries++;
+    ESP_LOGI(TAG,"registration_attempt=%u body_bytes=%u",attempt+1,(unsigned)bytes);
+    bool okay=request(CP_V3_HTTP_POST,"/api/v3/device/capabilities",body,bytes,r);
+    /* Budget/preflight failure (IDLE) or explicit certificate-verification
+     * failure cannot benefit from another startup request. */
+    *retryable=!okay&&s_error_retryable&&r->stage!=CP_V3_TRANSPORT_IDLE&&!r->tls_verify_flags;
+    return okay;
+}
+static bool registration_wait(void *ctx,uint32_t delay_ms) {
+    (void)ctx;
+    while(delay_ms&&!s_stop){uint32_t step=delay_ms<100?delay_ms:100;vTaskDelay(pdMS_TO_TICKS(step));delay_ms-=step;}
+    return !s_stop;
 }
 static bool control_match(void *ctx,const cp_v3_expected_t *e,const void *body,size_t bytes,const void *receipt,size_t length) {
     (void)ctx;return cp_v3_control_match_frozen_receipt(s_workspace,&e->scope,body,bytes,receipt,length,cp_v3_transport_sha256,NULL)==CP_V3_CONTROL_OK;
@@ -606,7 +629,8 @@ static bool run(void) {
     if(!bytes||cp_v3_control_init(s_control,s_workspace,s_node,s_boot,s_network_body,bytes,t,cp_v3_transport_sha256,NULL)!=CP_V3_CONTROL_OK)return false;
     const char *body;if(cp_v3_control_registration(s_control,1,t.mono_ms,&body,&bytes)!=CP_V3_CONTROL_OK)return false;
     cp_v3_transport_response_t r;phase("REGISTER CAPS");
-    if(!request(CP_V3_HTTP_POST,"/api/v3/device/capabilities",body,bytes,&r)||!current(&t)||cp_v3_control_registration_receipt(s_control,s_reply,r.body_bytes,t)!=CP_V3_CONTROL_OK)return false;
+    edge_registration_io_t registration={&r,registration_stopped,registration_attempt,registration_wait};
+    if(!edge_registration_exchange(&registration,body,bytes)||!current(&t)||cp_v3_control_registration_receipt(s_control,s_reply,r.body_bytes,t)!=CP_V3_CONTROL_OK)return false;
     if(!replay_historical_controls())return false;
     char path[128];snprintf(path,sizeof path,"/api/v3/device/config?boot_id=%s",s_boot);phase("WAIT POLICY");bool offered=false;
     for(unsigned i=0;i<180&&!s_stop;i++){

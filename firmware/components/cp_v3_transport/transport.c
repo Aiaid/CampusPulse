@@ -269,6 +269,8 @@ static esp_err_t request_mode(cp_v3_http_method_t method, const char *path,
     char address[16]; esp_err_t result = resolve(address, deadline);
     out->dns_error = result;
     if (result != ESP_OK) { out->io_error = result; return result; }
+    ip4_addr_t resolved;
+    if (ip4addr_aton(address, &resolved)) out->resolved_ipv4 = lwip_ntohl(ip4_addr_get_u32(&resolved));
     out->stage = CP_V3_TRANSPORT_TLS;
     esp_tls_t *tls = esp_tls_init();
     if (!tls) { out->io_error = ESP_ERR_NO_MEM; return ESP_ERR_NO_MEM; }
