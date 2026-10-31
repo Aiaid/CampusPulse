@@ -91,6 +91,17 @@ bool v3_fields(cp_v3_control_workspace_t *w, int at, const char *names) {
     }
     return actual == expected;
 }
+bool v3_fields_optional(cp_v3_control_workspace_t *w,int at,const char *required,const char *optional) {
+    char names[1024];size_t n=strlen(required);if(n>=sizeof names)return false;memcpy(names,required,n+1);
+    for(const char *p=optional;*p;){char name[48];size_t used=0;
+        while(*p&&*p!=' '){if(used+1>=sizeof name)return false;name[used++]=*p++;}name[used]=0;if(*p)++p;
+        if(v3_field(w,at,name)>=0){if(n+used+2>sizeof names)return false;names[n++]=' ';memcpy(names+n,name,used+1);n+=used;}}
+    return v3_fields(w,at,names);
+}
+bool v3_body_hash(cp_v3_sha256_fn sha,void *ctx,const void *body,size_t length,char out[65]) {
+    uint8_t hash[32];if(!sha||!body||!length||!sha(ctx,body,length,hash))return false;
+    static const char hex[]="0123456789abcdef";for(unsigned i=0;i<32;++i){out[2*i]=hex[hash[i]>>4];out[2*i+1]=hex[hash[i]&15];}out[64]=0;return true;
+}
 bool v3_equal(cp_v3_control_workspace_t *w, int at, const char *value) {
     return v3_is(w, at, V3_STRING) && (size_t)(w->tokens[at].end-w->tokens[at].start) == strlen(value) &&
         !memcmp(w->input+w->tokens[at].start, value, strlen(value));

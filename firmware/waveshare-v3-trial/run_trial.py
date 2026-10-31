@@ -18,6 +18,17 @@ def read_private(path):
     return json.loads(path.read_text())
 
 
+def validate_trial_endpoint(backend):
+    """The historical per-address feature runner remains isolated-only."""
+    origin = backend.get('endpoint')
+    match = re.fullmatch(r'https://([a-z0-9.-]+)(?::([1-9][0-9]{0,4}))?', origin or '')
+    if not match or (match[2] and int(match[2]) > 65535):
+        raise ValueError('invalid isolated HTTPS endpoint')
+    production_host = 'pulse.anend.net'  # CP_API_ORIGIN; checked by the host regression.
+    if match[1] == production_host or match[1].endswith('.' + production_host):
+        raise ValueError('historical feature runner cannot target production')
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--port', required=True)
@@ -28,6 +39,7 @@ def main():
     os.chmod(directory, 0o700)
     backend = read_private(directory / 'backend-bootstrap.json')
     wifi = read_private(directory / 'wifi.json')
+    validate_trial_endpoint(backend)
     port = serial.Serial(port=None, baudrate=115200, timeout=.2)
     port.dtr = False
     port.rts = False

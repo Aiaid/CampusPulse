@@ -161,6 +161,7 @@ esp_err_t cp_v3_transport_stop(void) {
 esp_err_t cp_v3_transport_start(const cp_settings_t *settings, const cp_v3_transport_config_t *config) {
     cp_v3_origin_t origin; cp_v3_time_t current;
     if (!settings || !config || !cp_settings_validate(settings) || !cp_v3_transport_origin(config->origin, &origin) ||
+        !cp_v3_transport_origin_allowed(config->origin, config->server_ca_pem != NULL) ||
         config->wifi_timeout_ms < 1000 || config->wifi_timeout_ms > 60000 ||
         config->request_timeout_ms < 1000 || config->request_timeout_ms > 30000 ||
         !config->server_clock_error_ms || config->server_clock_error_ms > 3000 ||
@@ -250,13 +251,14 @@ static esp_err_t write_all(esp_tls_t *tls, const void *bytes, size_t n, uint64_t
     }
     return n ? cancelled_or_timeout() : ESP_OK;
 }
-esp_err_t cp_v3_transport_request(cp_v3_http_method_t method, const char *path,
+static esp_err_t request_mode(cp_v3_http_method_t method, const char *path,
     const void *body, size_t length, char *response, size_t capacity,
-    cp_v3_transport_response_t *out) {
+    cp_v3_transport_response_t *out,bool receipt_only) {
     if (out) memset(out, 0, sizeof *out);
     if (response && capacity) response[0] = 0;
     if (!out || !response || !capacity || capacity > CP_V3_TRANSPORT_RESPONSE_MAX + 1u ||
-        !cp_v3_transport_path(method, path) || (!body && length) || length > CP_V3_TRANSPORT_REQUEST_MAX ||
+        !cp_v3_transport_path(method, path) || (receipt_only&&!cp_v3_transport_receipt_only_path(method,path)) ||
+        (!body && length) || length > CP_V3_TRANSPORT_REQUEST_MAX ||
         (method == CP_V3_HTTP_GET && length) || (method == CP_V3_HTTP_POST && !length)) return ESP_ERR_INVALID_ARG;
     if (!owner() || !active() || !s_wifi_initialized || !__atomic_load_n(&s_link, __ATOMIC_ACQUIRE)) return ESP_ERR_INVALID_STATE;
     cp_v3_time_t current;
@@ -297,9 +299,10 @@ esp_err_t cp_v3_transport_request(cp_v3_http_method_t method, const char *path,
     }
     int n = snprintf(headers, sizeof headers, "%s %s HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer %s\r\n"
         "Accept: application/json\r\nAccept-Encoding: identity\r\nConnection: close\r\n"
-        "Content-Type: application/json\r\nContent-Length: %u\r\n%s%s%s\r\n",
+        "Content-Type: application/json\r\nContent-Length: %u\r\n%s%s%s%s\r\n",
         method == CP_V3_HTTP_GET ? "GET" : "POST", path, s_origin.authority, s_token, (unsigned)length,
-        method == CP_V3_HTTP_POST ? "X-Body-SHA256: " : "", hash, method == CP_V3_HTTP_POST ? "\r\n" : "");
+        method == CP_V3_HTTP_POST ? "X-Body-SHA256: " : "", hash, method == CP_V3_HTTP_POST ? "\r\n" : "",
+        receipt_only?"X-Receipt-Only: 1\r\n":"");
     if (n <= 0 || (size_t)n >= sizeof headers) { wipe(headers, sizeof headers); result = ESP_ERR_INVALID_SIZE; goto done; }
     out->stage = CP_V3_TRANSPORT_REQUEST_HEADERS;
     result = write_all(tls, headers, (size_t)n, deadline, out); wipe(headers, sizeof headers);
@@ -350,4 +353,12 @@ done:
     }
     (void)esp_tls_conn_destroy(tls);
     return result;
+}
+esp_err_t cp_v3_transport_request(cp_v3_http_method_t method,const char *path,
+    const void *body,size_t length,char *response,size_t capacity,cp_v3_transport_response_t *out) {
+    return request_mode(method,path,body,length,response,capacity,out,false);
+}
+esp_err_t cp_v3_transport_request_receipt_only(cp_v3_http_method_t method,const char *path,
+    const void *body,size_t length,char *response,size_t capacity,cp_v3_transport_response_t *out) {
+    return request_mode(method,path,body,length,response,capacity,out,true);
 }

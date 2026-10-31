@@ -94,3 +94,6 @@ cp_v3_result_t cp_v3_status_body(const cp_v3_scope_t *, const cp_v3_status_t *, 
  * a reviewed parser extension instead of optimistic acceptance.
  */
 bool cp_v3_receipt_matches(const void *, size_t, const cp_v3_expected_t *);
+/* Independent compact statistics route: new receipt schema/custody, only
+ * window_statistics/candidate_events/node_status. Legacy matcher unchanged. */
+bool cp_v3_statistics_receipt_matches(const void *,size_t,const cp_v3_expected_t *);

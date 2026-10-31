@@ -53,6 +53,14 @@ subset requires `local_raw=off`; no full-raw uploader is implemented here.
 
 ## Reproduce in an isolated environment
 
+This historical per-identifier feature runner remains isolated-only and rejects
+the production host before opening serial. The user's later production release
+authorization applies to the selected small-statistics collector documented in
+[`firmware/waveshare-v3/`](../waveshare-v3/README.md), whose host runner requires
+`--allow-production` and system CA verification. The shared USB parser and
+transport retain strict origin validation; this historical record does not
+establish acceptance against the production deployment.
+
 Activate ESP-IDF 5.5.3 and its S3 toolchain, then run `bash build.sh` with pinned
 LVGL 9.5.0 (`RAW_LVGL_PATH` can select the existing managed component). The build
 and verifier produce separate images and never access a device.

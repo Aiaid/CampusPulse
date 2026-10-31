@@ -10,11 +10,12 @@
 #define CP_V3_TRANSPORT_RESPONSE_MAX 32768u
 
 typedef struct {
-    /* Explicit isolated origin: https://host[:port], no path/userinfo/query.
-     * Production CP_API_ORIGIN is rejected. settings.api_origin is never used. */
+    /* Explicit HTTPS origin, no path/userinfo/query. Production accepts only
+     * canonical CP_API_ORIGIN with implicit port 443. settings.api_origin is unused. */
     const char *origin;
     /* NULL selects the ESP certificate bundle. Otherwise a NUL-terminated PEM
-     * CA is required. CA pointers remain valid until stop. No insecure option. */
+     * CA is required for isolated servers only. Production requires NULL.
+     * CA pointers remain valid until stop. No insecure option. */
     const char *server_ca_pem;
     /* PEAP requires explicit CA and expected RADIUS certificate domain. */
     const char *eap_ca_pem, *eap_domain;
@@ -25,6 +26,10 @@ typedef struct {
     uint32_t request_timeout_ms; /* 1000..30000, whole DNS/TCP/TLS/HTTP attempt */
     uint32_t server_clock_error_ms; /* 1..3000; declared server-clock error bound */
 } cp_v3_transport_config_t;
+
+/* Pure USB preflight: validates origin syntax and production's bundle-only rule.
+ * It performs no DNS/TLS and grants no policy or collection authority. */
+bool cp_v3_transport_origin_allowed(const char *origin, bool custom_ca);
 
 typedef enum { CP_V3_HTTP_GET, CP_V3_HTTP_POST } cp_v3_http_method_t;
 typedef enum {
@@ -53,6 +58,12 @@ typedef struct {
  * retries or queue reclamation. The caller owns frozen request bytes/receipts. */
 esp_err_t cp_v3_transport_start(const cp_settings_t *, const cp_v3_transport_config_t *);
 esp_err_t cp_v3_transport_request(cp_v3_http_method_t, const char *path,
+    const void *body, size_t length, char *response, size_t capacity,
+    cp_v3_transport_response_t *result);
+/* Historical control recovery only. Adds X-Receipt-Only:1 to exact ACK/lease
+ * POSTs, never registration, config reads or statistics. A missing committed
+ * receipt is a server conflict, not permission to create a new ACK/lease. */
+esp_err_t cp_v3_transport_request_receipt_only(cp_v3_http_method_t, const char *path,
     const void *body, size_t length, char *response, size_t capacity,
     cp_v3_transport_response_t *result);
 esp_err_t cp_v3_transport_time(cp_v3_time_t *);

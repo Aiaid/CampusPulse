@@ -25,14 +25,34 @@ int main(void) {
     assert(cp_v3_transport_origin("https://v3-test.example:8443", &origin));
     assert(!strcmp(origin.host, "v3-test.example") && !strcmp(origin.authority, "v3-test.example:8443") && origin.port == 8443);
     assert(cp_v3_transport_origin("https://192.0.2.4", &origin) && origin.port == 443);
+    assert(cp_v3_transport_origin(CP_API_ORIGIN, &origin) && origin.port == 443);
+    assert(!strcmp(origin.host, &CP_API_ORIGIN[sizeof("https://") - 1]));
+    assert(cp_v3_transport_origin_allowed(CP_API_ORIGIN, false));
+    assert(!cp_v3_transport_origin_allowed(CP_API_ORIGIN, true));
+    assert(cp_v3_transport_origin_allowed("https://v3-test.example:8443", true));
+    assert(cp_v3_transport_origin_allowed("https://v3-test.example:8443", false));
+    assert(!cp_v3_transport_origin_allowed(NULL, false));
     const char *bad[] = {"http://example.test", "https://", "https://u:p@example.test", "https://example.test/", "https://example.test?q=1",
         "https://example.test#x", "https://example.test:0", "https://example.test:65536", "https://example.test:01", "https://example.test:",
         "https://example.test:443/", "https://example.test\r\nX:1", "https://.example", "https://example.", "https://a..b", "https://-bad.test",
-        "https://bad-.test", "https://pulse.anend.net", "https://pulse.anend.net:443", "https://pulse.anend.net:8443", "https://EXAMPLE.TEST"};
+        "https://bad-.test", CP_API_ORIGIN ":443", CP_API_ORIGIN ":8443", CP_API_ORIGIN "/", CP_API_ORIGIN ".",
+        "https://test.pulse.anend.net", "https://PULSE.ANEND.NET", "https://EXAMPLE.TEST"};
     for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; i++) assert(!cp_v3_transport_origin(bad[i], &origin));
     assert(cp_v3_transport_path(CP_V3_HTTP_POST, "/api/v3/ingest"));
     assert(cp_v3_transport_path(CP_V3_HTTP_POST, "/api/v3/device/capabilities"));
     assert(cp_v3_transport_path(CP_V3_HTTP_POST, "/api/v3/device/config/ack"));
+    assert(cp_v3_transport_path(CP_V3_HTTP_POST, "/api/v3/device/lease"));
+    assert(cp_v3_transport_path(CP_V3_HTTP_POST, "/api/v3/statistics/ingest"));
+    assert(cp_v3_transport_receipt_only_path(CP_V3_HTTP_POST,"/api/v3/device/config/ack"));
+    assert(cp_v3_transport_receipt_only_path(CP_V3_HTTP_POST,"/api/v3/device/lease"));
+    const char *not_recovery[]={"/api/v3/device/capabilities","/api/v3/statistics/ingest","/api/v3/ingest",
+        "/api/v3/device/config/ack?x=1","/api/v3/device/lease/","/api/v3/device/lease\r\nX: bad"};
+    for(unsigned i=0;i<sizeof not_recovery/sizeof not_recovery[0];i++)
+        assert(!cp_v3_transport_receipt_only_path(CP_V3_HTTP_POST,not_recovery[i]));
+    assert(!cp_v3_transport_receipt_only_path(CP_V3_HTTP_GET,"/api/v3/device/lease"));
+    assert(!cp_v3_transport_receipt_only_path(CP_V3_HTTP_POST,NULL));
+    assert(!cp_v3_transport_path(CP_V3_HTTP_GET, "/api/v3/statistics/ingest"));
+    assert(!cp_v3_transport_path(CP_V3_HTTP_POST, "/api/v3/statistics/ingest?raw=1"));
     assert(cp_v3_transport_path(CP_V3_HTTP_GET, "/api/v3/device/config?boot_id=12345678-1234-4123-8123-123456789abc"));
     assert(!cp_v3_transport_path(CP_V3_HTTP_GET, "/api/v3/ingest"));
     assert(!cp_v3_transport_path(CP_V3_HTTP_GET, "/api/v3/device/config?boot_id=12345678-1234-4123-8123-123456789abc&x=1"));

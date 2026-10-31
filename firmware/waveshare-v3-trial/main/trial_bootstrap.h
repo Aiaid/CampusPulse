@@ -5,6 +5,10 @@
 typedef struct {
     cp_settings_t settings;
     char origin[128];
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+    /* Optional isolated-server test CA over USB; forbidden at CP_API_ORIGIN. */
+    char server_ca_pem[4097];
+#endif
     cp_v3_time_t clock_seed;
     unsigned max_windows;
 } trial_bootstrap_t;

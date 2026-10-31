@@ -5,6 +5,20 @@
 #define CP_V3_CONTROL_CAP_MAX 4096u
 #define CP_V3_CONTROL_ACK_MAX 2048u
 #define CP_V3_CONTROL_TOKENS 512u
+#define CP_V3_SMALL_PRODUCER "cp-v3-small/1"
+typedef enum { CP_V3_TEMPORAL_REPORT_OFF, CP_V3_TEMPORAL_REPORT_TERMINAL,
+    CP_V3_TEMPORAL_REPORT_REVISIONS } cp_v3_control_report_mode_t;
+typedef struct {
+    bool rolling;
+    uint32_t slice_ms, history_ms, max_event_ms, gap_ms, min_update_ms;
+    uint16_t max_tracks, max_open_events;
+    cp_v3_control_report_mode_t report_mode;
+} cp_v3_control_temporal_t;
+typedef struct {
+    bool enabled;
+    uint64_t max_segment_bytes, max_total_bytes, min_free_bytes;
+    uint32_t sync_interval_ms;
+} cp_v3_control_raw_t;
 typedef enum {
     CP_V3_CONTROL_OK, CP_V3_CONTROL_INVALID, CP_V3_CONTROL_UNSUPPORTED,
     CP_V3_CONTROL_HASH_MISMATCH, CP_V3_CONTROL_BINDING_MISMATCH,
@@ -32,6 +46,14 @@ typedef struct {
     uint32_t retry_min_ms, retry_max_ms, retry_max_attempts;
     uint32_t lease_ms, after_window_seq, after_segment_seq;
     uint64_t not_before_utc_ms, expires_utc_ms, accept_until_utc_ms;
+    /* Small statistics never narrows capacity through legacy evidence limits. */
+    bool statistics, collection_enabled, mobile_research, candidate_events, drain_frozen;
+    uint16_t stats_max_addresses;
+    uint32_t window_ms, max_body_bytes;
+    uint64_t window_reserve_bytes, event_reserve_bytes;
+    uint32_t window_reserve_items, event_reserve_items;
+    cp_v3_control_temporal_t temporal;
+    cp_v3_control_raw_t local_raw;
 } cp_v3_trial_policy_t;
 typedef enum { CP_V3_APPLY_OK, CP_V3_APPLY_UNSUPPORTED, CP_V3_APPLY_BOUNDARY_FAILED,
     CP_V3_APPLY_RESOURCE_EXHAUSTED, CP_V3_APPLY_STORAGE_FAILED, CP_V3_APPLY_INTERNAL_ERROR } cp_v3_apply_result_t;
@@ -42,6 +64,7 @@ typedef enum { CP_V3_APPLY_OK, CP_V3_APPLY_UNSUPPORTED, CP_V3_APPLY_BOUNDARY_FAI
 typedef cp_v3_apply_result_t (*cp_v3_actual_apply_fn)(void *, const cp_v3_trial_policy_t *, cp_v3_boundary_t *);
 typedef struct {
     bool collection, uplink, preserve_unacknowledged;
+    bool local_raw, frozen_only;
     uint64_t deadline_utc_ms, deadline_mono_ms;
     cp_v3_control_result_t reason;
 } cp_v3_control_permissions_t;
@@ -83,6 +106,20 @@ typedef struct {
     cp_v3_control_workspace_t *workspace;
     cp_v3_sha256_fn sha256;
     void *hash_context;
+    bool small_statistics, capability_events, capability_local_raw, capability_temporal;
+    uint32_t capability_body_bytes, capability_raw_sync_ms;
+    uint64_t capability_raw_segment_bytes;
+    cp_v3_control_temporal_t temporal_cap;
+    uint8_t capability_slices, capability_report_modes;
+    char lease_json[CP_V3_CONTROL_ACK_MAX];
+    size_t lease_length;
+    uint32_t contact_seq, pending_contact_seq, span_seq;
+    uint64_t contact_uptime_ms, pending_uptime_ms, lease_server_utc_ms;
+    uint64_t capture_span_start_utc_ms;
+    bool lease_pending, lease_contiguous;
+    uint64_t trusted_utc_lower_ms;
+    uint64_t staged_from_generation;
+    uint64_t last_applied_generation;
 } cp_v3_control_t;
 
 cp_v3_control_result_t cp_v3_control_init(cp_v3_control_t *, cp_v3_control_workspace_t *,
@@ -100,4 +137,25 @@ const char *cp_v3_control_ack_bytes(const cp_v3_control_t *, size_t *length);
 cp_v3_control_result_t cp_v3_control_ack_receipt(cp_v3_control_t *, const void *json,
     size_t length, cp_v3_time_t now);
 cp_v3_control_permissions_t cp_v3_control_permissions(cp_v3_control_t *, cp_v3_time_t now);
+/* Explicit lease only. Retries return identical bytes; a replay never extends
+ * authority. A fresh receipt after a gap starts a new capture span. */
+cp_v3_control_result_t cp_v3_control_lease_request(cp_v3_control_t *, uint32_t contact_seq,
+    uint64_t uptime_ms, const char **bytes, size_t *length);
+cp_v3_control_result_t cp_v3_control_lease_receipt(cp_v3_control_t *, const void *, size_t, cp_v3_time_t);
+/* Caller owns separate candidate state. Stage does not replace active policy.
+ * Activation requires closed boundary and invokes real allocation while paused.
+ * Frozen durable queues and boot-global stream sequences are caller-owned and
+ * MUST survive activation. Candidate and active share only parsing workspace. */
+cp_v3_control_result_t cp_v3_control_stage(cp_v3_control_t *, cp_v3_control_t *candidate,
+    const void *config_response, size_t, cp_v3_time_t);
+cp_v3_control_result_t cp_v3_control_activate_staged(cp_v3_control_t *, cp_v3_control_t *candidate,
+    cp_v3_time_t, cp_v3_boundary_t, uint32_t apply_seq, cp_v3_actual_apply_fn, void *);
+/* Caller has stopped scanning and closed/censored observations before supplying
+ * a new trusted UTC map. Strictly advancing epoch; no lease renewal. */
+cp_v3_control_result_t cp_v3_control_clock_boundary(cp_v3_control_t *, cp_v3_time_t, cp_v3_boundary_t);
+/* Pure historical small-control verifier. Exact body SHA and every request
+ * field must match committed receipt; this never grants observation authority. */
+cp_v3_control_result_t cp_v3_control_match_frozen_receipt(cp_v3_control_workspace_t *,
+    const cp_v3_scope_t *, const void *body, size_t body_length,
+    const void *receipt, size_t receipt_length, cp_v3_sha256_fn, void *);
 void cp_v3_control_clear(cp_v3_control_t *);

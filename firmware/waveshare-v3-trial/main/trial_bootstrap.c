@@ -1,4 +1,5 @@
 #include "trial_bootstrap.h"
+#include "cp_v3_transport.h"
 #include "cJSON.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -7,6 +8,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <math.h>
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+#include "esp_heap_caps.h"
+#endif
 
 static void wipe(void *data, size_t size) {
     volatile unsigned char *p = data; while (size--) *p++ = 0;
@@ -27,14 +31,20 @@ static bool integer(cJSON *root, const char *key, double min, double max, uint64
     *out = (uint64_t)v->valuedouble; return true;
 }
 static bool parse(const char *json, const char *node, const char *boot, trial_bootstrap_t *out) {
+    if(strstr(json,"\\u0000")){trial_bootstrap_clear(out);return false;}
     const char *end = NULL;
     cJSON *root = cJSON_ParseWithOpts(json, &end, true);
-    bool ok = cJSON_IsObject(root), seen[11] = {0};
-    static const char *keys[] = {"node_id","boot_id","origin","device_token","ssid","password","utc_ms","uncertainty_ms","max_windows","security","anchor_mono_ms"};
+    bool ok = cJSON_IsObject(root), seen[12] = {0};
+    static const char *keys[] = {"node_id","boot_id","origin","device_token","ssid","password","utc_ms","uncertainty_ms","max_windows","security","anchor_mono_ms"
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+        ,"server_ca_pem"
+#endif
+    };
+    const unsigned key_count=sizeof keys/sizeof keys[0];
     for (cJSON *v = ok ? root->child : NULL; v; v = v->next) {
         if (!v->string) { ok=false; break; }
-        unsigned k; for (k = 0; k < 11 && strcmp(v->string, keys[k]); ++k) {}
-        if (k == 11 || seen[k]) { ok = false; break; } seen[k] = true;
+        unsigned k; for (k = 0; k < key_count && strcmp(v->string, keys[k]); ++k) {}
+        if (k == key_count || seen[k]) { ok = false; break; } seen[k] = true;
     }
     for (unsigned k = 0; k < 11; ++k) if (!seen[k]) ok = false;
     char given_boot[37] = {0}, security[16] = {0}; uint64_t utc = 0, uncertainty = 0, windows = 0, anchor=0;
@@ -47,15 +57,31 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
         text(root,"security",security,sizeof security,false) && !strcmp(security,"personal") &&
         strlen(out->settings.password) >= 8 &&
         integer(root,"utc_ms",946684800000.,4102444799000.,&utc) &&
-        integer(root,"uncertainty_ms",1,2000,&uncertainty) && integer(root,"max_windows",1,3,&windows) &&
+        integer(root,"uncertainty_ms",1,2000,&uncertainty) &&
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+        integer(root,"max_windows",0,60,&windows) &&
+#else
+        integer(root,"max_windows",1,3,&windows) &&
+#endif
         integer(root,"anchor_mono_ms",0,9007199254740991.,&anchor);
     uint64_t mono=(uint64_t)esp_timer_get_time()/1000u;
     if(ok)ok=anchor<=mono&&mono-anchor<=30000;
     if(ok){uint64_t age=mono-anchor;utc+=age;uncertainty+=(age*500u+999999u)/1000000u;ok=uncertainty<=2000;}
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+    cJSON *ca=cJSON_GetObjectItemCaseSensitive(root,"server_ca_pem");
+    if(ok&&ca&&!cJSON_IsNull(ca)){
+        ok=cJSON_IsString(ca)&&ca->valuestring&&strlen(ca->valuestring)<sizeof out->server_ca_pem&&
+            strstr(ca->valuestring,"-----BEGIN CERTIFICATE-----")&&strstr(ca->valuestring,"-----END CERTIFICATE-----");
+        if(ok){for(const char *p=ca->valuestring;*p;++p)if(((unsigned char)*p<32&&*p!='\n'&&*p!='\r')||(unsigned char)*p>126)ok=false;}
+        if(ok)snprintf(out->server_ca_pem,sizeof out->server_ca_pem,"%s",ca->valuestring);
+    }
+#endif
+    if (ok) ok = cp_v3_transport_origin_allowed(out->origin,
+        cJSON_GetObjectItemCaseSensitive(root,"server_ca_pem") != NULL);
     if (ok) {
         out->settings.version = CP_SETTINGS_VERSION; out->settings.wifi_security = CP_WIFI_PERSONAL;
-        /* Shared settings shape validates its legacy field. The independent
-         * v3 transport ignores this field and rejects that production origin. */
+        /* Shared settings validates its legacy field. The independent V3
+         * transport uses the explicit, strictly validated bootstrap origin. */
         snprintf(out->settings.api_origin,sizeof out->settings.api_origin,"%s",CP_API_ORIGIN);
         out->clock_seed = (cp_v3_time_t){.utc_ms=utc,.mono_ms=mono,.clock_epoch=1,.uncertainty_ms=(uint32_t)uncertainty};
         out->max_windows = (unsigned)windows;
@@ -66,21 +92,35 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
     return ok;
 }
 esp_err_t trial_bootstrap_wait(const char *node, const char *boot, trial_bootstrap_t *out, bool (*cancelled)(void)) {
-    static char line[4096]; size_t used = 0; bool overflow = false;
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+    size_t capacity=8192;char *line=heap_caps_calloc(1,capacity,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if(!line)return ESP_ERR_NO_MEM;
+#else
+    static char storage[4096];char *line=storage;size_t capacity=sizeof storage;
+#endif
+    size_t used = 0; bool overflow = false;
     trial_bootstrap_clear(out); puts("V3 READY"); fflush(stdout);
     for (;;) {
-        if(cancelled&&cancelled()){wipe(line,sizeof line);trial_bootstrap_clear(out);return ESP_ERR_INVALID_STATE;}
+        if(cancelled&&cancelled()){wipe(line,capacity);trial_bootstrap_clear(out);
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+            heap_caps_free(line);
+#endif
+            return ESP_ERR_INVALID_STATE;}
         unsigned char byte; ssize_t n = read(STDIN_FILENO,&byte,1);
         if (n != 1) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
         if (byte == '\r') continue;
         if (byte != '\n') { if (byte < 32 || byte > 126) overflow=true;
-            if (used + 1 < sizeof line && !overflow) line[used++] = (char)byte; else overflow=true; continue; }
+            if (used + 1 < capacity && !overflow) line[used++] = (char)byte; else overflow=true; continue; }
         line[used] = 0;
         if (!overflow && !strncmp(line,"HELLO ",6) && hello_id(line+6)) {
             printf("V3 HELLO {\"node_id\":\"%s\",\"boot_id\":\"%s\",\"request_id\":\"%s\",\"mono_ms\":%llu}\n",node,boot,line+6,(unsigned long long)((uint64_t)esp_timer_get_time()/1000u)); fflush(stdout);
         } else if (!overflow && !strncmp(line,"V3START ",8) && parse(line+8,node,boot,out)) {
-            wipe(line,sizeof line); puts("V3 START ACCEPTED"); fflush(stdout); return ESP_OK;
+            wipe(line,capacity);
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+            heap_caps_free(line);
+#endif
+            puts("V3 START ACCEPTED"); fflush(stdout); return ESP_OK;
         } else { puts("V3 ERR BOOTSTRAP"); fflush(stdout); }
-        wipe(line,sizeof line); used=0; overflow=false;
+        wipe(line,capacity); used=0; overflow=false;
     }
 }

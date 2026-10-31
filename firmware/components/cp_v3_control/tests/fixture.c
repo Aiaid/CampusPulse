@@ -74,6 +74,8 @@ int main(int argc,char **argv){
     assert(permission.collection&&permission.uplink&&permission.preserve_unacknowledged);
     assert(control.deadline_utc_ms==now().utc_ms+600000&&control.policy.scope.window_seq==1);
     uint64_t deadline=control.deadline_mono_ms;
+    uint64_t horizon=deadline-now().mono_ms;
+    assert(now().utc_ms+now().uncertainty_ms+horizon+(horizon+1999)/2000<control.deadline_utc_ms);
     assert(cp_v3_control_ack_receipt(&control,reply,len,later)==CP_V3_CONTROL_OK&&deadline==control.deadline_mono_ms);
     assert(cp_v3_control_offer(&control,response,rn,later)==CP_V3_CONTROL_OK&&deadline==control.deadline_mono_ms);
     cp_v3_control_t active=control;

@@ -18,3 +18,11 @@ bool v3_hash_string(const char *);
 bool v3_date(const char *, uint64_t *);
 bool v3_canonical(cp_v3_control_workspace_t *, int, char *, size_t, size_t *);
 bool v3_digest(cp_v3_control_t *, int, char[65]);
+bool v3_small_caps(cp_v3_control_t *);
+bool v3_small_policy(cp_v3_control_t *,int,cp_v3_trial_policy_t *);
+bool v3_body_hash(cp_v3_sha256_fn,void *,const void *,size_t,char[65]);
+bool v3_fields_optional(cp_v3_control_workspace_t *,int,const char *,const char *);
+cp_v3_control_result_t v3_small_ack_receipt(cp_v3_control_t *,const void *,size_t,cp_v3_time_t);
+/* Strict UTC deadline mapped to monotonic time with the transport/board's
+ * conservative 500ppm future uncertainty growth. Never extends authority. */
+uint64_t v3_deadline_mono(cp_v3_time_t, uint64_t utc_deadline);

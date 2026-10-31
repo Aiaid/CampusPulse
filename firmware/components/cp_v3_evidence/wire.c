@@ -186,26 +186,28 @@ static bool date(const char *s) {
     unsigned limit = days[month-1] + (month == 2 && !(year % 4) && (year % 100 || !(year % 400)));
     return day <= limit;
 }
-bool cp_v3_receipt_matches(const void *bytes, size_t count, const cp_v3_expected_t *e) {
+static bool receipt_matches(const void *bytes,size_t count,const cp_v3_expected_t *e,bool statistics) {
     if (!bytes || !count || count > 4096 || !e || !cp_v3_scope_valid(&e->scope) || !cp_v3_uuid(e->batch_id) ||
         !hex(e->body_sha256, 64) || !e->seq_first || e->seq_first != e->seq_last || e->accepted_count != 1 ||
         !e->body_bytes || e->body_bytes > CP_V3_BODY_MAX || length(e->stream, sizeof e->stream) >= sizeof e->stream ||
-        (strcmp(e->stream, "feature_summaries") && strcmp(e->stream, "node_status"))) return false;
+        (statistics?(strcmp(e->stream,"window_statistics")&&strcmp(e->stream,"candidate_events")&&strcmp(e->stream,"node_status")):
+            (strcmp(e->stream,"feature_summaries")&&strcmp(e->stream,"node_status")))) return false;
     const char *names[] = {"protocol","schema","node_id","boot_id","stream","batch_id","body_sha256","policy_id","policy_sha256",
         "assignment_generation","seq_first","seq_last","accepted_count","receipt_id","received_at","expires_at","retain_until",
         "durability","custody","inference","window_completeness"};
-    const char *expected[] = {"campuspulse/3","device-ingest-receipt/3",e->scope.node_id,e->scope.boot_id,e->stream,e->batch_id,
+    const char *expected[] = {"campuspulse/3",statistics?"device-statistics-receipt/3":"device-ingest-receipt/3",e->scope.node_id,e->scope.boot_id,e->stream,e->batch_id,
         e->body_sha256,e->scope.policy_id,e->scope.policy_sha256,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-        "committed","private_source","not_performed","not_established"};
+        "committed",statistics?"small_statistics":"private_source","not_performed","not_established"};
+    unsigned fields=statistics?19:21;
     reader_t r = {.bytes = bytes, .length = count}; uint32_t found = 0;
     char times[3][25] = {{0}};
     if (!character(&r, '{')) return false;
-    for (unsigned field = 0; field < 21; ++field) {
+    for (unsigned field = 0; field < fields; ++field) {
         char name[40], value[129];
         if ((field && !character(&r, ',')) || !string(&r, name, sizeof name) || !character(&r, ':')) return false;
         unsigned index;
-        for (index = 0; index < 21 && strcmp(name, names[index]); ++index) {}
-        if (index == 21 || (found & (1u << index))) return false;
+        for (index = 0; index < fields && strcmp(name, names[index]); ++index) {}
+        if (index == fields || (found & (1u << index))) return false;
         found |= 1u << index;
         if (index >= 9 && index <= 12) {
             uint64_t v;
@@ -218,7 +220,13 @@ bool cp_v3_receipt_matches(const void *bytes, size_t count, const cp_v3_expected
             else if (strcmp(value, expected[index])) return false;
         }
     }
-    if (found != ((1u << 21)-1) || !character(&r, '}')) return false;
+    if (found != ((1u << fields)-1) || !character(&r, '}')) return false;
     space(&r);
     return r.pos == r.length && strcmp(times[0], times[1]) < 0 && strcmp(times[1], times[2]) <= 0;
+}
+bool cp_v3_receipt_matches(const void *bytes,size_t count,const cp_v3_expected_t *e) {
+    return receipt_matches(bytes,count,e,false);
+}
+bool cp_v3_statistics_receipt_matches(const void *bytes,size_t count,const cp_v3_expected_t *e) {
+    return receipt_matches(bytes,count,e,true);
 }

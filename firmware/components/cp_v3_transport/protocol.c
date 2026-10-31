@@ -13,7 +13,7 @@ static bool uuid(const char *s) {
     return true;
 }
 bool cp_v3_transport_origin(const char *s, cp_v3_origin_t *out) {
-    if (!s || !out || strnlen(s, 272) >= 272 || strncmp(s, "https://", 8) || !strcmp(s, CP_API_ORIGIN)) return false;
+    if (!s || !out || strnlen(s, 272) >= 272 || strncmp(s, "https://", 8)) return false;
     memset(out, 0, sizeof *out);
     const char *host = s + 8, *p = host;
     size_t label = 0;
@@ -35,16 +35,29 @@ bool cp_v3_transport_origin(const char *s, cp_v3_origin_t *out) {
         out->port = (uint16_t)port;
     }
     memcpy(out->authority, host, strlen(host) + 1);
-    /* An alternate port/trailing spelling must not bypass production denial. */
-    if (!strcmp(out->host, "pulse.anend.net")) return false;
+    /* Production has one canonical spelling and the implicit HTTPS port.
+     * Its subdomains cannot be treated as isolated aliases. */
+    const char *production_host = &CP_API_ORIGIN[sizeof("https://") - 1];
+    size_t production_length = strlen(production_host);
+    if ((!strcmp(out->host, production_host) && strcmp(s, CP_API_ORIGIN)) ||
+        (length > production_length && out->host[length-production_length-1] == '.' &&
+         !strcmp(out->host+length-production_length, production_host))) return false;
     return true;
+}
+bool cp_v3_transport_origin_allowed(const char *s, bool custom_ca) {
+    cp_v3_origin_t origin;
+    return cp_v3_transport_origin(s, &origin) && (!custom_ca || strcmp(s, CP_API_ORIGIN));
 }
 bool cp_v3_transport_path(cp_v3_http_method_t method, const char *s) {
     if (!s || strnlen(s, 160) >= 160) return false;
     if (method == CP_V3_HTTP_POST) return !strcmp(s, "/api/v3/ingest") ||
-        !strcmp(s, "/api/v3/device/capabilities") || !strcmp(s, "/api/v3/device/config/ack");
+        !strcmp(s, "/api/v3/device/capabilities") || !strcmp(s, "/api/v3/device/config/ack") ||
+        !strcmp(s, "/api/v3/device/lease") || !strcmp(s, "/api/v3/statistics/ingest");
     static const char prefix[] = "/api/v3/device/config?boot_id=";
     return method == CP_V3_HTTP_GET && !strncmp(s, prefix, sizeof prefix - 1) && uuid(s + sizeof prefix - 1);
+}
+bool cp_v3_transport_receipt_only_path(cp_v3_http_method_t method,const char *s) {
+    return method==CP_V3_HTTP_POST&&s&&(!strcmp(s,"/api/v3/device/config/ack")||!strcmp(s,"/api/v3/device/lease"));
 }
 bool cp_v3_transport_anchor(const cp_v3_time_t *seed, uint64_t now, cp_v3_time_t *out) {
     if (!seed || !out || seed->utc_ms < UINT64_C(1704067200000) || seed->utc_ms > UINT64_C(7258118400000) ||

@@ -13,6 +13,7 @@ typedef struct {
 } cp_v3_http_response_t;
 bool cp_v3_transport_origin(const char *, cp_v3_origin_t *);
 bool cp_v3_transport_path(cp_v3_http_method_t, const char *);
+bool cp_v3_transport_receipt_only_path(cp_v3_http_method_t, const char *);
 bool cp_v3_transport_anchor(const cp_v3_time_t *, uint64_t now, cp_v3_time_t *);
 bool cp_v3_transport_date(const char *, uint64_t *);
 void cp_v3_http_init(cp_v3_http_response_t *, char *, size_t);

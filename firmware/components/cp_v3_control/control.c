@@ -14,8 +14,21 @@ static bool date(W *w,int at,const char *key,uint64_t *out){char text[25];return
 static bool ident(W *w,int at,const char *key,char out[65]){return s(w,at,key,out,65)&&v3_id(out);}
 static uint64_t minimum(uint64_t a,uint64_t b){return a<b?a:b;}
 static bool now_valid(cp_v3_time_t now){return now.mono_ms<=V3_SAFE&&now.utc_ms>=now.uncertainty_ms&&now.utc_ms<=UINT64_C(8640000000000000)&&now.uncertainty_ms<=5000;}
+uint64_t v3_deadline_mono(cp_v3_time_t now,uint64_t deadline) {
+    if(!now_valid(now))return now.mono_ms;
+    uint64_t upper=now.utc_ms+now.uncertainty_ms;
+    if(deadline<=upper||deadline-upper<=1)return now.mono_ms;
+    /* For R=deadline-upper, d=floor((R-1)*2000/2001) guarantees
+     * d+ceil(d/2000)<R. Decompose multiplication to avoid uint64 overflow. */
+    uint64_t remaining=deadline-upper-1;
+    uint64_t delta=(remaining/2001)*2000+(remaining%2001)*2000/2001;
+    if(delta>V3_SAFE-now.mono_ms)delta=V3_SAFE-now.mono_ms;
+    return now.mono_ms+delta;
+}
 static bool current(cp_v3_control_t *c,cp_v3_time_t now){
     if(!now_valid(now)||now.mono_ms<c->last_mono_ms||now.clock_epoch!=c->clock_epoch)return false;
+    if(c->small_statistics&&now.utc_ms-now.uncertainty_ms<c->trusted_utc_lower_ms)return false;
+    if(c->small_statistics)c->trusted_utc_lower_ms=now.utc_ms-now.uncertainty_ms;
     c->last_mono_ms=now.mono_ms;return true;
 }
 static bool capability_current(cp_v3_control_t *c,cp_v3_time_t now){
@@ -32,6 +45,7 @@ static bool fields_set(W *w,int at,uint8_t *flags){
 }
 static bool caps(cp_v3_control_t *c){
     W *w=c->workspace;char text[65],boot[37];
+    if(eq(w,0,"producer_version",CP_V3_SMALL_PRODUCER))return v3_small_caps(c);
     if(!v3_fields(w,0,"schema capability_id node_id boot_id producer_version policy_schemas issued_at expires_at scanner summary features local_raw uplink queue resources")||
         !eq(w,0,"schema","device-capabilities/1")||!ident(w,0,"capability_id",text)||!eq(w,0,"node_id",c->node_id)||
         !s(w,0,"boot_id",boot,sizeof boot)||strcmp(boot,c->boot_id)||!eq(w,0,"producer_version",CP_V3_PRODUCER)||
@@ -76,6 +90,7 @@ static bool caps(cp_v3_control_t *c){
     return true;
 }
 static bool policy(cp_v3_control_t *c,int root,cp_v3_trial_policy_t *p){
+    if(c->small_statistics)return v3_small_policy(c,root,p);
     W *w=c->workspace;memset(p,0,sizeof *p);char text[65],boot[37];uint64_t number;
     if(!v3_fields(w,root,"schema protocol policy_id node_id revision assignment_generation collection local_raw evidence uplink local_queue resources custody control")||
         !eq(w,root,"schema","device-config/3")||!eq(w,root,"protocol","campuspulse/3")||
@@ -93,7 +108,7 @@ static bool policy(cp_v3_control_t *c,int root,cp_v3_trial_policy_t *p){
         !small(w,b,"window_ms",1000,c->capability_window_ms,&p->evidence.window_ms)||
         !small(w,b,"bin_ms",1000,p->evidence.window_ms,&p->bin_ms)||p->evidence.window_ms%p->bin_ms||
         p->evidence.window_ms/p->bin_ms>c->capability_bins||!small(w,b,"max_addresses",1,c->capability_addresses,&addresses))return false;
-    p->evidence.max_identifiers=(uint8_t)addresses;
+    p->evidence.max_identifiers=(uint8_t)addresses;p->window_ms=p->evidence.window_ms;p->collection_enabled=true;p->max_body_bytes=4096;
     a=f(w,root,"local_raw");if(!v3_fields(w,a,"mode")||!eq(w,a,"mode","off"))return false;
     a=f(w,root,"evidence");
     if(!v3_fields(w,a,"mode schema extractor_version population sample_every_n fields max_reports_per_window max_bytes_per_window overflow")||
@@ -167,6 +182,7 @@ cp_v3_control_result_t cp_v3_control_init(cp_v3_control_t *c,W *w,const char *no
     if(!w||!node||!boot||!v3_id(node)||!v3_uuid(boot)||!sha256||!now_valid(now)||length>=CP_V3_CONTROL_CAP_MAX)return CP_V3_CONTROL_INVALID;
     c->workspace=w;c->sha256=sha256;c->hash_context=context;strcpy(c->node_id,node);strcpy(c->boot_id,boot);
     if(!v3_parse(w,json,length)||!caps(c))return CP_V3_CONTROL_UNSUPPORTED;
+    if(c->small_statistics&&!now.clock_epoch)return CP_V3_CONTROL_INVALID;
     if(!capability_current(c,now))return CP_V3_CONTROL_NOT_CURRENT;
     if(!v3_digest(c,0,c->capability_sha256)||!v3_canonical(w,0,c->capability_json,sizeof c->capability_json,&c->capability_length))return CP_V3_CONTROL_HASH_MISMATCH;
     c->last_mono_ms=now.mono_ms;c->clock_epoch=now.clock_epoch;c->state=CP_V3_CONTROL_INITIALIZED;return CP_V3_CONTROL_OK;
@@ -210,7 +226,8 @@ cp_v3_control_result_t cp_v3_control_offer(cp_v3_control_t *c,const void *json,s
     if(!policy(c,object,&next))return CP_V3_CONTROL_UNSUPPORTED;
     uint64_t applied_generation=0;
     if(!v3_is(w,f(w,0,"applied_generation"),V3_NULL)){
-        if(!u(w,0,"applied_generation",1,V3_SAFE,&applied_generation)||applied_generation>next.scope.assignment_generation||!c->policy_length)
+        if(!u(w,0,"applied_generation",1,V3_SAFE,&applied_generation)||applied_generation>next.scope.assignment_generation||
+            (!c->policy_length&&(!c->staged_from_generation||applied_generation!=c->last_applied_generation)))
             return CP_V3_CONTROL_STATE;
     }
     if(!s(w,envelope,"policy_sha256",claimed,sizeof claimed)||!v3_hash_string(claimed)||!v3_digest(c,object,digest)||strcmp(claimed,digest))return CP_V3_CONTROL_HASH_MISMATCH;
@@ -235,7 +252,7 @@ cp_v3_control_result_t cp_v3_control_apply(cp_v3_control_t *c,cp_v3_time_t now,c
     cp_v3_trial_policy_t *p=&c->policy;uint64_t lower=now.utc_ms-now.uncertainty_ms,upper=now.utc_ms+now.uncertainty_ms;
     if(lower<p->not_before_utc_ms)return CP_V3_CONTROL_WAIT;
     if(!capability_current(c,now)||upper>=minimum(p->expires_utc_ms,minimum(p->accept_until_utc_ms,c->capability_expires_utc_ms)))return CP_V3_CONTROL_EXPIRED;
-    if(minimum(p->expires_utc_ms,c->capability_expires_utc_ms)-upper<=p->evidence.window_ms)return CP_V3_CONTROL_NOT_CURRENT;
+    if(minimum(p->expires_utc_ms,c->capability_expires_utc_ms)-upper<=p->window_ms)return CP_V3_CONTROL_NOT_CURRENT;
     if(boundary.window_open||boundary.segment_open||boundary.closed_window_seq<p->after_window_seq||boundary.closed_segment_seq<p->after_segment_seq||boundary.closed_window_seq==UINT32_MAX)return CP_V3_CONTROL_BOUNDARY;
     cp_v3_boundary_t before=boundary;
     cp_v3_apply_result_t result=apply(ctx,p,&boundary);
@@ -256,6 +273,7 @@ cp_v3_control_result_t cp_v3_control_apply(cp_v3_control_t *c,cp_v3_time_t now,c
 const char *cp_v3_control_ack_bytes(const cp_v3_control_t *c,size_t *length){if(length)*length=c?c->acknowledgement_length:0;return c&&c->acknowledgement_length?c->acknowledgement_json:NULL;}
 cp_v3_control_result_t cp_v3_control_ack_receipt(cp_v3_control_t *c,const void *json,size_t length,cp_v3_time_t now){
     if(!c||!c->acknowledgement_length||!current(c,now))return CP_V3_CONTROL_STATE;
+    if(c->small_statistics)return v3_small_ack_receipt(c,json,length,now);
     W *w=c->workspace;bool applied=c->apply_result==CP_V3_APPLY_OK;cp_v3_trial_policy_t *p=&c->policy;uint64_t at;
     const char *names=applied?"protocol boot_id policy_id policy_sha256 assignment_generation apply_seq state closed_window_seq closed_segment_seq window_open segment_open node_id received_at durability evidence":
         "protocol boot_id policy_id policy_sha256 assignment_generation apply_seq state closed_window_seq closed_segment_seq window_open segment_open error_code node_id received_at durability evidence";
@@ -275,16 +293,31 @@ cp_v3_control_result_t cp_v3_control_ack_receipt(cp_v3_control_t *c,const void *
     if(c->applied_at_utc_ms)return c->applied_at_utc_ms==at?CP_V3_CONTROL_OK:CP_V3_CONTROL_BINDING_MISMATCH;
     c->acknowledged_at_utc_ms=at;c->applied_at_utc_ms=at;c->deadline_utc_ms=deadline;
     uint64_t upper=now.utc_ms+now.uncertainty_ms;
-    c->deadline_mono_ms=deadline>upper?now.mono_ms+(deadline-upper):now.mono_ms;
+    c->deadline_mono_ms=v3_deadline_mono(now,deadline);
     c->state=deadline>upper?CP_V3_CONTROL_APPLIED:CP_V3_CONTROL_PAUSED;return CP_V3_CONTROL_OK;
 }
 cp_v3_control_permissions_t cp_v3_control_permissions(cp_v3_control_t *c,cp_v3_time_t now){
     cp_v3_control_permissions_t r={.preserve_unacknowledged=true,.reason=CP_V3_CONTROL_STATE};
     if(!c)return r;
     r.deadline_utc_ms=c->deadline_utc_ms;r.deadline_mono_ms=c->deadline_mono_ms;
+    if(c->small_statistics&&c->applied_at_utc_ms&&c->policy.drain_frozen&&
+        now_valid(now)&&now.clock_epoch==c->clock_epoch&&now.mono_ms>=c->last_mono_ms&&
+        now.utc_ms-now.uncertainty_ms>=c->trusted_utc_lower_ms&&
+        now.utc_ms+now.uncertainty_ms<c->policy.accept_until_utc_ms){r.uplink=true;r.frozen_only=true;}
     if(c->state!=CP_V3_CONTROL_APPLIED)return r;
     if(!current(c,now)){c->state=CP_V3_CONTROL_PAUSED;r.reason=CP_V3_CONTROL_NOT_CURRENT;return r;}
     if(now.utc_ms+now.uncertainty_ms>=c->deadline_utc_ms||now.mono_ms>=c->deadline_mono_ms){c->state=CP_V3_CONTROL_PAUSED;r.reason=CP_V3_CONTROL_EXPIRED;return r;}
-    if(now.utc_ms-now.uncertainty_ms<c->applied_at_utc_ms){r.reason=CP_V3_CONTROL_WAIT;return r;}
-    r.collection=r.uplink=true;r.reason=CP_V3_CONTROL_OK;return r;
+    uint64_t lower=now.utc_ms-now.uncertainty_ms;
+    uint64_t start=c->applied_at_utc_ms;
+    if(c->small_statistics){
+        if(c->capture_span_start_utc_ms>start)start=c->capture_span_start_utc_ms;
+        /* Small windows encode only end time/error. Ingest derives the whole
+         * interval as end.utc-end.error-duration, so admission must include
+         * the next window's 500ppm error growth plus one millisecond for the
+         * collector's integral boundary. Contiguous renewals keep their span;
+         * a new post-gap span must satisfy this same guard again. */
+        uint64_t guard=((uint64_t)c->policy.window_ms+1999)/2000+1;
+        if(lower<start||lower-start<guard){r.reason=CP_V3_CONTROL_WAIT;return r;}
+    }else if(lower<start){r.reason=CP_V3_CONTROL_WAIT;return r;}
+    r.collection=r.uplink=true;r.local_raw=c->policy.local_raw.enabled;r.frozen_only=false;r.reason=CP_V3_CONTROL_OK;return r;
 }

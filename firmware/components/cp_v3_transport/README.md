@@ -1,7 +1,7 @@
-# Optional isolated v3 HTTPS transport
+# Optional v3 HTTPS transport
 
 This component supplies a single-task Wi-Fi/TLS/time owner for an explicitly
-configured private v3 experiment. It does not start automatically. It does not
+configured v3 destination. It does not start automatically. It does not
 depend on `cp_network`, MQTT, a TF card, a display, the v2 control service or a
 board adapter. It can serve a T-Energy/no-TF test with the same interface.
 It is transport plumbing, not a policy validator, collector, durable queue or
@@ -21,7 +21,12 @@ Initialize NVS without erasure before start. Pass a validated existing
 `cp_settings_t` for Wi-Fi credentials and enabled-node bearer token. The saved
 settings' fixed production origin is not the destination: `config.origin` is a
 mandatory, explicit `https://host[:port]` origin. Paths, userinfo, query, fragments,
-control characters and production `pulse.anend.net` (on any port) are rejected.
+and control characters are rejected. Following the user's explicit release and
+two-board integration authorization, production accepts only canonical
+`CP_API_ORIGIN` (`https://pulse.anend.net`, implicit443). Explicit`:443`, other
+ports, trailing spellings and production subdomains are rejected. This adds no
+automatic startup, enrollment, policy or collection permission. Historical
+isolated acceptance records remain limited to their original test environment.
 Do not print the bootstrap payload, settings, request headers, token or CA input.
 PEAP requires a caller-supplied RADIUS CA and expected certificate domain, with
 certificate date validation enabled. There is no unverified-PEAP mode.
@@ -42,20 +47,31 @@ must remain valid through stop. TLS always checks CA, original server hostname
 bypass option. The component emits no logs and disables verbose SDK TLS/radio
 logs. It does not restore SDK log levels because doing so could expose a later
 request's secrets through a different component.
+Production always requires `server_ca_pem=NULL` and the system certificate
+bundle; even an empty custom-CA pointer is rejected before Wi-Fi starts.
 
 Both trust modes require `CONFIG_MBEDTLS_HAVE_TIME=y` and
 `CONFIG_MBEDTLS_HAVE_TIME_DATE=y`. The component refuses to compile without
 certificate-date checking, which ESP-IDF otherwise disables by default. A
-bundle-disabled build accepts explicit PEM only and rejects NULL CA at start.
+bundle-disabled build accepts explicit PEM for isolated servers only, rejects
+NULL CA at start and cannot connect to production.
 
 ## Bounded requests and clock boundaries
 
-Allowed routes are POST capabilities, configuration ACK and ingest under
-`/api/v3`, plus GET config with exactly one lowercase UUIDv4 `boot_id`. No v1/v2
+Allowed routes are POST capabilities, configuration ACK, explicit lease and
+legacy/statistics ingest under `/api/v3`, plus GET config with exactly one
+lowercase UUIDv4 `boot_id`. No v1/v2
 or administrator route is accepted. Request bodies are capped at 65,536 bytes;
 the caller freezes exact bytes and retries them itself. POST computes SHA-256
 over those exact bytes and sends `X-Body-SHA256`. The SHA function is also a
 `cp_v3_sha256_fn` adapter for the evidence producer.
+
+Historical control recovery uses `cp_v3_transport_request_receipt_only` with
+the same arguments. It accepts only exact POST configuration-ACK/lease paths
+and adds `X-Receipt-Only: 1`; the frozen body and hash remain unchanged. All
+other paths/methods fail before DNS. A missing original committed receipt must
+remain a server conflict, not create a new ACK or lease. Normal requests retain
+their original behavior, and neither API itself grants collection authority.
 
 DNS is asynchronous IPv4 with a generation guard against callbacks from an old
 attempt. TLS connects to that resolved address while verifying and sending SNI
