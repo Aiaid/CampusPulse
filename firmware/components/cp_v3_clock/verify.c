@@ -5,15 +5,18 @@
 #include <stdio.h>
 #include <string.h>
 
+static size_t bounded_length(const char *s,size_t limit) {
+    size_t n=0;while(n<limit&&s[n])n++;return n;
+}
 static bool key_valid(const char *s) {
     if(!s)return false;
-    size_t n=strnlen(s,33);if(!n||n>32)return false;
+    size_t n=bounded_length(s,33);if(!n||n>32)return false;
     for(size_t i=0;i<n;i++)if(!((s[i]>='A'&&s[i]<='Z')||
         (s[i]>='a'&&s[i]<='z')||(s[i]>='0'&&s[i]<='9')||s[i]=='_'||s[i]=='-'))return false;
     return true;
 }
 static bool nonce_valid(const char *s) {
-    if(!s||strnlen(s,65)!=64)return false;
+    if(!s||bounded_length(s,65)!=64)return false;
     for(size_t i=0;i<64;i++)if(!((s[i]>='0'&&s[i]<='9')||(s[i]>='a'&&s[i]<='f')))return false;
     return true;
 }
