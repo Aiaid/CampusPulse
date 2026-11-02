@@ -63,6 +63,11 @@ int main(void){
     assert(!cp_v3_clock_verify(BODY,strlen(BODY),KEY,"test-key_1",NONCE,0,1,1,NULL,NULL,&out));
     assert(!cp_v3_clock_verify(BODY,strlen(BODY),OTHER_KEY,"test-key_1",NONCE,0,1,1,verify,NULL,&out));
     assert(!cp_v3_clock_verify(BODY,strlen(BODY)+1,KEY,"test-key_1",NONCE,0,1,1,verify,NULL,&out));
+    char unterminated_key[33],unterminated_nonce[65];
+    memset(unterminated_key,'a',sizeof unterminated_key);
+    memset(unterminated_nonce,'a',sizeof unterminated_nonce);
+    assert(!cp_v3_clock_verify(BODY,strlen(BODY),KEY,unterminated_key,NONCE,0,1,1,verify,NULL,&out));
+    assert(!cp_v3_clock_verify(BODY,strlen(BODY),KEY,"test-key_1",unterminated_nonce,0,1,1,verify,NULL,&out));
     memset(bad,'[',500);memset(bad+500,']',500);bad[1000]=0;rejected(bad);
     rejected("{\"nested\":{}}");
     rejected("");rejected("null");rejected("{}");
