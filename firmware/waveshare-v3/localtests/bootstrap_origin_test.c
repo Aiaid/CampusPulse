@@ -27,13 +27,14 @@ static cJSON *input(const char *origin) {
     cJSON_AddNumberToObject(root,"max_windows",1);
     return root;
 }
-static bool send_input(cJSON *root) {
+static bool send_named(cJSON *root,const char *expected_node) {
     char *json = cJSON_PrintUnformatted(root); assert(json); cJSON_Delete(root);
     trial_bootstrap_t out; memset(&out,0xa5,sizeof out);
-    bool ok=parse(json,"ws-synthetic","12345678-1234-4123-8123-123456789abc",&out);
+    bool ok=parse(json,expected_node,"12345678-1234-4123-8123-123456789abc",&out);
     if(!ok)for(size_t i=0;i<sizeof out;i++) assert(!((unsigned char *)&out)[i]);
     trial_bootstrap_clear(&out); free(json); return ok;
 }
+static bool send_input(cJSON *root){return send_named(root,"ws-synthetic");}
 static bool check(const char *origin, const char *ca, bool ca_field) {
     cJSON *root=input(origin);
     if(ca_field) {
@@ -50,6 +51,19 @@ static cJSON *mqtt_input(void){
     cJSON_AddStringToObject(root,"mqtt_password","synthetic-password");
     cJSON_AddStringToObject(root,"mqtt_namespace","synthetic");return root;
 }
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+static cJSON *saved_input(void){
+    cJSON *r=mqtt_input();
+    cJSON_SetValuestring(cJSON_GetObjectItem(r,"node_id"),"cp_aabbccddeeff");
+    cJSON_SetValuestring(cJSON_GetObjectItem(r,"device_token"),"synthetic_startup_token_0123456789abcdef");
+    cJSON_SetNumberValue(cJSON_GetObjectItem(r,"max_windows"),0);
+    cJSON_AddBoolToObject(r,"save_startup",true);cJSON_AddBoolToObject(r,"startup_reconfigure",false);
+    cJSON_AddStringToObject(r,"clock_key_id","synthetic-key-1");
+    /* Canonical SPKI for the public NIST P256 generator point. */
+    cJSON_AddStringToObject(r,"clock_public_spki","MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP40Li_hp_m47n60p8D54WK84zV2sxXs7LtkBoN79R9Q");
+    return r;
+}
+#endif
 int main(void) {
     assert(!check(CP_API_ORIGIN,NULL,false)); /* no production HTTPS */
     assert(check("https://192.168.1.2:8799",NULL,false));
@@ -66,6 +80,15 @@ int main(void) {
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
     assert(check("https://192.168.1.2:8799","-----BEGIN CERTIFICATE-----\nsynthetic\n-----END CERTIFICATE-----",true));
     assert(send_input(mqtt_input()));
+    assert(send_named(saved_input(),"cp_aabbccddeeff"));
+    cJSON *candidate=saved_input();cJSON_DeleteItemFromObject(candidate,"startup_reconfigure");cJSON_AddBoolToObject(candidate,"startup_reconfigure",true);assert(send_named(candidate,"cp_aabbccddeeff"));
+    const char *missing[]={"save_startup","clock_key_id","clock_public_spki"};
+    for(unsigned i=0;i<3;i++){candidate=saved_input();cJSON_DeleteItemFromObject(candidate,missing[i]);assert(!send_named(candidate,"cp_aabbccddeeff"));}
+    candidate=saved_input();cJSON_DeleteItemFromObject(candidate,"save_startup");cJSON_AddBoolToObject(candidate,"save_startup",false);assert(!send_named(candidate,"cp_aabbccddeeff"));
+    candidate=saved_input();cJSON_SetValuestring(cJSON_GetObjectItem(candidate,"clock_public_spki"),"invalid");assert(!send_named(candidate,"cp_aabbccddeeff"));
+    candidate=saved_input();cJSON_SetValuestring(cJSON_GetObjectItem(candidate,"clock_key_id"),"bad/key");assert(!send_named(candidate,"cp_aabbccddeeff"));
+    candidate=saved_input();cJSON_AddNullToObject(candidate,"save_startup");assert(!send_named(candidate,"cp_aabbccddeeff"));
+    candidate=input("https://isolated.example");cJSON_AddBoolToObject(candidate,"save_startup",true);assert(!send_input(candidate));
 #else
     assert(!send_input(mqtt_input())); /* historical feature app remains isolated HTTPS */
 #endif

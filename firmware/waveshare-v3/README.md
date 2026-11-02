@@ -2,8 +2,12 @@
 
 This separate ESP-IDF5.5.3 application targets the verified Waveshare
 ESP32-S3-ePaper-1.54 V2 through the existing board/power/display adapters.
-It boots into physical USB standby. A cable alone starts neither Wi-Fi nor BLE.
-USB provides fresh nonce-bound identity/time and one-boot private settings.
+Version0.4.0 supports explicitly saved autonomous startup. First USB setup uses
+fresh nonce-bound identity/time; optional saving occurs only after a real matched
+applied ACK. START ACCEPTED alone is not save confirmation. A saved personal
+Wi-Fi profile recovers signed time, connects native MQTT/TLS and obtains an
+administrator-approved fresh policy before capture. Without a saved profile,
+the app waits for USB. See [persistent startup](../../docs/specs/v3-startup.md).
 
 The formal production path is native MQTT/TLS to the fixed Hangzhou EMQX broker
 and the Cloudflare gateway bound to the real Worker/D1 service. No computer relay,
@@ -14,7 +18,10 @@ local proxy or direct production HTTPS fallback is used. The USB frame selects
 custom CA fields and production HTTPS mode are rejected before networking.
 The host defaults to MQTT and requires `--allow-production`, canonical
 `CP_API_ORIGIN` and `tls:"public_ca_bundle"` in its private backend bundle.
-Secrets are wiped after the run and are never logged or persisted by this app.
+RAM copies are wiped after the run. Explicitly saved production settings use
+the dedicated ordinary-NVS `cpv3start` store; this is not encryption at rest.
+Legacy settings and queues remain untouched. Test limits/CA/origins are not saved,
+and secret values are never logged or committed.
 
 Nonproduction diagnostics may explicitly select `uplink_transport:"https"`
 without MQTT fields. RFC1918 LAN tests retain the reviewed optional test CA;
@@ -59,6 +66,10 @@ is independent of window upload: up to10minutes/2second slices,512tracks,
 64open events; terminal-only optional event uploads can outlive the history.
 This runtime does not implement hot policy reallocation or revision scheduling;
 unsupported policies receive a committed failed ACK, never fake application.
+Autonomous operation safely cycles through a real new boot after approximately
+20minutes, preserving original frozen records and revalidating time/authority.
+Uncertain/volatile work blocks restart. Physical stop takes priority, and daily
+budgets and administrator grant expiry remain effective across reboots.
 
 `cp_v3_capture` owns the nonblocking SDK callback and collector worker.
 The storage task PEEKs handoffs, assigns UUID and boot-stream sequence once,
@@ -138,12 +149,17 @@ and unmounts before safe power release. An uncertain/unfinished writer blocks
 safe power release. A new allocation/policy requires reboot; safe USB standby
 shows this explicitly: HELLO returns `restart_required`, V3START is rejected,
 and physical USB `RESTART` reboots only after safe unmount. PWR remains available after safe completion.
-Bounded-test completion stays in USB standby; only an explicit PWR request
+Explicit bounded-test completion stays in USB standby; only a PWR request
 releases the power latch. The runner can request one safe restart before a new
 nonce-bound bootstrap.
+Saved-profile maintenance can request `RESTART` from safe USB standby to enter
+one-shot USB configuration on the next boot; ordinary power cycles auto-start.
+The diagnostic `RUN SAVED` command starts the saved path without new settings.
 
-`max_windows=0` is continuous until stop/authority expiry;1..60 is an explicit
-bounded trial. The shared capture worker enforces the final full-window boundary
+`max_windows=0` plus explicit saved production setup selects autonomous cycles;
+temporary zero-window diagnostics retain their prior authority/stop boundary.
+1..60 is an explicit bounded trial. Test limits are never saved. The shared
+capture worker enforces the final full-window boundary
 before opening another window. The parent session owns `run_small.py`, hardware
 review and actual controlled tests. This app has no device validation from a
 passing build; interrupted writes, saturated RF/TF, prolonged offline operation,

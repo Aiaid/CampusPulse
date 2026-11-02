@@ -63,6 +63,8 @@ jobs:
           uv run --no-project python firmware/components/cp_v3_small_results/tests/test_small_results.py
           uv run --no-project python firmware/components/cp_v3_transport/tests/test_protocol.py
           uv run --no-project python firmware/components/cp_v3_transport/tests/test_mqtt_protocol.py
+          uv run --no-project python firmware/components/cp_v3_startup/tests/test_startup.py
+          uv run --no-project python firmware/components/cp_v3_clock/tests/run.py
       - name: Verify production MQTT settings and firmware ownership on host
         run: |
           bash firmware/components/cp_settings/tests/run-host.sh
@@ -71,6 +73,8 @@ jobs:
           uv run --no-project --with pyserial python -m unittest discover -s firmware/waveshare-v3/localtests -p 'test_*.py'
       - name: Install browser
         run: npx playwright install --with-deps chromium webkit
+      - name: Verify autonomous setup UI with synthetic serial and APIs
+        run: node tests/provisioning/startup-ui.browser.mjs
       - name: Verify protected provisioning wizard with synthetic peers
         run: node scripts/provisioning-browser-smoke.mjs
       - name: Verify MQTT pool and enrollment workflow with synthetic peers
@@ -92,7 +96,7 @@ jobs:
           node scripts/admin-help-browser-smoke.mjs --fallback
       - name: Prepare local database and disposable operator/admin credentials
         run: |
-          node --input-type=module -e "import {writeFileSync} from 'node:fs'; import {randomBytes} from 'node:crypto'; writeFileSync('.dev.vars',['OPERATOR_TOKEN='+randomBytes(32).toString('hex'),'ADMIN_TOKEN='+randomBytes(32).toString('hex'),'RESEARCH_TOKEN='+randomBytes(32).toString('hex'),'MQTT_PROVISIONING_KEY='+randomBytes(32).toString('base64url'),'ADMIN_SMOKE_USERNAME=ci-admin','ADMIN_SMOKE_PASSWORD='+randomBytes(24).toString('hex'),'ADMIN_SMOKE_NEW_USERNAME=ci-admin-updated','ADMIN_SMOKE_NEW_PASSWORD='+randomBytes(24).toString('hex')].join('\n')+'\n',{mode:0o600});"
+          node --input-type=module -e "import {writeFileSync} from 'node:fs'; import {randomBytes,generateKeyPairSync} from 'node:crypto'; writeFileSync('.dev.vars',['OPERATOR_TOKEN='+randomBytes(32).toString('hex'),'ADMIN_TOKEN='+randomBytes(32).toString('hex'),'RESEARCH_TOKEN='+randomBytes(32).toString('hex'),'MQTT_PROVISIONING_KEY='+randomBytes(32).toString('base64url'),'DEVICE_V3_CLOCK_PRIVATE_KEY_JWK='+JSON.stringify(generateKeyPairSync('ec',{namedCurve:'prime256v1'}).privateKey.export({format:'jwk'})),'ADMIN_SMOKE_USERNAME=ci-admin','ADMIN_SMOKE_PASSWORD='+randomBytes(24).toString('hex'),'ADMIN_SMOKE_NEW_USERNAME=ci-admin-updated','ADMIN_SMOKE_NEW_PASSWORD='+randomBytes(24).toString('hex')].join('\n')+'\n',{mode:0o600});"
           npm run db:migrate
           CAMPUSPULSE_LOCAL_MQTT_FIXTURES=synthetic node scripts/seed-mqtt-browser-fixtures.mjs
       - name: Check browser against local Worker
@@ -143,6 +147,7 @@ jobs:
       # Only the two strict boolean gates may be disabled for a shutdown.
       DEVICE_V3_CONTROL_ENABLED: ${{ vars.DEVICE_V3_CONTROL_ENABLED || 'true' }}
       DEVICE_V3_STATISTICS_ENABLED: ${{ vars.DEVICE_V3_STATISTICS_ENABLED || 'true' }}
+      DEVICE_V3_STARTUP_ENABLED: ${{ vars.DEVICE_V3_STARTUP_ENABLED || ((vars.DEVICE_V3_CONTROL_ENABLED == 'false' || vars.DEVICE_V3_STATISTICS_ENABLED == 'false') && 'false' || 'true') }}
       DEVICE_V3_PRODUCER_VERSIONS: '["cp-v3-small/1"]'
       DEVICE_V3_INGEST_ENABLED: 'false'
       CPRAW_ARCHIVE_ENABLED: '0'

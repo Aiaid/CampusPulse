@@ -20,11 +20,11 @@ def verify(root):
     description = json.loads((root / 'project_description.json').read_text())
     assert description['target'] == 'esp32s3'
     assert description['project_name'] == 'waveshare_v3'
-    assert description['project_version'] == '0.3.2-original-ui'
+    assert description['project_version'] == '0.4.0-autostart'
     components = set(description['build_components'])
     assert not components.intersection(('cp_network', 'cp_provision', 'cp_runtime'))
     assert {'mqtt', 'tcp_transport'} <= components
-    assert {'cp_v3_control', 'cp_v3_transport', 'cp_v3_queue', 'cp_v3_budget', 'cp_v3_evidence', 'cp_v3_stats', 'cp_v3_temporal', 'cp_v3_small_results', 'cp_v3_capture'} <= components
+    assert {'cp_v3_control', 'cp_v3_transport', 'cp_v3_queue', 'cp_v3_budget', 'cp_v3_evidence', 'cp_v3_stats', 'cp_v3_temporal', 'cp_v3_small_results', 'cp_v3_capture', 'cp_v3_startup', 'cp_v3_clock'} <= components
     files = json.loads((root / 'flasher_args.json').read_text())['flash_files']
     assert {int(offset, 0) for offset in files} == {0, 0x8000, 0x10000}
     report = {'target': 'esp32s3', 'flash_bytes': 8388608, 'images': {}}

@@ -10,6 +10,18 @@
 #include <math.h>
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
 #include "esp_heap_caps.h"
+#include "cp_v3_startup.h"
+static bool public_key_decode(const char *text,uint8_t out[91]) {
+    if(!text||strlen(text)!=122)return false;
+    uint32_t acc=0;unsigned bits=0;size_t used=0;
+    for(size_t i=0;i<122;i++){
+        unsigned char c=(unsigned char)text[i];int d=c>='A'&&c<='Z'?c-'A':c>='a'&&c<='z'?c-'a'+26:c>='0'&&c<='9'?c-'0'+52:c=='-'?62:c=='_'?63:-1;
+        if(d<0)return false;
+        acc=(acc<<6)|(unsigned)d;bits+=6;
+        if(bits>=8){bits-=8;if(used>=91)return false;out[used++]=(uint8_t)(acc>>bits);}
+    }
+    return used==91&&bits==4&&(acc&15u)==0;
+}
 #endif
 
 static void wipe(void *data, size_t size) {
@@ -31,13 +43,16 @@ static bool integer(cJSON *root, const char *key, double min, double max, uint64
     *out = (uint64_t)v->valuedouble; return true;
 }
 static bool parse(const char *json, const char *node, const char *boot, trial_bootstrap_t *out) {
+    trial_bootstrap_clear(out);
+    if(!json||!node||!boot||!out)return false;
     if(strstr(json,"\\u0000")){trial_bootstrap_clear(out);return false;}
     const char *end = NULL;
     cJSON *root = cJSON_ParseWithOpts(json, &end, true);
-    bool ok = cJSON_IsObject(root), seen[17] = {0};
+    bool ok = cJSON_IsObject(root), seen[21] = {0};
     static const char *keys[] = {"node_id","boot_id","origin","device_token","ssid","password","utc_ms","uncertainty_ms","max_windows","security","anchor_mono_ms","uplink_transport"
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
-        ,"server_ca_pem","mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace"
+        ,"server_ca_pem","mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace",
+        "save_startup","startup_reconfigure","clock_key_id","clock_public_spki"
 #endif
     };
     const unsigned key_count=sizeof keys/sizeof keys[0];
@@ -107,6 +122,23 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
         out->clock_seed = (cp_v3_time_t){.utc_ms=utc,.mono_ms=mono,.clock_epoch=1,.uncertainty_ms=(uint32_t)uncertainty};
         out->max_windows = (unsigned)windows;
     }
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+    cJSON *save=cJSON_GetObjectItemCaseSensitive(root,"save_startup"),*recover=cJSON_GetObjectItemCaseSensitive(root,"startup_reconfigure");
+    cJSON *key_id=cJSON_GetObjectItemCaseSensitive(root,"clock_key_id"),*key=cJSON_GetObjectItemCaseSensitive(root,"clock_public_spki");
+    if(ok&&(save||recover||key_id||key)){
+        char encoded[123];
+        ok=out->transport==CP_V3_TRANSPORT_MQTT_TLS&&cJSON_IsTrue(save)&&
+            (!recover||cJSON_IsBool(recover))&&text(root,"clock_key_id",out->clock_key_id,sizeof out->clock_key_id,false)&&
+            text(root,"clock_public_spki",encoded,sizeof encoded,false)&&public_key_decode(encoded,out->clock_public_spki);
+        if(ok){
+            cp_v3_startup_profile_t candidate={.settings=out->settings,.time_public_spki_len=91,.auto_start=true};
+            memcpy(candidate.time_key_id,out->clock_key_id,sizeof candidate.time_key_id);memcpy(candidate.time_public_spki,out->clock_public_spki,91);
+            ok=cp_v3_startup_validate(&candidate,node);cp_v3_startup_clear(&candidate);
+        }
+        if(ok){out->save_startup=true;out->startup_reconfigure=cJSON_IsTrue(recover);}
+        wipe(encoded,sizeof encoded);
+    }
+#endif
     for (cJSON *v = root ? root->child : NULL; v; v = v->next) if (v->valuestring) wipe(v->valuestring,strlen(v->valuestring));
     cJSON_Delete(root); wipe(given_boot,sizeof given_boot); wipe(security,sizeof security);wipe(transport,sizeof transport);
     if (!ok) trial_bootstrap_clear(out);

@@ -1,6 +1,8 @@
 # Documentation
 
 Current device baseline: V3-only source, native MQTT and bounded small statistics.
+Persistent autonomous startup is described in [V3 startup](specs/v3-startup.md);
+its release and reboot evidence are separate from prior bounded runs.
 Historical collection records and validation documents are preserved; they do
 not establish acceptance of newly built images. Start with the
 [V3-only migration record](notes/v3-only-migration-2026-10-31.md).
@@ -23,6 +25,7 @@ not establish acceptance of newly built images. Start with the
 | --- | --- | --- |
 | [V3-only migration](notes/v3-only-migration-2026-10-31.md) | Retired V1/V2 device code, preserved historical D1/R2/device data, current V3 APIs/firmware and evidence boundaries | Source/local verification complete: 88 files / 1170 tests, build, gateway/browser and fresh S3 checks; publication requires actual main workflow result; no new flash or physical run |
 | [V3 native MQTT gateway](specs/device-v3-mqtt.md) | Frozen CPV3 frame over existing EMQX topics, authenticated service binding, exact receipt and replay semantics | Current; CPV3 framing mandatory, stable cp/v1 topic namespace; prior deployed two-board bounded acceptance retained; no legacy payload fallback |
+| [V3 autonomous startup](specs/v3-startup.md) | Opt-in saved profile, pinned signed time, administrator renewal grant and safe boot cycles | Implemented and locally verified; CI/CD and actual saved-profile reboot evidence tracked separately |
 | [V3 production release](notes/v3-production-release-2026-10-31.md) | Real Worker/D1 release, preserved credentials/Flash, targeted NVS recovery and production acceptance boundaries | Historical bounded production acceptance for its tested images; current code retirement tracked in V3-only migration note; long-run/power-loss separate |
 | [V3 small statistics and candidate events](specs/v3-small-statistics.md) | Final default: bounded edge aggregation, independent rolling history, compact windows/events and durable receipts | Current default; prior deployed two-board bounded MQTT acceptance; unknown categories preserved, cloud raw/per-address off; no new physical run in cleanup |
 | [Bounded T-Energy V3 runtime](../firmware/t-energy-v3-trial/BOUNDED_RUNTIME.md) | Real NVS admission, frozen statistics, renewable leases and normal-reboot checkpoint | Checkpoint byte verification, historical recovery and normal 3 windows / 1 final status passed; arbitrary power loss unverified |

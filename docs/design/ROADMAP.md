@@ -25,6 +25,15 @@ publication/deployment is checked against the actual main workflow run.
 
 ## P0 — Deliver the core MVP
 
+- [ ] Finish autonomous V3 startup (2026-11-02 user request): save an explicitly
+      validated first USB configuration in a dedicated V3 store; restart without
+      USB, recover authenticated time without weakening TLS checks, register real
+      new-boot capabilities and obtain an explicitly approved renewable policy.
+      Preserve prior credentials/queues and per-boot identities, support deliberate
+      USB reconfiguration/recovery, and verify saved-profile reboot and network/
+      clock failure behavior on the actual boards. Builds/host tests do not
+      establish the untethered hardware result.
+
 - [ ] Extend the bounded native MQTT release to sustained deployment-scale
       operation: saturated BLE/Wi-Fi load, long offline operation, storage/GC and
       endurance, arbitrary power loss, real-deadline retention cleanup and field

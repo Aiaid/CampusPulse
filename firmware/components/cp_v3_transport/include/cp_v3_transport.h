@@ -41,6 +41,9 @@ typedef struct {
      * MQTT uses settings.mqtt_* and fixed CP_MQTT_PRODUCTION_URI/public bundle.
      * No custom MQTT CA, broker, fallback proxy or HTTP Date is accepted. */
     const char *active_boot;
+    /* Optional application stop latch. Must remain callable through stop;
+     * unlike the transport's per-session flag it is never reset by start(). */
+    bool (*cancelled)(void);
 } cp_v3_transport_config_t;
 
 /* Pure USB preflight: validates origin syntax and production's bundle-only rule.

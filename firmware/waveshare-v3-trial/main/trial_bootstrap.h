@@ -10,11 +10,14 @@ typedef struct {
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
     /* Optional isolated-server test CA over USB; forbidden at CP_API_ORIGIN. */
     char server_ca_pem[4097];
+    bool save_startup, startup_reconfigure;
+    char clock_key_id[33];
+    uint8_t clock_public_spki[91];
 #endif
     cp_v3_time_t clock_seed;
     unsigned max_windows;
 } trial_bootstrap_t;
-/* Physical USB only, no persistent secret or automatic network operation.
- * Every boot requires a fresh trusted host time and matching node/boot. */
+/* Physical USB entry. A normal production app may explicitly save the optional
+ * startup candidate only after real cloud ACK; this parser performs no NVS I/O. */
 esp_err_t trial_bootstrap_wait(const char *node, const char *boot, trial_bootstrap_t *, bool (*cancelled)(void));
 void trial_bootstrap_clear(trial_bootstrap_t *);

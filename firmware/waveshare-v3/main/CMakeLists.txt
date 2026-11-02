@@ -9,7 +9,7 @@ idf_component_register(
          "${RAW_DIR}/raw_panel.c" "${RAW_DIR}/raw_refresh.c"
          "${RAW_DIR}/raw_v3_queue_store.c" "${RAW_DIR}/raw_v3_queue_sd_sync.c"
     INCLUDE_DIRS "." "${RAW_DIR}" "${TRIAL_DIR}"
-    REQUIRES cp_v3_control cp_v3_queue cp_v3_budget cp_v3_transport cp_v3_stats
+    REQUIRES cp_v3_control cp_v3_queue cp_v3_budget cp_v3_transport cp_v3_stats cp_v3_startup cp_v3_clock
              cp_v3_temporal cp_v3_capture cp_v3_small_results
              nvs_flash json bootloader_support esp_timer esp_psram esp_wifi esp_netif
              fatfs sdmmc esp_driver_sdmmc esp_driver_gpio esp_driver_spi

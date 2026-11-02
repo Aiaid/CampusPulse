@@ -15,18 +15,23 @@ const config = JSON.parse(readFileSync('wrangler.jsonc', 'utf8'));
 const releaseDefaults = {
   DEVICE_V3_CONTROL_ENABLED: 'true',
   DEVICE_V3_STATISTICS_ENABLED: 'true',
+  DEVICE_V3_STARTUP_ENABLED: 'true',
   DEVICE_V3_PRODUCER_VERSIONS: '["cp-v3-small/1"]',
   DEVICE_V3_INGEST_ENABLED: 'false',
   CPRAW_ARCHIVE_ENABLED: '0',
 };
 const releaseVars = { ...releaseDefaults };
-for (const key of ['DEVICE_V3_CONTROL_ENABLED', 'DEVICE_V3_STATISTICS_ENABLED']) {
+for (const key of ['DEVICE_V3_CONTROL_ENABLED', 'DEVICE_V3_STATISTICS_ENABLED', 'DEVICE_V3_STARTUP_ENABLED']) {
   const value = process.env[key] ?? releaseDefaults[key];
   if (!['true', 'false'].includes(value)) throw new Error(`Set ${key} to exactly true or false.`);
   releaseVars[key] = value;
 }
 if (releaseVars.DEVICE_V3_STATISTICS_ENABLED === 'true' && releaseVars.DEVICE_V3_CONTROL_ENABLED !== 'true') {
   throw new Error('Statistics requires DEVICE_V3_CONTROL_ENABLED=true; disable both gates for shutdown.');
+}
+if(releaseVars.DEVICE_V3_CONTROL_ENABLED!=='true'||releaseVars.DEVICE_V3_STATISTICS_ENABLED!=='true'){
+  if(process.env.DEVICE_V3_STARTUP_ENABLED==='true')throw new Error('Autonomous startup requires enabled control and statistics.');
+  releaseVars.DEVICE_V3_STARTUP_ENABLED='false';
 }
 for (const key of ['DEVICE_V3_INGEST_ENABLED', 'CPRAW_ARCHIVE_ENABLED']) {
   if (process.env[key] !== undefined && process.env[key] !== releaseDefaults[key]) {

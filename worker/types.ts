@@ -1,3 +1,4 @@
+import type { DeviceV3ClockEnv } from './device-v3-clock';
 export type PlaceKind = 'activity' | 'parking' | 'elevator';
 export interface Place {
   id: string;
@@ -44,7 +45,7 @@ export interface CreateObservation {
 
 // Generated binding types follow wrangler.jsonc. Production may intentionally
 // omit raw storage; tests and API-only environments can omit Static Assets.
-export interface Env extends Pick<WorkerBindings, 'DB'> {
+export interface Env extends Pick<WorkerBindings, 'DB'>, DeviceV3ClockEnv {
   ASSETS?: WorkerBindings['ASSETS'];
   OPERATOR_TOKEN?: string;
   RAW_BUCKET?: WorkerBindings['RAW_BUCKET'];

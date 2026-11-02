@@ -49,7 +49,7 @@ static bool owner(void) {
     TaskHandle_t current = __atomic_load_n(&s_owner, __ATOMIC_ACQUIRE);
     return current && current == xTaskGetCurrentTaskHandle();
 }
-static bool active(void) { return !__atomic_load_n(&s_cancelled, __ATOMIC_ACQUIRE); }
+static bool active(void) { return !__atomic_load_n(&s_cancelled, __ATOMIC_ACQUIRE)&&(!s_config.cancelled||!s_config.cancelled()); }
 static bool before(uint64_t deadline) { return active() && now_ms() < deadline; }
 static void pause_io(void) { vTaskDelay(pdMS_TO_TICKS(10) ?: 1); }
 static esp_err_t cancelled_or_timeout(void) { return active() ? ESP_ERR_TIMEOUT : ESP_ERR_INVALID_STATE; }
@@ -196,6 +196,7 @@ esp_err_t cp_v3_transport_start(const cp_settings_t *settings, const cp_v3_trans
         config->request_timeout_ms < 1000 || config->request_timeout_ms > 30000 ||
         !config->server_clock_error_ms || config->server_clock_error_ms > 3000 ||
         !cp_v3_transport_anchor(&config->clock_seed, now_ms(), &current)) return ESP_ERR_INVALID_ARG;
+    if(config->cancelled&&config->cancelled())return ESP_ERR_INVALID_STATE;
 #if !defined(CONFIG_CP_V3_NATIVE_MQTT) || !CONFIG_CP_V3_NATIVE_MQTT
     if(config->mode==CP_V3_TRANSPORT_MQTT_TLS)return ESP_ERR_NOT_SUPPORTED;
 #endif
@@ -221,6 +222,7 @@ esp_err_t cp_v3_transport_start(const cp_settings_t *settings, const cp_v3_trans
     esp_err_t result = esp_wifi_get_mode(&mode);
     if (result != ESP_ERR_WIFI_NOT_INIT) { __atomic_store_n(&s_owner, NULL, __ATOMIC_RELEASE); return ESP_ERR_INVALID_STATE; }
     s_config = *config; s_origin = origin; s_anchor = config->clock_seed;
+    if(!active()){result=ESP_ERR_INVALID_STATE;goto failed;}
     memcpy(s_token, settings->device_token, sizeof s_token);
     result = set_wall_clock(&s_anchor);
     if (result != ESP_OK) goto failed;
@@ -262,13 +264,16 @@ esp_err_t cp_v3_transport_start(const cp_settings_t *settings, const cp_v3_trans
         if (result != ESP_OK) goto failed;
         s_enterprise = true;
     }
+    if(!active()){result=ESP_ERR_INVALID_STATE;goto failed;}
     result = esp_wifi_start(); if (result != ESP_OK) goto failed;
     s_wifi_started = true;
+    if(!active()){result=ESP_ERR_INVALID_STATE;goto failed;}
     result = esp_wifi_connect(); if (result != ESP_OK) goto failed;
     uint64_t deadline = now_ms() + config->wifi_timeout_ms;
     while (before(deadline) && !__atomic_load_n(&s_link, __ATOMIC_ACQUIRE)) pause_io();
     if (!before(deadline)) { result = cancelled_or_timeout(); goto failed; }
     if(config->mode==CP_V3_TRANSPORT_MQTT_TLS){
+        if(!active()){result=ESP_ERR_INVALID_STATE;goto failed;}
         result=cp_v3_mqtt_configure(settings,config->active_boot,config->request_timeout_ms);
         if(result!=ESP_OK)goto failed;
     }

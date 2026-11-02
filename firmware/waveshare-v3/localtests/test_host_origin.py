@@ -15,6 +15,21 @@ legacy_spec.loader.exec_module(legacy)
 
 
 class HostOrigin(unittest.TestCase):
+    def clock_key(self):
+        return dict(schema='cp-v3-signed-clock-key/1',audience=runner.PRODUCTION_ORIGIN,key_id='synthetic-key-1',public_key_spki='MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP40Li_hp_m47n60p8D54WK84zV2sxXs7LtkBoN79R9Q')
+
+    def test_clock_metadata_requires_exact_production_audience_and_key_shape(self):
+        self.assertEqual(runner.validate_clock_key(self.clock_key()),self.clock_key())
+        for field,value in [('schema','other'),('audience','https://other.invalid'),('key_id','bad/key'),('public_key_spki','bad')]:
+            key=self.clock_key();key[field]=value
+            with self.assertRaises(ValueError):runner.validate_clock_key(key)
+        key=self.clock_key();key['unexpected']='ignored'
+        with self.assertRaises(ValueError):runner.validate_clock_key(key)
+
+    def test_clock_public_key_rejects_noncanonical_base64(self):
+        key=self.clock_key();key['public_key_spki']=key['public_key_spki'][:-1]+'R'
+        with self.assertRaises(ValueError):runner.validate_clock_key(key)
+
     def backend(self, origin=None, **extra):
         origin=origin or runner.PRODUCTION_ORIGIN
         value=dict(endpoint=origin,tls='public_ca_bundle',uplink_transport='mqtt_tls' if origin==runner.PRODUCTION_ORIGIN else 'https')

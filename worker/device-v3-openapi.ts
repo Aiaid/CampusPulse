@@ -23,11 +23,24 @@ export function addDeviceV3OpenApi<T extends { paths: object; components: { sche
     responses: { '200': result('DeviceV3Response'), ...failures },
   });
   Object.assign(document.paths, {
+    '/api/v3/clock': { post: { operationId: 'readSignedDeviceV3Clock', tags: ['Device ingestion'], security: [],
+      description: 'Credential-free nonce-bound P-256/SHA-256 time proof. Send no Authorization, Cookie, identity or query. Verify against the USB-pinned key, exact audience and fresh nonce; a response never establishes its own trust key. The transcript is schema, audience, key_id, nonce, unix_ms, max_error_ms separated by LF with a final LF; integers are base-10 ASCII. max_error_ms is the configured server assumption, excluding the client RTT bound.',
+      requestBody: { required: true, content: { 'application/json': { schema: schema('DeviceV3ClockRequest') } } },
+      responses: { '200': result('DeviceV3ClockProof'), ...failures } } },
+    '/api/v3/clock/key': { get: { operationId: 'readDeviceV3ClockPublicKey', tags: ['Device ingestion'], security: [],
+      description: 'Public DER91 P-256 SPKI metadata for an already trusted USB provisioning workflow. No credentials or query. Do not trust, replace or rotate a pinned key from this response during boot.',
+      responses: { '200': result('DeviceV3ClockPublicKey'), ...failures } } },
     '/api/v1/admin/device-v3/assignments': { post: admin('assignDeviceV3Policy', 'post', 'Commit a capability-bound frozen V3 policy under generation compare-and-swap. Requires a later device applied ACK.') },
     '/api/v1/admin/device-v3/nodes/{id}': { get: admin('inspectDeviceV3Control', 'get', 'Read current boot, claimed capability, frozen desired assignment and applied acknowledgement separately.') },
     '/api/v1/admin/device-v3/nodes/{id}/evidence': { get: admin('inspectDeviceV3Evidence', 'get', 'Read bounded V3 statistics, receipts and loss diagnostics. Historical projection counts are audit metadata only.') },
+    '/api/v1/admin/device-v3/nodes/{id}/startup-grant': {
+      get: admin('inspectDeviceV3StartupGrant', 'get', 'Read explicit startup approval and revision. No grant means disabled.'),
+      post: { ...admin('approveDeviceV3StartupGrant', 'post', 'Approve a current applied native MQTT statistics policy as a renewable template, or revoke it. Requires expected_revision compare-and-swap. Grant maximum 30 days; generated policy maximum 30 minutes. Existing raw/queue/resource/placement restrictions remain exact. A new manual assignment revokes startup approval. Revocation stops new generated authority but preserves historical receipts and original custody deadlines.'),
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-z0-9_-]{1,64}$' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: schema('DeviceV3StartupGrantRequest') } } } },
+    },
     '/api/v3/device/capabilities': { post: device('registerDeviceV3Capabilities', 'DeviceV3Registration', 'DeviceV3Response', 'Register this boot capability declaration. Capabilities remain device claims, not hardware acceptance.') },
-    '/api/v3/device/config': { get: { ...device('readDeviceV3Config', null, 'DeviceV3Response', 'Read the frozen policy for the registered boot and capability digest.'), parameters: [{ name: 'boot_id', in: 'query', required: true, schema: { type: 'string', format: 'uuid' } }] } },
+    '/api/v3/device/config': { get: { ...device('readDeviceV3Config', null, 'DeviceV3Response', 'Read the frozen policy for the registered boot and capability digest. With an explicit current startup grant, an unavailable source/descendant may atomically mint a fresh generation bounded by current capabilities, placement, grant and policy TTL. This never fabricates an applied ACK or lease; concurrent mint conflicts require a fresh GET.'), parameters: [{ name: 'boot_id', in: 'query', required: true, schema: { type: 'string', format: 'uuid' } }] } },
     '/api/v3/device/config/ack': { post: device('acknowledgeDeviceV3Config', 'DeviceV3Acknowledgement', 'DeviceV3Response', 'Commit an applied or rejected policy acknowledgement. Only the committed applied acknowledgement authorizes subsequent collection.') },
     '/api/v3/device/lease': { post: device('renewDeviceV3Lease', 'DeviceV3ControlRequest', 'DeviceV3Response', 'Renew bounded collection authority. Receipt-only replay cannot create new authority.') },
     '/api/v3/ingest': { post: device('ingestDeviceV3Features', 'DeviceV3FeatureBatch', 'DeviceV3Receipt', 'Optional gated private V3 feature evidence. Send X-Body-SHA256 of the exact UTF-8 HTTP body bytes; preserve frozen policy, boot, sequence and batch identity across retries.', true) },
@@ -38,6 +51,22 @@ export function addDeviceV3OpenApi<T extends { paths: object; components: { sche
       responses: { '200': result('PublicStatisticsV3'), '503': failures['503'] } } },
   });
   Object.assign(document.components.schemas, {
+    DeviceV3ClockRequest: { type: 'object', additionalProperties: false, required: ['nonce'], properties: { nonce: { type: 'string', pattern: '^[0-9a-f]{64}$' } } },
+    DeviceV3ClockProof: { type: 'object', additionalProperties: false, required: ['schema', 'audience', 'key_id', 'nonce', 'unix_ms', 'max_error_ms', 'sig'], properties: {
+      schema: { const: 'cp-v3-signed-clock/1' }, audience: { type: 'string', format: 'uri' }, key_id: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,32}$' },
+      nonce: { type: 'string', pattern: '^[0-9a-f]{64}$' }, unix_ms: { type: 'integer', minimum: 0 }, max_error_ms: { type: 'integer', minimum: 1, maximum: 5000 },
+      sig: { type: 'string', pattern: '^[A-Za-z0-9_-]{86}$', description: 'Unpadded base64url of the raw 64-byte IEEE P1363 ECDSA signature.' } } },
+    DeviceV3ClockPublicKey: { type: 'object', additionalProperties: false, required: ['schema', 'audience', 'key_id', 'public_key_spki'], properties: {
+      schema: { const: 'cp-v3-signed-clock-key/1' }, audience: { type: 'string', format: 'uri' }, key_id: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,32}$' },
+      public_key_spki: { type: 'string', description: 'Unpadded base64url of the 91-byte DER P-256 SubjectPublicKeyInfo.' } } },
+    DeviceV3StartupGrantRequest: { oneOf: [
+      { type: 'object', additionalProperties: false, required: ['expected_revision', 'enabled'], properties: { expected_revision: { type: 'integer', minimum: 0 }, enabled: { const: false } } },
+      { type: 'object', additionalProperties: false, required: ['expected_revision', 'enabled', 'source_generation', 'grant_expires_at', 'policy_ttl_ms', 'accept_grace_ms'], properties: {
+        expected_revision: { type: 'integer', minimum: 0 }, enabled: { const: true }, source_generation: { type: 'integer', minimum: 1 },
+        grant_expires_at: { type: 'string', format: 'date-time', description: 'Canonical UTC with milliseconds; no more than 30 days from approval.' },
+        policy_ttl_ms: { type: 'integer', minimum: 60000, maximum: 1800000, description: 'At least twice the approved statistics window.' },
+        accept_grace_ms: { type: 'integer', minimum: 0, maximum: 86400000, description: 'Must not exceed the approved source acceptance grace.' } } },
+    ] },
     DeviceV3Error: { type: 'object', required: ['error'], properties: { error: { type: 'object', required: ['code','retryable'], properties: { code: { type: 'string' }, message: { type: 'string' }, retryable: { type: 'boolean' } } } } },
     DeviceV3Registration: { type: 'object', additionalProperties: false, required: ['protocol','registration_seq','uptime_ms','capabilities'], properties: {
       protocol: { const: 'campuspulse/3' }, registration_seq: { type: 'integer', minimum: 1 }, uptime_ms: { type: 'integer', minimum: 0 }, capabilities: { type: 'object', description: 'Exact device-capabilities/3 declaration; full nested capability negotiation is validated by the server.' } } },

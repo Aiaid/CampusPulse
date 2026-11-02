@@ -1,6 +1,7 @@
 import type { CreateObservation, Env, Observation, Place, PlaceSummary } from './types';
 import { handleDocs } from './docs';
 import { handleDeviceV3Control } from './device-v3-control';
+import { handleDeviceV3Clock } from './device-v3-clock';
 import { handleDeviceV3Ingest, expireDeviceV3Ingest } from './device-v3-ingest';
 import { handleDeviceV3Statistics, expireDeviceV3Statistics } from './device-v3-statistics';
 import { cleanupStatisticsLeaseSpans } from './device-v3-statistics-policy';
@@ -119,6 +120,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response | 
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return null;
   try {
+    const clock = await handleDeviceV3Clock(request, env);
+    if (clock) return clock;
     const deviceV3Control = await handleDeviceV3Control(request, env);
     if (deviceV3Control) return deviceV3Control;
     const statistics = await handleDeviceV3Statistics(request, env);

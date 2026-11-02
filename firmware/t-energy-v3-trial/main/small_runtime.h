@@ -1,3 +1,4 @@
 #pragma once
-/* Physical-USB, at most three windows. No claim of unattended operation. */
+/* Physical USB bounded trials or explicitly saved production startup. Source,
+ * host checks and builds do not establish untethered hardware acceptance. */
 void te_small_runtime(void *unused);

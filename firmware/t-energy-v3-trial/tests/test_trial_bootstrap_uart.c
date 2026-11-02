@@ -12,8 +12,9 @@ static const char json[] = "{\"node_id\":\"te-test\",\"boot_id\":\"boot-test\",\
 static const char *input;
 static size_t offset, input_length;
 static unsigned errors, accepted, delays;
-int64_t esp_timer_get_time(void) { return 1100000; }
-void vTaskDelay(unsigned ticks) { (void)ticks; ++delays; }
+static int64_t now=1100000;
+int64_t esp_timer_get_time(void) { return now; }
+void vTaskDelay(unsigned ticks) { now+=(int64_t)ticks*1000; ++delays; }
 ssize_t bootstrap_test_read(int fd, void *data, size_t n) {
     assert(fd == STDIN_FILENO && n == 1);
     if (offset == input_length) return 0;
@@ -29,6 +30,7 @@ int bootstrap_test_puts(const char *text) {
 int bootstrap_test_printf(const char *format, ...) { (void)format; return 0; }
 int bootstrap_test_fflush(FILE *file) { (void)file; return 0; }
 static bool cancelled(void) { return offset == input_length; }
+static bool after_grace(void) { return delays>=10; }
 static bool zero(const void *data, size_t size) {
     const unsigned char *p = data;
     while (size--) if (*p++) return false;
@@ -72,6 +74,11 @@ int main(void) {
     run("V3START {\"password\":\"test-pass",false,0);
     snprintf(line,length,"V3START %s\n",json); run(line,true,0);
     free(line); free(boundary);
+    trial_bootstrap_t out;input="";offset=input_length=0;delays=0;
+    assert(trial_bootstrap_wait_for("te-test","boot-test",&out,NULL,2)==ESP_ERR_TIMEOUT);assert(zero(&out,sizeof out));
+    const char *setup[]={"HELLO 0123456789abcdef0123456789abcdef\n","SETUP\n"};
+    for(unsigned i=0;i<2;i++){input=setup[i];offset=0;input_length=strlen(input);delays=0;
+        assert(trial_bootstrap_wait_for("te-test","boot-test",&out,after_grace,2)==ESP_ERR_INVALID_STATE&&delays>=10);assert(zero(&out,sizeof out));}
     fputs("trial bootstrap UART framing tests passed (memory IO only)\n",stdout);
     return 0;
 }

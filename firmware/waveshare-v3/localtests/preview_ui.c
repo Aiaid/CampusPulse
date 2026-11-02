@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
     lv_display_set_color_format(d, LV_COLOR_FORMAT_L8);
     lv_display_set_buffers(d, frame, NULL, sizeof(frame), LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(d, flush); raw_ui_init(d);
-    for (unsigned variant = 0; variant < 11; ++variant) {
+    for (unsigned variant = 0; variant < 14; ++variant) {
         edge_ui_metrics_t m = {.phase = EDGE_UI_COLLECTING, .metrics_known = true, .capture_known = true,
             .raw_policy_enabled = true, .raw_active = true, .queue_known = true, .rate_known = true,
             .history_known = true, .last_window_known = true, .tf_mounted = true,
@@ -99,7 +99,7 @@ int main(int argc, char **argv) {
         strcpy(s.wifi_ssid, "Test network"); strcpy(s.ip, "192.0.2.1");
         for (unsigned i = 0; i < 10; ++i) { s.rssi_bins[i] = -88 + i * 4; s.rssi_bin_known[i] = true; }
         for (unsigned i = 0; i < 10; ++i) s.report_bins[i] = (uint32_t[]) {40,55,80,128,100,80,70,55,75,95}[i];
-        const char *name = (const char *[]) {"normal", "unknown", "large", "error", "waiting", "starting", "stopping", "safe", "raw-disabled", "known-zero", "safe-error"}[variant];
+        const char *name = (const char *[]) {"normal", "unknown", "large", "error", "waiting", "starting", "stopping", "safe", "raw-disabled", "known-zero", "safe-error", "saved-waiting", "saved-safe", "auto-starting"}[variant];
         if (variant == 1) { m = (edge_ui_metrics_t) {.phase = EDGE_UI_PAUSED}; s = (raw_display_snapshot_t) {0}; }
         if (variant == 2) {
             m.windows = m.confirmed_windows = m.current_pending = m.historical_pending = m.upload_failures = m.retries = UINT32_MAX;
@@ -118,6 +118,9 @@ int main(int argc, char **argv) {
         if (variant == 8) { m.raw_policy_enabled = m.raw_active = false; s.written = s.synced = 0; }
         if (variant == 9) { s.received = s.dropped = s.written = s.synced = s.reports_per_second = 0; memset(s.report_bins, 0, sizeof s.report_bins); }
         if (variant == 10) { m.phase = EDGE_UI_ERROR; m.raw_active = m.tf_mounted = false; m.raw_fault = m.storage_fault = true; s.setup_available = true; s.storage_errors = 42; }
+        if(variant==11){m=(edge_ui_metrics_t){.phase=EDGE_UI_WAIT_USB,.startup_saved=true};s=(raw_display_snapshot_t){0};}
+        if(variant==12){m.phase=EDGE_UI_STOPPED_SAFE;m.startup_saved=true;m.raw_active=m.tf_mounted=false;}
+        if(variant==13){m=(edge_ui_metrics_t){.phase=EDGE_UI_STARTING,.startup_saved=true,.auto_starting=true};s=(raw_display_snapshot_t){0};}
         m.transport_known=m.phase!=EDGE_UI_WAIT_USB;m.mqtt_tls=(variant%2)==0;
         edge_ui_state(&m);
         for (unsigned page = 0; page < 5; ++page) {
@@ -134,6 +137,9 @@ int main(int argc, char **argv) {
             if (page == 3 && (!has_label(screen, "候梯估计未启用") || !has_label(screen, "近10窗RSSI/dBm"))) return 1;
             if (page == 4 && variant == 4 && !has_label(screen, "等待电脑配置")) return 1;
             if (page == 4 && variant == 7 && !has_label(screen, "需重启后重新配置")) return 1;
+            if(page==4&&variant==11&&!has_label(screen,"已保存配置，可重新配置"))return 1;
+            if(page==4&&variant==12&&(!has_label(screen,"上电后自动联网采集")||has_label(screen,"重启后连接电脑USB")))return 1;
+            if(page==4&&variant==13&&!has_label(screen,"已保存配置，正在自动启动"))return 1;
             if (page == 1 && variant == 1 && !has_label(screen, "--")) return 1;
             if (page == 1 && variant == 7 && !has_label(screen, "--")) return 1;
             if (page == 1 && variant == 9 && !has_label(screen, "0")) return 1;

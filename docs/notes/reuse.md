@@ -988,6 +988,16 @@ are preserved. The old raw image's fonts and generator are unchanged; no font
 binary is copied into the repository. Synthetic host previews remain outside
 the repository and their final PNG metadata was inspected.
 
+The 2026-11-02 persistent-startup work reuses `cp_settings` validation and the
+installed ESP-IDF5.5.3 Wi-Fi/NVS/HTTP/SNTP/mbedTLS APIs. The new profile codec,
+dual-slot selector/recovery provider, clock transcript/parser and application
+startup logic are authored here. ECDSA P256 verification uses the SDK mbedTLS
+implementation; the host parity tests use actual WebCrypto/OpenSSL and the
+public NIST generator point. No third-party application implementation, private
+key, captured observation or credential is imported into source. The native UI
+keeps its reviewed OFL source/notice hashes and adds only the glyphs needed to
+describe optional saved startup.
+
 The 2026-10-31 T-Energy `small_runtime.c` is newly authored here and reuses the
 existing board budget/small-queue adapters and `cp_v3_*` components. Only actual
 model/pin facts are referenced from LILYGO's official documentation; no GPL

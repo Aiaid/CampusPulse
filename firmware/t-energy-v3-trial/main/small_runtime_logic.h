@@ -9,6 +9,27 @@
 #define TE_SMALL_WORKING 4194304u
 #define TE_SMALL_STORAGE_DAY 1048576u
 #define TE_SMALL_UPLINK_DAY 131072u
+#define TE_SMALL_REFRESH_MS 1200000u
+/* ESP-IDF5.5.3 MQTT3.1.1 CONNACK4/5 are bad credentials/not authorized;
+ * server-unavailable3 remains retryable. No client-provided status invents ACK. */
+static inline bool te_small_identity_denied(int http_status,int mqtt_connect_code){
+    return http_status==401||http_status==403||mqtt_connect_code==4||mqtt_connect_code==5;
+}
+/* Continuous application cycles stop the scanner after complete full windows,
+ * avoiding a newly opened partial handoff at a planned real-boot boundary. */
+static inline uint32_t te_small_capture_windows(unsigned requested,uint32_t window_ms){
+    if(requested)return requested<=3?requested:0;
+    return (window_ms==30000||window_ms==60000)?TE_SMALL_REFRESH_MS/window_ms:0;
+}
+static inline bool te_small_cycle_complete(unsigned requested,uint32_t current_acked,
+    uint32_t planned_windows,bool status_acked,bool retry_verified){
+    return status_acked&&current_acked==planned_windows&&planned_windows&&
+        (requested?requested<=3&&planned_windows==requested&&retry_verified:true);
+}
+static inline bool te_small_restart_safe(bool network_stopped,bool capture_quiescent,
+    unsigned handoffs,bool frozen_volatile,bool write_uncertain,unsigned corrupt,unsigned retired){
+    return network_stopped&&capture_quiescent&&!handoffs&&!frozen_volatile&&!write_uncertain&&!corrupt&&!retired;
+}
 /* Same destination profile as the Waveshare runtime. This selects only the
  * configured deadline; shared transport still validates the origin and TLS. */
 static inline uint32_t te_small_request_timeout_ms(const char *origin){

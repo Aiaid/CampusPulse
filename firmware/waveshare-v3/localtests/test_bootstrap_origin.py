@@ -29,9 +29,10 @@ class BootstrapOrigin(unittest.TestCase):
                                 '-I' + str(PROJECT / 'localtests/stubs'), '-I' + str(json_dir),
                                 '-I' + str(parser), '-I' + str(component),
                                 *['-I' + str(ROOT / 'firmware/components' / name / 'include')
-                                  for name in ('cp_settings', 'cp_v3_evidence', 'cp_v3_transport')],
+                                  for name in ('cp_settings', 'cp_v3_evidence', 'cp_v3_transport', 'cp_v3_startup')],
                                 str(PROJECT / 'localtests/bootstrap_origin_test.c'),
                                 str(ROOT / 'firmware/components/cp_settings/settings_validate.c'),
+                                str(ROOT / 'firmware/components/cp_v3_startup/profile.c'),
                                 str(component / 'protocol.c'), str(parser / 'http_parser.c'),
                                 str(upstream), '-lm', '-o', str(binary)], check=True)
                 subprocess.run([str(binary)], check=True)

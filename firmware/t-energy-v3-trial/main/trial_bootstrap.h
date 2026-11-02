@@ -15,10 +15,17 @@ typedef struct {
     cp_v3_time_t clock_seed;
     unsigned max_windows;
     cp_v3_transport_mode_t transport;
+    bool save_startup, startup_reconfigure;
+    char clock_key_id[33];
+    uint8_t clock_public_spki[91];
 } trial_bootstrap_t;
-/* Physical USB only, no persistent secret or automatic network operation.
- * Every boot requires a fresh trusted host time and matching node/boot. */
+/* Physical USB only; parsing performs no persistence or network operation.
+ * This path requires fresh trusted host time and matching node/boot. The
+ * independent startup store/clock implements explicit saved-profile boot. */
 esp_err_t trial_bootstrap_wait(const char *node, const char *boot, trial_bootstrap_t *, bool (*cancelled)(void));
+/* A nonzero grace times out only before a valid fresh HELLO or explicit SETUP;
+ * either selects physical USB setup until a valid frame or cancellation. */
+esp_err_t trial_bootstrap_wait_for(const char *node, const char *boot, trial_bootstrap_t *, bool (*cancelled)(void), uint32_t grace_ms);
 void trial_bootstrap_clear(trial_bootstrap_t *);
 /* Pure parser with caller-supplied current boot monotonic time. Eleven original
  * fields remain mandatory; current tools also emit uplink_transport. Production

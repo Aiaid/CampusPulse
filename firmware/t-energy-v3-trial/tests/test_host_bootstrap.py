@@ -43,6 +43,12 @@ def hello(nonce=NONCE):
     return dict(node_id=NODE, boot_id=BOOT, request_id=nonce, mono_ms=1234)
 
 
+def startup_key():
+    import base64
+    der=ec.generate_private_key(ec.SECP256R1()).public_key().public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)
+    return dict(schema="cp-v3-signed-clock-key/1",audience="https://pulse.anend.net",key_id="synthetic-key-1",public_key_spki=base64.urlsafe_b64encode(der).rstrip(b"=").decode())
+
+
 class Clock:
     def __init__(self):
         self.now = 10000
@@ -609,6 +615,57 @@ class BootstrapTests(unittest.TestCase):
             with self.assertRaises(host.BootstrapError):
                 host.run_bootstrap(backend, self.wifi, "fake", serial_factory=factory, **options)
             factory.assert_not_called()
+
+    def test_explicit_startup_save_zero_and_bounded_preserve_exact_flat_schema(self):
+        key=startup_key()
+        for windows in (0,1,2,3):
+            frame=self.frame(backend=self.production_backend,allow_production=True,save_startup=True,clock_key=key,windows=windows)
+            body=json.loads(frame[8:]);self.assertEqual(body["max_windows"],windows)
+            self.assertIs(body["save_startup"],True);self.assertIs(body["startup_reconfigure"],False)
+            self.assertEqual(body["clock_public_spki"],key["public_key_spki"])
+            self.assertNotIn("server_ca_pem",body)
+        with self.assertRaises(host.BootstrapError):self.frame(backend=self.production_backend,allow_production=True,windows=0)
+
+    def test_startup_metadata_and_options_fail_closed_before_usb(self):
+        key=startup_key()
+        bad=[None,key|{"extra":1},key|{"audience":"https://elsewhere.invalid"},key|{"schema":"other"},key|{"key_id":"bad\nkey"},key|{"public_key_spki":"A"*122},key|{"public_key_spki":key["public_key_spki"]+"="}]
+        for metadata in bad:
+            factory=mock.Mock(side_effect=AssertionError("must not open USB"))
+            with self.assertRaises(host.BootstrapError):host.run_bootstrap(self.production_backend,self.wifi,"fake",serial_factory=factory,allow_production=True,save_startup=True,clock_key=metadata)
+            factory.assert_not_called()
+        for options in (dict(startup_reconfigure=True),dict(save_startup=False,clock_key=key),dict(save_startup=1,clock_key=key),dict(save_startup=True,clock_key=key,allow_production=False)):
+            with self.assertRaises(host.BootstrapError):host.startup_fields(**options)
+
+    def test_accepted_is_not_saved_and_only_exact_marker_confirms(self):
+        key=startup_key()
+        for marker,success in ((b"V3 STARTUP SAVED\n",True),(b"V3 STARTUP SAVED extra\n",False),(b"V3 STARTUP SAVE FAILED\n",False),(b"",False)):
+            clock=Clock();port=Serial(clock,port=None,timeout=.1,write_timeout=1,baudrate=115200)
+            port.ack=b"V3 START ACCEPTED\n"+marker
+            options=dict(serial_factory=lambda **_:port,clock=clock,nonce_factory=lambda:NONCE,allow_production=True,save_startup=True,clock_key=key,windows=0,startup_saved_timeout_ms=300)
+            if success:self.assertEqual(host.run_bootstrap(self.production_backend,self.wifi,"fake-port",**options),{"accepted":True,"saved":True})
+            else:
+                with self.assertRaises(host.BootstrapError):host.run_bootstrap(self.production_backend,self.wifi,"fake-port",**options)
+            self.assertTrue(port.closed);self.assertTrue(all(byte==0 for byte in port.frame_ref))
+
+    def test_safe_restart_requires_permission_and_fresh_second_nonce(self):
+        safe=hello()|dict(restart_required=True)
+        with self.assertRaises(host.BootstrapError):host.validate_hello(safe,NODE,NONCE)
+        self.assertEqual(host.validate_hello(safe,NODE,NONCE,allow_safe_restart=True),safe)
+        clock=Clock();port=Serial(clock,port=None,timeout=.1,write_timeout=1,baudrate=115200)
+        port.reply=lambda nonce:b"V3 HELLO "+json.dumps(hello(nonce)|dict(restart_required=True)).encode()+b"\n"
+        original=port.write
+        def write(data):
+            if bytes(data)==b"RESTART\n":
+                port.records.append(b"RESTART")
+                port.reply=lambda nonce:b"V3 HELLO "+json.dumps(hello(nonce)|dict(boot_id="11234567-89ab-4cde-8123-456789abcdef")).encode()+b"\n"
+                return len(data)
+            return original(data)
+        port.write=write
+        nonces=iter((NONCE,"a"*32))
+        with mock.patch.object(host.time,"sleep"):
+            host.run_bootstrap(self.backend,self.wifi,"fake-port",serial_factory=lambda **_:port,clock=clock,nonce_factory=lambda:next(nonces),safe_restart=True)
+        self.assertEqual(port.records[:3],[b"HELLO "+NONCE.encode(),b"RESTART",b"HELLO "+b"a"*32])
+        self.assertEqual(json.loads(port.records[3][8:])["boot_id"],"11234567-89ab-4cde-8123-456789abcdef")
 
 if __name__ == "__main__":
     unittest.main()

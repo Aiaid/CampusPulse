@@ -1,5 +1,13 @@
 # Bounded T-Energy runtime and acceptance
 
+## Scope note — 2026-11-02
+
+The current entry adds explicitly saved startup and authenticated time recovery
+in `0.3.3-te-autostart`; see [README](README.md). The records below preserve the
+earlier bounded runtime and hardware acceptance scope. They do not establish the
+new autonomous boot, periodic restart, arbitrary-power-loss or daily capacity
+acceptance. Default USB bounded and explicit checkpoint behavior remain available.
+
 Status (2026-10-31): standalone runtime implemented; host/build evidence is
 separate from actual device acceptance. No physical operation is implied here.
 

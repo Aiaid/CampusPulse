@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import StartupGrant from './StartupGrant.jsx';
 import { ArrowClockwise, CheckCircle, PaperPlaneTilt } from '@phosphor-icons/react';
 import { Badge, Dialog, DirectoryMore, Empty, ErrorNotice, Field, KeyValues, Notice, PageHeader, Panel, Resource, fmtTime, useAdmin, useDevices, useMutation, useResource } from './shared.jsx';
 
@@ -34,6 +35,7 @@ export function V3Configuration({node,embedded=false}) {
     {check&&<div role="status"><Notice>{check.valid?'静态能力校验通过。发布后仍需设备在关闭窗口边界确认；尚未应用。':'能力或策略不兼容，发布已禁用。'}</Notice>{check.issues.length>0&&<pre className="cp-admin-json">{JSON.stringify(check.issues,null,2)}</pre>}</div>}
    </>}
   </Panel>}
+  <StartupGrant node={node} control={c} onChange={control.retry}/>
   {view&&<Dialog title="不可变 V3 策略" wide onClose={()=>setView(false)}><pre className="cp-admin-json">{JSON.stringify(c.desired,null,2)}</pre></Dialog>}
  </>}</Resource><ErrorNotice error={mutation.error}/></>;
 }

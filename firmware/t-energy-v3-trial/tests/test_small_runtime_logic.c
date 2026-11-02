@@ -2,6 +2,18 @@
 #include <assert.h>
 #include <stdio.h>
 int main(void){
+    assert(te_small_capture_windows(0,60000)==20&&te_small_capture_windows(0,30000)==40);
+    assert(!te_small_capture_windows(0,0)&&!te_small_capture_windows(4,60000));
+    assert(te_small_capture_windows(3,60000)==3);
+    assert(!te_small_cycle_complete(0,0,20,true,true));
+    assert(!te_small_cycle_complete(0,19,20,true,true));
+    assert(te_small_cycle_complete(0,20,20,true,false));
+    assert(!te_small_cycle_complete(1,0,1,true,true));
+    assert(!te_small_cycle_complete(1,1,1,true,false));
+    assert(te_small_cycle_complete(1,1,1,true,true));
+    for(int code=0;code<=5;code++)assert(te_small_identity_denied(0,code)==(code==4||code==5));
+    assert(te_small_identity_denied(401,0)&&te_small_identity_denied(403,0)&&!te_small_identity_denied(503,0));
+    for(unsigned bits=0;bits<128;bits++)assert(te_small_restart_safe(bits&1,bits&2,bits&4,bits&8,bits&16,bits&32,bits&64)==(bits==3));
     assert(te_small_request_timeout_ms(CP_API_ORIGIN)==30000);
     const char *isolated[]={NULL,"","https://192.168.1.2:8799","https://isolated.example",
         CP_API_ORIGIN ":443",CP_API_ORIGIN ":8443",CP_API_ORIGIN "/",CP_API_ORIGIN ".",
@@ -20,6 +32,7 @@ int main(void){
         assert(te_small_clock_at(a,1000+age,&t));
         assert(t.utc_ms==a.utc_ms+age&&t.uncertainty_ms==250+(age+1999)/2000);
     }
+    a.uncertainty_ms=4000;assert(te_small_clock_at(a,1000+TE_SMALL_REFRESH_MS,&t)&&t.uncertainty_ms==4600);
     a.uncertainty_ms=5000;assert(te_small_clock_at(a,1000,&t));assert(!te_small_clock_at(a,1001,&t));
     a.clock_epoch=0;assert(!te_small_clock_at(a,1000,&t));
     a.clock_epoch=1;a.uncertainty_ms=250;a.utc_ms=UINT64_MAX-1;assert(!te_small_clock_at(a,1002,&t));

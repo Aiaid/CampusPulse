@@ -16,9 +16,11 @@ const implemented = [
   'GET /api/v1/settings', 'GET /api/v3/device/config', 'POST /api/v3/device/capabilities',
   'POST /api/v3/device/config/ack', 'POST /api/v3/device/lease', 'POST /api/v3/ingest',
   'POST /api/v3/statistics/ingest', 'GET /api/v3/places/{id}/statistics',
+  'POST /api/v3/clock', 'GET /api/v3/clock/key',
   'POST /api/v1/admin/device-v3/prepare', 'POST /api/v1/admin/device-v3/validate',
   'POST /api/v1/admin/device-v3/assignments', 'GET /api/v1/admin/device-v3/nodes/{id}',
   'GET /api/v1/admin/device-v3/nodes/{id}/evidence',
+  'GET /api/v1/admin/device-v3/nodes/{id}/startup-grant', 'POST /api/v1/admin/device-v3/nodes/{id}/startup-grant',
   'GET /api/v1/admin/session', 'POST /api/v1/admin/session', 'DELETE /api/v1/admin/session',
   'GET /api/v1/admin/overview', 'GET /api/v1/admin/devices', 'POST /api/v1/admin/devices',
   'GET /api/v1/admin/devices/{id}', 'PATCH /api/v1/admin/devices/{id}',
@@ -176,7 +178,7 @@ describe('OpenAPI contract and existing authorization', () => {
       const expectedScheme = path.startsWith('/api/v1/admin/') ? publicAdmin ? null : 'AdminSession'
         : path.startsWith('/api/v3/device/') || path === '/api/v3/ingest' || path === '/api/v3/statistics/ingest' ? 'DeviceToken'
         : path === '/api/v1/research/batches/{id}' || path === '/api/v2/research/batches/{id}' ? 'ResearchToken'
-          : method !== 'get' ? 'OperatorToken' : null;
+          : path === '/api/v3/clock' || path === '/api/v3/clock/key' ? null : method !== 'get' ? 'OperatorToken' : null;
       if (!expectedScheme) expect(security).toEqual([]);
       else {
         expect(security).toEqual([{ [expectedScheme]: [] }]);

@@ -19,6 +19,11 @@ function generate(extra: Record<string, string>) {
       MQTT_PROVISIONING_KEY: 'synthetic-unused-config-test-mqtt-key',
       ADMIN_TOKEN: 'synthetic-unused-config-test-admin',
       RESEARCH_TOKEN: 'synthetic-unused-config-test-research',
+      DEVICE_V3_STARTUP_ENABLED: extra.DEVICE_V3_CONTROL_ENABLED==='false'||extra.DEVICE_V3_STATISTICS_ENABLED==='false'?'false':'true',
+      DEVICE_V3_CLOCK_KEY_ID: 'cp-clock-20261102',
+      DEVICE_V3_CLOCK_AUDIENCE: 'https://pulse.anend.net',
+      DEVICE_V3_CLOCK_MAX_ERROR_MS: '1000',
+      DEVICE_V3_CLOCK_PRIVATE_KEY_JWK: 'synthetic-unused-config-test-clock-key',
       ...extra,
     } });
     const path = join(root, '.wrangler/deploy/wrangler.json');
@@ -38,8 +43,9 @@ describe('trusted administrator deployment origin', () => {
     expect(result.config.secrets.required).toContain('ADMIN_TOKEN');
     expect(result.config.vars).not.toHaveProperty('ADMIN_TOKEN');
     expect(result.config.vars).not.toHaveProperty('MQTT_PROVISIONING_KEY');
+    expect(result.config.vars).not.toHaveProperty('DEVICE_V3_CLOCK_PRIVATE_KEY_JWK');
     for (const value of ['synthetic-unused-config-test-admin','synthetic-unused-config-test-operator',
-      'synthetic-unused-config-test-research','synthetic-unused-config-test-mqtt-key']) {
+      'synthetic-unused-config-test-research','synthetic-unused-config-test-mqtt-key','synthetic-unused-config-test-clock-key']) {
       expect(JSON.stringify(result.config)).not.toContain(value);
     }
   });
@@ -68,10 +74,11 @@ describe('small-statistics release configuration', () => {
     const result = generate({});
     expect(result.status).toBe(0);
     expect(result.config.vars).toEqual({ DEVICE_V3_CONTROL_ENABLED: 'true', DEVICE_V3_STATISTICS_ENABLED: 'true',
-      DEVICE_V3_PRODUCER_VERSIONS: '["cp-v3-small/1"]', DEVICE_V3_INGEST_ENABLED: 'false', CPRAW_ARCHIVE_ENABLED: '0' });
+      DEVICE_V3_PRODUCER_VERSIONS: '["cp-v3-small/1"]', DEVICE_V3_INGEST_ENABLED: 'false', CPRAW_ARCHIVE_ENABLED: '0',
+      DEVICE_V3_STARTUP_ENABLED:'true',DEVICE_V3_CLOCK_KEY_ID:'cp-clock-20261102',DEVICE_V3_CLOCK_AUDIENCE:'https://pulse.anend.net',DEVICE_V3_CLOCK_MAX_ERROR_MS:'1000' });
     expect(result.config.triggers.crons).toEqual(['*/15 * * * *']);
     expect(result.config.d1_databases[0].migrations_dir).toMatch(/migrations$/);
-    expect(JSON.parse(readFileSync(resolve('wrangler.jsonc'), 'utf8')).vars).toBeUndefined();
+    expect(JSON.parse(readFileSync(resolve('wrangler.jsonc'), 'utf8')).vars.DEVICE_V3_STARTUP_ENABLED).toBe('false');
   });
   it.each<Record<string, string>>([
     { DEVICE_V3_STATISTICS_ENABLED: 'false' },
@@ -93,6 +100,8 @@ describe('small-statistics release configuration', () => {
     { DEVICE_V3_CONTROL_ENABLED: 'TRUE' },
     { DEVICE_V3_STATISTICS_ENABLED: '1' },
     { DEVICE_V3_STATISTICS_ENABLED: '' },
+    { DEVICE_V3_STARTUP_ENABLED: '1' },
+    { DEVICE_V3_STARTUP_ENABLED: 'true', DEVICE_V3_CONTROL_ENABLED:'false', DEVICE_V3_STATISTICS_ENABLED:'false' },
     { DEVICE_V3_INGEST_ENABLED: 'true' },
     { CPRAW_ARCHIVE_ENABLED: '1' },
     { DEVICE_V3_PRODUCER_VERSIONS: 'invalid' },

@@ -38,7 +38,8 @@ it('serves real HTTPS with private credentials, complete migrations and no publi
   expect(result.status).toBe(200); expect(JSON.parse(result.body)).toEqual({ ready: true, draining: false, isolation: 'synthetic-controlled-test' });
   for (const path of ['/__synthetic_cleanup', '/admin', '/api/v1/admin/session', '/api/v1/places']) expect((await send(path)).status).toBe(404);
   expect((await send('/api/v1/admin/device-v3/nodes/test-controlled-device')).status).toBe(401);
-  expect(await server.db.prepare('SELECT COUNT(*) n FROM v3_integration_migrations').first()).toEqual({ n: 18 });
+  const migrationCount=(await readdir(new URL('../migrations/',import.meta.url))).filter(name=>/^\d+_.+\.sql$/.test(name)).length;
+  expect(await server.db.prepare('SELECT COUNT(*) n FROM v3_integration_migrations').first()).toEqual({ n: migrationCount });
   expect(await server.db.prepare('SELECT COUNT(*) n FROM device_capabilities_v3').first()).toEqual({ n: 0 });
   expect(await server.db.prepare('SELECT COUNT(*) n FROM device_acknowledgements_v3').first()).toEqual({ n: 0 });
   expect(server.config.device.nodeId).toBe('test-controlled-device');

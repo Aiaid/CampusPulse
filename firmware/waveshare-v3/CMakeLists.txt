@@ -11,6 +11,7 @@ set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../components/cp_v3_small_results"
     "${CMAKE_CURRENT_LIST_DIR}/../components/cp_v3_capture"
     "${CMAKE_CURRENT_LIST_DIR}/../components/cp_settings")
+list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../components/cp_v3_startup" "${CMAKE_CURRENT_LIST_DIR}/../components/cp_v3_clock")
 if(DEFINED RAW_LVGL_PATH)
     list(APPEND EXTRA_COMPONENT_DIRS "${RAW_LVGL_PATH}")
 endif()

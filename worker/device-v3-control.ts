@@ -11,7 +11,7 @@ import { assertV3StatisticsPolicy, supportsV3StatisticsPolicy, v3StatisticsEnabl
   type DeviceV3StatisticsEnv, type V3StatisticsPolicy } from './device-v3-statistics-policy';
 import { readAdminDeviceV3Evidence } from './device-v3-admin-evidence';
 
-export type DeviceV3ControlEnv = DeviceV3StatisticsEnv;
+export type DeviceV3ControlEnv = DeviceV3StatisticsEnv & { DEVICE_V3_STARTUP_ENABLED?: string };
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const HASH = /^[0-9a-f]{64}$/;
@@ -27,6 +27,20 @@ interface Assignment {
 }
 interface Capability { capability_json: string; capability_sha256: string; issued_at_ms: number; expires_at_ms: number }
 interface AckRow { body_sha256: string; acknowledgement_json: string; received_at: string }
+interface StartupGrant {
+  node_id: string; revision: number; enabled: number; source_generation: number | null; source_policy_sha256: string | null;
+  grant_expires_at_ms: number | null; policy_ttl_ms: number | null; accept_grace_ms: number | null; created_at: string;
+}
+const startupGrant = (env: Env, node: string) => env.DB.prepare(`SELECT g.* FROM device_startup_state_v3 s
+  JOIN device_startup_grants_v3 g ON g.node_id=s.node_id AND g.revision=s.revision WHERE s.node_id=?`).bind(node).first<StartupGrant>();
+const startupVersion = (node: string, revision: number): AuthAssertion => ({ sql: 'COALESCE((SELECT revision FROM device_startup_state_v3 WHERE node_id=?),0)=?', bindings: [node, revision] });
+function startupAuthority(env: DeviceV3ControlEnv, node: string, generation: number): AuthAssertion {
+  return { sql: `NOT EXISTS(SELECT 1 FROM device_startup_assignments_v3 WHERE node_id=? AND generation=?) OR
+    (?='true' AND EXISTS(SELECT 1 FROM device_startup_assignments_v3 a JOIN device_startup_state_v3 s ON s.node_id=a.node_id AND s.revision=a.grant_revision
+      JOIN device_startup_grants_v3 g ON g.node_id=s.node_id AND g.revision=s.revision
+      WHERE a.node_id=? AND a.generation=? AND g.enabled=1 AND g.grant_expires_at_ms>${NOW_SQL}))`,
+    bindings: [node, generation, env.DEVICE_V3_STARTUP_ENABLED ?? '', node, generation] };
+}
 function conflict(code = 'v3_control_conflict'): never { throw new IngestError(409, code, 'Control state changed or conflicts with immutable evidence. Refresh before retrying.'); }
 function bad(code: string): never { throw new IngestError(422, code, 'The requested v3 control operation is not supported or compatible.'); }
 const current = (env: Env, node: string) => env.DB.prepare('SELECT * FROM device_control_v3 WHERE node_id=?').bind(node).first<Control>();
@@ -164,6 +178,112 @@ async function register(request: Request, env: Env, node: string, authorization:
   return json(registrationReceipt({ node_id: node, boot_id: caps.boot_id, registration_seq: seq, capability_sha256: digest, registered_at: registeredAt }));
 }
 
+function writeStartupGrant(env: Env, row: StartupGrant): D1PreparedStatement[] {
+  return [env.DB.prepare(`INSERT INTO device_startup_grants_v3(node_id,revision,enabled,source_generation,source_policy_sha256,grant_expires_at_ms,policy_ttl_ms,accept_grace_ms,created_at)
+    VALUES(?,?,?,?,?,?,?,?,?)`).bind(row.node_id, row.revision, row.enabled, row.source_generation, row.source_policy_sha256,
+    row.grant_expires_at_ms, row.policy_ttl_ms, row.accept_grace_ms, row.created_at),
+  env.DB.prepare(`INSERT INTO device_startup_state_v3(node_id,revision) VALUES(?,?)
+    ON CONFLICT(node_id) DO UPDATE SET revision=excluded.revision`).bind(row.node_id, row.revision)];
+}
+const revokedStartupGrant = (node: string, revision: number): StartupGrant => ({ node_id: node, revision, enabled: 0,
+  source_generation: null, source_policy_sha256: null, grant_expires_at_ms: null, policy_ttl_ms: null, accept_grace_ms: null, created_at: new Date().toISOString() });
+async function manageStartupGrant(request: Request, env: DeviceV3ControlEnv, node: string, authorization: AuthAssertion) {
+  const prior = await startupGrant(env, node);
+  if (request.method === 'GET') {
+    await assertAuthorized(env, authorization);
+    return json({ protocol: 'campuspulse/3', node_id: node, startup_grant: prior,
+      service_enabled: env.DEVICE_V3_STARTUP_ENABLED === 'true', applied: false });
+  }
+  const { value } = await readBody(request);
+  const body = object(value, 'startup_grant', ['expected_revision', 'enabled'], ['source_generation', 'grant_expires_at', 'policy_ttl_ms', 'accept_grace_ms']);
+  const expected = integer(body.expected_revision, 'startup_grant.expected_revision', 0, Number.MAX_SAFE_INTEGER - 1);
+  if (typeof body.enabled !== 'boolean') bad('v3_startup_invalid');
+  if ((prior?.revision ?? 0) !== expected) conflict('v3_startup_revision_conflict');
+  let row = revokedStartupGrant(node, expected + 1);
+  const old = await current(env, node), guards: AuthAssertion[] = [startupVersion(node, expected)], finalGuards: AuthAssertion[] = [];
+  if (!old) conflict('v3_current_assignment_required');
+  guards.push(version(node, old));
+  if (body.enabled) {
+    if (env.DEVICE_V3_STARTUP_ENABLED !== 'true') bad('v3_startup_disabled');
+    const sourceGeneration = integer(body.source_generation, 'startup_grant.source_generation', 1);
+    if (old.desired_generation !== sourceGeneration || old.applied_generation !== sourceGeneration) conflict('v3_startup_applied_source_required');
+    const source = await assignment(env, node, sourceGeneration), ack = await acknowledgement(env, node, sourceGeneration);
+    if (!source || !ack || JSON.parse(ack.acknowledgement_json).state !== 'applied') conflict('v3_startup_applied_source_required');
+    const p = (await trustedEnvelope(source)).policy;
+    assertV3StatisticsPolicy(p, env);
+    if (p.uplink.transport !== 'mqtt_tls' || await unavailableReason(env, source, old, Date.now())) bad('v3_startup_source_unsupported');
+    const caps = await trustedCapabilities(env, node, source.capability_sha256);
+    const expiresText = string(body.grant_expires_at, 'startup_grant.grant_expires_at', /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    const expiry = Date.parse(expiresText), now = Date.now();
+    if (!Number.isSafeInteger(expiry) || new Date(expiry).toISOString() !== expiresText || expiry <= now || expiry > now + 30 * 86400000) bad('v3_startup_expiry_invalid');
+    const ttl = integer(body.policy_ttl_ms, 'startup_grant.policy_ttl_ms', Math.max(60000, p.collection.summary.window_ms * 2), 1800000);
+    const grace = integer(body.accept_grace_ms, 'startup_grant.accept_grace_ms', 0,
+      Math.min(86400000, Date.parse(p.custody.accept_until) - Date.parse(p.control.activation.expires_at)));
+    row = { node_id: node, revision: expected + 1, enabled: 1, source_generation: sourceGeneration, source_policy_sha256: source.policy_sha256,
+      grant_expires_at_ms: expiry, policy_ttl_ms: ttl, accept_grace_ms: grace, created_at: new Date(now).toISOString() };
+    finalGuards.push(enabled(node), activePlacement(node, p.custody.placement_id),
+      { sql: `?>${NOW_SQL} AND ?<=${NOW_SQL} AND MIN(?,?)>${NOW_SQL}`,
+        bindings: [expiry, source.not_before_ms, source.expires_at_ms, Date.parse(caps.expires_at)] });
+    guards.push(...finalGuards);
+  } else if (Object.keys(body).some(k => !['expected_revision', 'enabled'].includes(k))) bad('v3_startup_invalid');
+  await atomic(env, authorization, guards, [
+    ...(prior?.enabled ? endStatisticsSpans(env, node) : []), ...writeStartupGrant(env, row),
+    env.DB.prepare('UPDATE device_control_v3 SET state_version=state_version+1 WHERE node_id=?').bind(node),
+    env.DB.prepare('INSERT INTO admin_audit(action,target,detail_json,created_at) VALUES(?,?,?,?)')
+      .bind(row.enabled ? 'device_v3.startup_approve' : 'device_v3.startup_revoke', node,
+        JSON.stringify({ revision: row.revision, source_generation: row.source_generation, grant_expires_at_ms: row.grant_expires_at_ms }), row.created_at),
+  ], [startupVersion(node, row.revision), ...finalGuards,
+    { sql: 'EXISTS(SELECT 1 FROM device_control_v3 WHERE node_id=? AND state_version=? AND boot_id=? AND desired_generation IS ?)',
+      bindings: [node, old.state_version + 1, old.boot_id, old.desired_generation] }]);
+  return json({ protocol: 'campuspulse/3', node_id: node, startup_grant: row, applied: false, requires_device_ack: true });
+}
+
+/** Mint only from explicit still-current approval. No ACK/lease/capture is fabricated. */
+async function resumeStartup(env: DeviceV3ControlEnv, node: string, old: Control, authorization: AuthAssertion): Promise<Control> {
+  if (env.DEVICE_V3_STARTUP_ENABLED !== 'true') return old;
+  const grant = await startupGrant(env, node), now = Date.now();
+  if (!grant?.enabled || !grant.source_generation || !grant.grant_expires_at_ms || grant.grant_expires_at_ms <= now) return old;
+  const desired = old.desired_generation === null ? null : await assignment(env, node, old.desired_generation);
+  if (!desired) return old;
+  const lineage = await env.DB.prepare('SELECT grant_revision FROM device_startup_assignments_v3 WHERE node_id=? AND generation=?')
+    .bind(node, desired.generation).first<{ grant_revision: number }>();
+  if (desired.generation !== grant.source_generation && lineage?.grant_revision !== grant.revision) return old;
+  const unavailable = await unavailableReason(env, desired, old, now);
+  if (!unavailable || unavailable === 'placement_inactive' || unavailable === 'capabilities_expired') return old;
+  const source = await assignment(env, node, grant.source_generation);
+  if (!source || source.policy_sha256 !== grant.source_policy_sha256) throw new IngestError(503, 'v3_registry_invalid', 'Startup source failed integrity verification.');
+  const sourcePolicy = (await trustedEnvelope(source)).policy, caps = await trustedCapabilities(env, node, old.capability_sha256);
+  assertV3StatisticsPolicy(sourcePolicy, env, caps.producer_version);
+  if (sourcePolicy.uplink.transport !== 'mqtt_tls') bad('v3_startup_source_unsupported');
+  const expires = Math.min(now + grant.policy_ttl_ms!, grant.grant_expires_at_ms, Date.parse(caps.expires_at));
+  if (Date.parse(caps.issued_at) > now || expires - now <= sourcePolicy.collection.summary.window_ms) return old;
+  if (old.desired_generation! >= Number.MAX_SAFE_INTEGER) conflict('v3_history_full');
+  const generation = old.desired_generation! + 1;
+  const p: DeviceConfigV3 = { ...sourcePolicy, policy_id: `startup-${generation}-${crypto.randomUUID()}`, revision: 1, assignment_generation: generation,
+    custody: { ...sourcePolicy.custody, accept_until: new Date(expires + grant.accept_grace_ms!).toISOString() },
+    control: { ...sourcePolicy.control, capability_sha256: old.capability_sha256,
+      activation: { ...sourcePolicy.control.activation, boot_id: old.boot_id, after_window_seq: 0, after_segment_seq: 0,
+        not_before: new Date(now).toISOString(), expires_at: new Date(expires).toISOString() } } };
+  const frozen = await freezeDeviceConfigV3(p);
+  const negotiated = await negotiateDeviceConfigV3(frozen, caps, { node_id: node, boot_id: old.boot_id, now: new Date(now).toISOString(),
+    last_assignment_generation: generation - 1, closed_window_seq: 0, closed_segment_seq: 0, window_open: true, segment_open: true });
+  if (negotiated.issues.some(i => i.code !== 'boundary_not_ready')) bad('v3_startup_policy_incompatible');
+  const grantGuard: AuthAssertion = { sql: `EXISTS(SELECT 1 FROM device_startup_state_v3 s JOIN device_startup_grants_v3 g
+    ON g.node_id=s.node_id AND g.revision=s.revision WHERE s.node_id=? AND s.revision=? AND g.enabled=1 AND g.grant_expires_at_ms>${NOW_SQL})`, bindings: [node, grant.revision] };
+  const timeGuard: AuthAssertion = { sql: `?<=${NOW_SQL} AND ?>${NOW_SQL} AND ?-${NOW_SQL}>?`,
+    bindings: [Date.parse(caps.issued_at), Date.parse(caps.expires_at), expires, sourcePolicy.collection.summary.window_ms] };
+  await atomic(env, authorization, [version(node, old), enabled(node), grantGuard, timeGuard, activePlacement(node, p.custody.placement_id)], [
+    env.DB.prepare(`INSERT INTO device_assignments_v3(node_id,generation,policy_id,revision,boot_id,capability_sha256,policy_sha256,envelope_json,placement_id,not_before_ms,expires_at_ms,assigned_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).bind(node, generation, p.policy_id, p.revision, old.boot_id, old.capability_sha256, frozen.policy_sha256,
+      JSON.stringify(frozen), p.custody.placement_id, now, expires, new Date(now).toISOString()),
+    env.DB.prepare('INSERT INTO device_startup_assignments_v3(node_id,generation,grant_revision) VALUES(?,?,?)').bind(node, generation, grant.revision),
+    env.DB.prepare('UPDATE device_control_v3 SET desired_generation=?,state_version=state_version+1 WHERE node_id=?').bind(generation, node),
+  ], [grantGuard, timeGuard, enabled(node), activePlacement(node, p.custody.placement_id),
+    { sql: 'EXISTS(SELECT 1 FROM device_control_v3 WHERE node_id=? AND boot_id=? AND capability_sha256=? AND desired_generation=? AND state_version=?)',
+      bindings: [node, old.boot_id, old.capability_sha256, generation, old.state_version + 1] }]);
+  return { ...old, desired_generation: generation, state_version: old.state_version + 1 };
+}
+
 async function assign(request: Request, env: DeviceV3ControlEnv, authorization: AuthAssertion) {
   const { value } = await readBody(request);
   const body = object(value, 'assignment', ['policy', 'expected_generation']);
@@ -195,20 +315,22 @@ async function assign(request: Request, env: DeviceV3ControlEnv, authorization: 
   if (Date.parse(p.control.activation.not_before) >= Date.parse(caps.expires_at)) bad('v3_capability_interval_disjoint');
   if (!await check(env, activePlacement(node, p.custody.placement_id))) bad('v3_placement_inactive');
   const assignedAt = new Date().toISOString();
+  const startup = await startupGrant(env, node);
   const row: Assignment = { node_id: node, generation: p.assignment_generation, policy_id: p.policy_id, revision: p.revision,
     boot_id: old.boot_id, capability_sha256: old.capability_sha256, policy_sha256: frozen.policy_sha256,
     envelope_json: JSON.stringify(frozen), placement_id: p.custody.placement_id, not_before_ms: Date.parse(p.control.activation.not_before),
     expires_at_ms: Date.parse(p.control.activation.expires_at), assigned_at: assignedAt };
   try {
-    await atomic(env, authorization, [enabled(node), version(node, old), activePlacement(node, p.custody.placement_id),
+    await atomic(env, authorization, [enabled(node), version(node, old), startupVersion(node, startup?.revision ?? 0), activePlacement(node, p.custody.placement_id),
       ...(supportsV3IngestPolicy(p) || supportsV3StatisticsPolicy(p) ? [{ sql: `MIN(?,?)-MAX(${NOW_SQL},?)>?`, bindings: [row.expires_at_ms, Date.parse(caps.expires_at), row.not_before_ms, p.collection.summary.window_ms] }] : []),
       { sql: `?>${NOW_SQL} AND ?<=${NOW_SQL} AND ?>${NOW_SQL}`, bindings: [row.expires_at_ms, Date.parse(caps.issued_at), Date.parse(caps.expires_at)] },
     ], [
+      ...(startup?.enabled ? [...endStatisticsSpans(env, node), ...writeStartupGrant(env, revokedStartupGrant(node, startup.revision + 1))] : []),
       env.DB.prepare(`INSERT INTO device_assignments_v3(node_id,generation,policy_id,revision,boot_id,capability_sha256,policy_sha256,envelope_json,placement_id,not_before_ms,expires_at_ms,assigned_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).bind(node, row.generation, row.policy_id, row.revision, row.boot_id, row.capability_sha256, row.policy_sha256, row.envelope_json, row.placement_id, row.not_before_ms, row.expires_at_ms, assignedAt),
       env.DB.prepare('UPDATE device_control_v3 SET desired_generation=?,state_version=state_version+1 WHERE node_id=?').bind(row.generation, node),
       env.DB.prepare('INSERT INTO admin_audit(action,target,detail_json,created_at) VALUES(?,?,?,?)').bind('device_v3.assign', node, JSON.stringify({ generation: row.generation, policy_id: p.policy_id }), assignedAt),
-    ], [enabled(node), activePlacement(node, row.placement_id),
+    ], [enabled(node), activePlacement(node, row.placement_id), startupVersion(node, startup ? startup.revision + (startup.enabled ? 1 : 0) : 0),
       { sql: `?>${NOW_SQL} AND ?<=${NOW_SQL} AND ?>${NOW_SQL}`, bindings: [row.expires_at_ms, Date.parse(caps.issued_at), Date.parse(caps.expires_at)] },
       { sql: 'EXISTS(SELECT 1 FROM device_control_v3 WHERE node_id=? AND boot_id=? AND desired_generation=? AND state_version=?)',
         bindings: [node, old.boot_id, row.generation, old.state_version + 1] }]);
@@ -224,10 +346,11 @@ async function assign(request: Request, env: DeviceV3ControlEnv, authorization: 
   return json(assignmentReceipt(row));
 }
 
-async function unavailableReason(env: Env, row: Assignment, control: Control, now: number) {
+async function unavailableReason(env: DeviceV3ControlEnv, row: Assignment, control: Control, now: number) {
   if (row.boot_id !== control.boot_id) return 'boot_changed';
   if (row.capability_sha256 !== control.capability_sha256) return 'capabilities_changed';
   if (row.expires_at_ms <= now) return 'policy_expired';
+  if (!await check(env, startupAuthority(env, row.node_id, row.generation))) return 'startup_grant_inactive';
   if (!await check(env, activePlacement(row.node_id, row.placement_id))) return 'placement_inactive';
   const caps = await trustedCapabilities(env, row.node_id, row.capability_sha256);
   if (Date.parse(caps.issued_at) > now || Date.parse(caps.expires_at) <= now) return 'capabilities_expired';
@@ -236,9 +359,11 @@ async function unavailableReason(env: Env, row: Assignment, control: Control, no
 async function getConfig(request: Request, env: DeviceV3ControlEnv, node: string, authorization: AuthAssertion) {
   const query = new URL(request.url).searchParams;
   if ([...query.keys()].some(key => key !== 'boot_id') || query.getAll('boot_id').length !== 1) bad('v3_boot_required');
-  const boot = string(query.get('boot_id'), 'config.boot_id', UUID), old = await current(env, node);
-  const now = Date.now(), common = { protocol: 'campuspulse/3', server_time: new Date(now).toISOString(), data_ingestion_available: v3IngestEnabled(env) || v3StatisticsEnabled(env), requires_device_ack: true };
+  const boot = string(query.get('boot_id'), 'config.boot_id', UUID);
+  let old = await current(env, node);
   if (!old || old.boot_id !== boot) conflict('v3_current_boot_required');
+  old = await resumeStartup(env, node, old, authorization);
+  const now = Date.now(), common = { protocol: 'campuspulse/3', server_time: new Date(now).toISOString(), data_ingestion_available: v3IngestEnabled(env) || v3StatisticsEnabled(env), requires_device_ack: true };
   const row = old.desired_generation === null ? null : await assignment(env, node, old.desired_generation);
   let config: FrozenDeviceConfigV3 | null = null, reason: string | null = 'unassigned';
   if (row) { config = await trustedEnvelope(row); reason = await unavailableReason(env, row, old, now); if (reason) config = null; }
@@ -284,6 +409,8 @@ async function acknowledge(request: Request, env: DeviceV3ControlEnv, node: stri
     bindings: [node, boot, generation, seq, old.state_version + 1] }];
   let statisticsWrites: D1PreparedStatement[] = [];
   if (state === 'applied') {
+    checks.push(startupAuthority(env, node, generation));
+    finalChecks.push(startupAuthority(env, node, generation));
     if (await unavailableReason(env, row, old, Date.now())) conflict('v3_assignment_unavailable');
     const caps = await trustedCapabilities(env, node, row.capability_sha256);
     if (frozen.policy.uplink.enabled) {
@@ -391,7 +518,7 @@ async function renewStatisticsLease(request: Request, env: DeviceV3ControlEnv, n
   const receiptBase = JSON.stringify({ protocol: 'campuspulse/3', schema: 'device-lease/3', node_id: node, boot_id: boot,
     policy_id: id, policy_sha256: digest, assignment_generation: generation, contact_seq: seq, uptime_ms: uptime, body_sha256: hash, durability: 'committed' });
   try {
-    await atomic(env, authorization, [version(node, old), activePlacement(node, row.placement_id),
+    await atomic(env, authorization, [version(node, old), activePlacement(node, row.placement_id), startupAuthority(env, node, generation),
       { sql: `EXISTS(SELECT 1 FROM device_statistics_authorizations_v3 WHERE node_id=? AND generation=? AND state_version=? AND contact_seq=? AND boot_id=? AND policy_sha256=?)`,
         bindings: [node, generation, previous.state_version, previous.contact_seq, boot, digest] },
       { sql: `?<=${NOW_SQL} AND ?>${NOW_SQL} AND ?<=${NOW_SQL} AND ?>${NOW_SQL}`, bindings: [row.not_before_ms, row.expires_at_ms, Date.parse(caps.issued_at), Date.parse(caps.expires_at)] },
@@ -407,7 +534,7 @@ async function renewStatisticsLease(request: Request, env: DeviceV3ControlEnv, n
         SELECT node_id,generation,span_count,${NOW_SQL},lease_until_ms,accept_until_ms FROM device_statistics_authorizations_v3 WHERE node_id=? AND generation=?
         ON CONFLICT(node_id,generation,span_seq) DO UPDATE SET end_ms=excluded.end_ms`).bind(node, generation),
       env.DB.prepare('UPDATE device_control_v3 SET state_version=state_version+1 WHERE node_id=?').bind(node),
-    ], [activePlacement(node, row.placement_id),
+    ], [activePlacement(node, row.placement_id), startupAuthority(env, node, generation),
       { sql: `?<=${NOW_SQL} AND ?>${NOW_SQL} AND ?<=${NOW_SQL} AND ?>${NOW_SQL}`, bindings: [row.not_before_ms, row.expires_at_ms, Date.parse(caps.issued_at), Date.parse(caps.expires_at)] },
       { sql: `EXISTS(SELECT 1 FROM device_control_v3 WHERE node_id=? AND boot_id=? AND desired_generation=? AND applied_generation=? AND state_version=?)`,
         bindings: [node, boot, generation, generation, old.state_version + 1] },
@@ -452,16 +579,17 @@ export async function handleDeviceV3Control(request: Request, env: DeviceV3Contr
   const adminAssignment = path === '/api/v1/admin/device-v3/assignments';
   const adminNode = /^\/api\/v1\/admin\/device-v3\/nodes\/([a-z0-9][a-z0-9_-]{0,63})$/.exec(path);
   const adminEvidence = /^\/api\/v1\/admin\/device-v3\/nodes\/([a-z0-9][a-z0-9_-]{0,63})\/evidence$/.exec(path);
-  if (!devicePath && !adminAssignment && !adminNode && !adminEvidence) return null;
+  const adminStartup = /^\/api\/v1\/admin\/device-v3\/nodes\/([a-z0-9][a-z0-9_-]{0,63})\/startup-grant$/.exec(path);
+  if (!devicePath && !adminAssignment && !adminNode && !adminEvidence && !adminStartup) return null;
   try {
     if (!adminEvidence && env.DEVICE_V3_CONTROL_ENABLED !== 'true') throw new IngestError(503, 'v3_control_disabled', 'Experimental v3 control is disabled.');
     const receiptOnly = request.headers.get('X-Receipt-Only');
     if (receiptOnly !== null && (receiptOnly !== '1' || !['/api/v3/device/config/ack', '/api/v3/device/lease'].includes(path))) {
       throw new IngestError(422, 'v3_invalid_receipt_only', 'Receipt-only mode is valid only for exact ACK or lease recovery.');
     }
-    const method = adminNode || adminEvidence || path === '/api/v3/device/config' ? 'GET' : 'POST';
+    const method = adminNode || adminEvidence || (adminStartup && request.method === 'GET') || path === '/api/v3/device/config' ? 'GET' : 'POST';
     if (request.method !== method) throw new IngestError(405, 'method_not_allowed', `Use ${method}.`);
-    if (adminAssignment || adminNode || adminEvidence) {
+    if (adminAssignment || adminNode || adminEvidence || adminStartup) {
       const secret = adminSecret(env); adminOrigin(request, method !== 'GET');
       const session = await requireAdminSession(request, env, secret), initial = sessionAssertion(session);
       // sessionAssertion also binds the account/auth version. Its JS cutoff is
@@ -469,7 +597,8 @@ export async function handleDeviceV3Control(request: Request, env: DeviceV3Contr
       // the database clock in every final authorization check and transaction.
       const authorization = { sql: `(${initial.sql}) AND EXISTS(SELECT 1 FROM admin_sessions WHERE token_sha256=? AND expires_at_ms>${NOW_SQL})`,
         bindings: [...initial.bindings, session.hash] };
-      return adminEvidence ? await readAdminDeviceV3Evidence(request, env, adminEvidence[1], authorization) :
+      return adminStartup ? await manageStartupGrant(request, env, adminStartup[1], authorization) :
+        adminEvidence ? await readAdminDeviceV3Evidence(request, env, adminEvidence[1], authorization) :
         adminNode ? await inspect(env, adminNode[1], authorization) : await assign(request, env, authorization);
     }
     const node = await device(request, env);

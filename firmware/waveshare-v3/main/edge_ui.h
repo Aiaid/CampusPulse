@@ -17,6 +17,7 @@ typedef struct {
     bool queue_known, rate_known, history_known, last_window_known;
     bool tf_mounted, storage_fault;
     bool transport_known, mqtt_tls;
+    bool startup_saved, auto_starting;
     uint16_t history_slices, tracks, open_events;
     uint32_t history_ms, windows, confirmed_windows;
     uint32_t current_pending, historical_pending, last_body_bytes;

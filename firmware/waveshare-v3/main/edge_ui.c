@@ -287,13 +287,13 @@ void raw_ui_update(const raw_display_snapshot_t *s) {
         switch (m.phase) {
         case EDGE_UI_WAIT_USB:
             title = "等待电脑配置"; help = "连接电脑USB调试口";
-            detail = "每次开机配置网络和时间"; safety = "请使用V3调试工具"; mode = "配置完成后开始采集"; break;
+            detail = m.startup_saved ? "已保存配置，可重新配置" : "首次配置后可保存"; safety = "请使用V3调试工具"; mode = "配置完成后开始采集"; break;
         case EDGE_UI_STOPPING:
             title = "正在安全停止"; help = "正在排空队列并同步TF";
             detail = "请保持供电"; safety = "完成后才可关机或重启"; mode = "停止中不能重新配置"; break;
         case EDGE_UI_STOPPED_SAFE:
-            title = "已安全停止"; help = "需重启后重新配置";
-            detail = "停止后不自动恢复采集"; safety = "可安全关机"; mode = "重启后连接电脑USB"; break;
+            title = "已安全停止"; help = m.startup_saved ? "已保存配置" : "需重启后重新配置";
+            detail = m.startup_saved ? "上电后自动联网采集" : "停止后不自动恢复采集"; safety = "可安全关机"; mode = m.startup_saved ? "长按BOOT可重新配置" : "重启后连接电脑USB"; break;
         case EDGE_UI_ERROR:
             title = "启动或运行错误";
             if (s->setup_available) {
@@ -306,7 +306,7 @@ void raw_ui_update(const raw_display_snapshot_t *s) {
             break;
         default:
             title = m.phase == EDGE_UI_COLLECTING ? "正在采集上传" : m.phase == EDGE_UI_PAUSED ? "采集已暂停" : "正在启动";
-            help = "长按BOOT 2s安全停止"; detail = "停止后需重启重新配置";
+            help = "长按BOOT 2s安全停止"; detail = m.auto_starting ? "已保存配置，正在自动启动" : m.startup_saved ? "已保存配置，重启可恢复" : "停止后需重启重新配置";
             safety = "USB不自动提供网络"; mode = "停止前请保持供电"; break;
         }
         fit(s_labels[5], title); fit(s_labels[0], help); fit(s_labels[1], detail); fit(s_labels[2], safety); fit(s_labels[3], mode);

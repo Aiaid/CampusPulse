@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 set(COMPONENTS main)
 set(EXTRA_COMPONENT_DIRS
+    "${CMAKE_CURRENT_LIST_DIR}/../components/cp_v3_startup"
+    "${CMAKE_CURRENT_LIST_DIR}/../components/cp_v3_clock"
     "${CMAKE_CURRENT_LIST_DIR}/../components/cp_v3_capture"
     "${CMAKE_CURRENT_LIST_DIR}/../components/cp_v3_budget"
     "${CMAKE_CURRENT_LIST_DIR}/../components/cp_v3_small_results"

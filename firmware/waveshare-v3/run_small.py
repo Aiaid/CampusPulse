@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Physical USB bootstrap; native MQTT/TLS production, explicit isolated HTTPS."""
 import argparse
+import base64
 import ipaddress
 import json
 import os
@@ -9,6 +10,7 @@ import re
 import stat
 import time
 import uuid
+import urllib.request
 import serial
 
 # Matches CP_API_ORIGIN in cp_settings.h; the host regression checks the binding.
@@ -18,6 +20,39 @@ MQTT_URI = 'mqtts://q9a692f8.ala.cn-hangzhou.emqxsl.cn:8883'
 MQTT_KEYS = ('mqtt_uri', 'mqtt_username', 'mqtt_password', 'mqtt_namespace')
 LAN_NETS = tuple(ipaddress.IPv4Network(value) for value in
                  ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'))
+
+
+def validate_clock_key(value):
+    required = {'schema', 'audience', 'key_id', 'public_key_spki'}
+    if (not isinstance(value, dict) or set(value) != required
+            or value['schema'] != 'cp-v3-signed-clock-key/1'
+            or value['audience'] != PRODUCTION_ORIGIN
+            or not isinstance(value['key_id'], str)
+            or not re.fullmatch(r'[A-Za-z0-9_-]{1,32}', value['key_id'])
+            or not isinstance(value['public_key_spki'], str)
+            or not re.fullmatch(r'[A-Za-z0-9_-]{122}', value['public_key_spki'])):
+        raise ValueError('invalid production clock verification key')
+    encoded = value['public_key_spki']
+    raw = base64.b64decode(encoded + '==', altchars=b'-_', validate=True)
+    prefix = bytes.fromhex('3059301306072a8648ce3d020106082a8648ce3d03010703420004')
+    if (len(raw) != 91 or not raw.startswith(prefix)
+            or base64.urlsafe_b64encode(raw).rstrip(b'=').decode() != encoded):
+        raise ValueError('noncanonical production clock verification key')
+    return value
+
+
+def fetch_clock_key():
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            raise ValueError('clock key redirect rejected')
+    request = urllib.request.Request(PRODUCTION_ORIGIN + '/api/v3/clock/key',
+                                     headers={'Accept': 'application/json'})
+    opener = urllib.request.build_opener(NoRedirect())
+    with opener.open(request, timeout=15) as response:
+        payload = response.read(4097)
+        if response.status != 200 or len(payload) > 4096:
+            raise ValueError('clock verification metadata unavailable')
+        return validate_clock_key(json.loads(payload))
 
 
 def validate_backend(backend, *, allow_public_test=False, allow_production=False):
@@ -112,6 +147,12 @@ def main():
                    help='permit isolated public HTTPS with the system CA bundle')
     p.add_argument('--allow-production', action='store_true',
                    help='explicitly permit only canonical CP_API_ORIGIN with the system CA bundle')
+    p.add_argument('--save-startup', action='store_true',
+                   help='save validated production settings after real applied ACK')
+    p.add_argument('--startup-reconfigure', action='store_true',
+                   help='explicit USB recovery of a damaged startup store after real ACK')
+    p.add_argument('--startup-key-file', type=Path,
+                   help='private copy of HTTPS-verified production clock public metadata')
     args = p.parse_args()
     directory = args.private_dir.resolve()
     os.chmod(directory, 0o700)
@@ -119,6 +160,15 @@ def main():
     wifi = read_private(directory / 'wifi.json')
     validate_backend(backend, allow_public_test=args.allow_public_test,
                      allow_production=args.allow_production)
+    if args.startup_reconfigure and not args.save_startup:
+        raise ValueError('startup recovery requires explicit save')
+    clock_key = None
+    if args.save_startup:
+        if not args.allow_production or backend['endpoint'] != PRODUCTION_ORIGIN:
+            raise ValueError('only production can be saved for autonomous startup')
+        clock_key = validate_clock_key(read_private(args.startup_key_file)) if args.startup_key_file else fetch_clock_key()
+    elif args.startup_key_file:
+        raise ValueError('clock metadata requires explicit save')
     port = serial.Serial(port=None, baudrate=115200, timeout=.2)
     port.dtr = False
     port.rts = False
@@ -167,6 +217,9 @@ def main():
                          max_windows=args.windows)
         if bootstrap['uplink_transport'] == 'mqtt_tls':
             bootstrap.update({key: backend[key] for key in MQTT_KEYS})
+        if clock_key:
+            bootstrap.update(save_startup=True, startup_reconfigure=args.startup_reconfigure,
+                             clock_key_id=clock_key['key_id'], clock_public_spki=clock_key['public_key_spki'])
         ca = backend.get('server_ca_pem')
         if ca is not None:
             if not isinstance(ca, str) or len(ca.encode('ascii')) > 4096 or 'PRIVATE KEY' in ca or '-----BEGIN CERTIFICATE-----' not in ca or '-----END CERTIFICATE-----' not in ca:
@@ -182,6 +235,7 @@ def main():
         print('Physical bootstrap sent; waiting for board-owned v3 requests', flush=True)
         deadline = time.monotonic() + args.timeout
         result = 'timeout'
+        startup_saved = False
         while time.monotonic() < deadline:
             line = port.readline().decode(errors='replace')
             if not line:
@@ -190,8 +244,16 @@ def main():
             log.flush()
             # Native SDK lines may contain identifiers; output only our fixed
             # application diagnostics, and keep full serial evidence private.
-            if 'v3small:' in line or 'V3 START ACCEPTED' in line:
+            if 'v3small:' in line or 'V3 START ACCEPTED' in line or line.startswith('V3 STARTUP '):
                 print(line.strip(), flush=True)
+            if line.strip() == 'V3 STARTUP SAVED':
+                startup_saved = True
+                if args.save_startup and args.windows == 0:
+                    result = 'saved'
+                    break
+            if line.strip() == 'V3 STARTUP SAVE FAILED':
+                result = 'failed'
+                break
             if 'phase=SMALL TEST PASSED' in line:
                 result = 'passed'
                 break
@@ -199,7 +261,7 @@ def main():
                 result = 'failed'
                 break
         print('Board small-results result:', result, flush=True)
-        return 0 if result == 'passed' else 1
+        return 0 if result in ('passed', 'saved') and (not args.save_startup or startup_saved) else 1
 
 
 if __name__ == '__main__':

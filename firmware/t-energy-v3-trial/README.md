@@ -1,11 +1,14 @@
-# T-Energy-S3 bounded V3 small-statistics runtime
+# T-Energy-S3 V3 startup and small-statistics runtime
 
-The compiled entry is `main/small_runtime.c`, version `0.3.2-te-native-mqtt`.
-It runs **one to three 30/60-second windows** after a fresh physical USB bootstrap.
-It uses shared capture/statistics/temporal/control/receipt code, with no TF,
-screen, raw upload, per-address upload, saved network secret or automatic reboot.
-This is a bounded acceptance image, not an unattended production collector.
-See [runtime and physical acceptance](BOUNDED_RUNTIME.md).
+The compiled entry remains `main/small_runtime.c`, version `0.3.3-te-autostart`.
+The default USB flow still runs **one to three 30/60-second windows**. A separate
+explicit production save option stores a startup profile only after a real
+applied ACK, then supports authenticated-time recovery and fresh real-boot
+capability/policy/ACK acquisition without USB. This is a local source/host/build
+implementation; **this change has not been flashed or accepted on hardware**.
+It adds no TF, screen, raw upload or per-address upload. The older
+[bounded runtime and physical acceptance](BOUNDED_RUNTIME.md) retains its original
+scope and does not establish the new untethered startup behavior.
 
 An independent, default-off [single-key maintenance image](MAINTENANCE.md) was
 explicitly authorized on2026-10-31 to clear only the existing `scanstats/devs`
@@ -20,8 +23,10 @@ v2 backlog is preserved. The partition table is unchanged. Never erase Flash or
 NVS. NVS initialization has no erase-on-error fallback and may complete SDK
 interrupted updates, so private preflight backups remain necessary.
 
-Only independent `cpv3stats1`, `te_v3_storage` and `te_v3_uplink` NVS namespaces
-are used. Three queue slots are shared: one window, one status, one control,
+Only independent `cpv3stats1`, `te_v3_storage`, `te_v3_uplink` and the new
+`cpv3start` NVS namespaces are used. The last uses the shared strict versioned
+startup codec and explicit selector/readback provider; legacy `cp_settings` is
+not loaded or migrated. Three queue slots are shared: one window, one status, one control,
 each at most 1024 body bytes/2048 encoded bytes. Actual NVS entries, unknown
 keys/types, corrupt records and current space are checked. Every mutation first
 reserves a persistent daily logical allowance; every new body is committed,
@@ -29,9 +34,17 @@ reopened through a fresh queue and compared byte for byte before POST or
 collector release. Uncertain/full/foreign state stops admission without erasure.
 Valid expiry tombstones remain and are reused only with increasing ordinals.
 GC amplification and physical wear are not measured by these logical allowances.
+Startup profile slots consume additional entries in the existing 24 KiB NVS.
+The original 128-entry spare floor and three-slot admission guards are not
+relaxed; real saved/reconfigured profiles can therefore be rejected under space
+pressure. Actual post-provisioning entry headroom remains a hardware acceptance
+item, rather than a capacity guarantee inferred from a successful build.
 The bounded ceiling is 1 MiB storage and 128 KiB POST-body authorization per
 UTC day; an applied policy may tighten them. This cannot sustain an all-day
 60-second profile.
+The new autonomous path does not increase these caps or reset reservations at a
+reboot. Budget denial stops automatic restart; daily capacity is still a material
+limit, so this is not an all-day or deployment-scale capacity claim.
 
 Reboot recovery preserves original node/boot/policy/body/UUID/sequence/TTL.
 Old control requests use receipt-only mode and cannot create a new ACK or lease.
@@ -73,6 +86,86 @@ bounds. MQTT uses the trusted host clock seed and typed server receipts, never
 a fabricated HTTP Date. No MQTT failure changes the configured DNS server,
 chooses a new IP or disables hostname/CA/time verification.
 
+## Explicit saved startup and recovery
+
+USB accepts the optional flat fields `save_startup:true`,
+`startup_reconfigure:false|true`, `clock_key_id` and canonical 122-character
+base64url `clock_public_spki` (P-256 SPKI DER, 91 bytes). All four remain absent
+in the original ephemeral flow. Startup options require the canonical production
+origin, complete native MQTT credentials and the existing public CA bundle;
+diagnostic endpoints and custom CAs cannot be persisted. `max_windows:0` is
+allowed only with explicit save. Values 1–3 can also save a profile while keeping
+this boot bounded; the saved profile never contains that test limit. Personal
+Wi-Fi is provisioned here; the shared store also permits valid open-Wi-Fi
+profiles, while autonomous PEAP is rejected before network authentication.
+
+`V3 START ACCEPTED` confirms only receipt of the physical USB material. After the
+actual cloud applied-ACK receipt is committed and reclaimed, the runtime charges
+8192 logical storage bytes (16384 for deliberate recovery), holds the common
+NVS-owner lock, and saves/reads back the new profile. Only success prints
+`V3 STARTUP SAVED`; failure prints `V3 STARTUP SAVE FAILED` and stops before
+collection. An uncertain selector commit can leave the complete old or new
+profile; the runtime does not guess, roll back or claim which survived.
+Neither marker establishes untethered or physical power-loss acceptance.
+
+On a saved-profile boot, the node identity is checked before network use. A
+3-second physical USB grace accepts fresh `HELLO <32 lowercase hex>` or `SETUP`
+and then waits in USB setup. Otherwise the independent signed-clock bootstrap
+temporarily owns Wi-Fi, obtains only a tentative SNTP hint, verifies a fresh
+nonce response with the trusted USB-provisioned public pin under strict TLS,
+and confirms cleanup before native MQTT can start. Saved UTC, old boot IDs and
+unsigned network dates never grant time authority. Network/time failures retry
+at low frequency: three attempts per round, short USB/backoff opportunities,
+then 30–300 seconds between rounds. Every wait keeps USB setup available. An
+unconfirmed clock cleanup blocks another network owner. Corrupt/unsupported
+profiles stay in USB instead of being silently repaired.
+
+Automatic operation uses `max_windows:0` at the application level. The scanner
+closes complete 30/60-second windows and schedules a real new boot after about
+20 minutes (40/20 full windows), with an absolute 20-minute run guard. The current
+boot alone must obtain fresh capabilities, an explicitly approved renewable
+startup policy, an actual applied ACK and lease. Historical recovery does not
+increment current-window success. There is no fabricated ACK, boot UUID or
+in-place scope swap. A planned restart requires quiescent capture with no
+handoffs, all frozen bodies committed/reopened before release, no uncertain
+profile/queue write, and confirmed transport stop. Pending committed bodies keep
+their original identities/TTL. Failed writes or unresolved volatile handoffs
+prevent restart. Known credential rejection and quota denial require attention
+rather than repeated reboots. Restart alone never resets a daily allowance.
+
+No unverified T-Energy button or power GPIO is used. During operation, physical
+USB `STOP`, `SETUP`, or a fresh HELLO requests safe stopping. Remaining handoffs
+are frozen without new upload attempts. Once safe, HELLO includes
+`restart_required:true`; `RESTART` sets only a complementary RTC one-shot USB
+hint and performs `esp_restart()`. The following software boot stays in USB;
+this hint is never trusted clock or policy state. Unsafe state does not advertise
+restart permission. Ordinary power cycling remains the saved automatic path.
+The browser's explicit safe-restart action or host `--safe-restart` rechecks the
+node and a new nonce first, sends at most one RESTART, reopens the same port and
+uses a new HELLO/time exchange before sending credentials. A device still
+stopping may need another explicit host invocation after its safe marker.
+
+The host utility remains offline except for explicit USB `--send`. Obtain clock
+metadata from the authenticated-by-TLS canonical
+`https://pulse.anend.net/api/v3/clock/key` endpoint using a trusted browser, save
+its exact public JSON as an owned mode-0600 file, and pass `--startup-key-file`
+(`--clock-key-file` is an alias). Shape, audience, canonical DER and actual curve
+point are checked; the file's original HTTPS provenance remains the operator's
+responsibility. Example (all input paths are private operator-supplied files):
+
+```sh
+uv run --with cryptography --with pyserial firmware/t-energy-v3-trial/tools/host_bootstrap.py \
+  --private-dir /path/to/private --wifi-file /path/to/wifi.json \
+  --allow-production --save-startup --startup-key-file /path/to/clock-key.json \
+  --windows 0
+```
+
+Without `--send` this validates only and opens no device. Add an explicitly
+selected `--port` and `--send` for an authorized physical attempt; save mode waits
+for the independent exact SAVED marker after first policy publication/ACK. Use
+`--startup-reconfigure` only for deliberate trusted USB recovery. Saved local
+configuration and administrator startup-grant approval remain independent steps.
+
 MQTT state,8192-byte reply and8200-byte frame are explicitly in PSRAM. The S3
 profile enables external TLS/outbox data. Actual cold/hot phases are measured;
 the owner-only memory lease serializes hot TLS IO with collector allocation.
@@ -84,7 +177,7 @@ radio-capacity qualification. Callback stack watermark0 means unknown.
 Build with activated ESP-IDF 5.5.3 and `./build.sh`; temporary separate images
 and partition-boundary checks run without opening a device. From the repository
 root run `IDF_PATH=/path/to/esp-idf-v5.5.3 bash firmware/t-energy-v3-trial/tests/run_host_tests.sh`
-and `uv run python -m unittest discover -s firmware/t-energy-v3-trial/tests -p test_host_bootstrap.py`.
+and `uv run --with cryptography python -m unittest discover -s firmware/t-energy-v3-trial/tests -p test_host_bootstrap.py`.
 Host tests use mocks/synthetic fixtures and do not qualify hardware.
 
 `CONFIG_TE_SMALL_TEST_HOLD_FIRST_COMMIT=y` is an explicit one-window normal
@@ -92,3 +185,6 @@ reboot checkpoint image, default off. After commit/readback/reopen and exact
 collector release, it stops scanning and holds without statistics POST until
 physical reset. A fresh boot must recover the old exact record before new
 registration. This is separate from physical power-loss acceptance.
+Checkpoint images always require explicit USB and do not restore or enter
+automatic continuous startup. Maintenance entry selection remains separate and
+does not link or invoke these runtime paths.

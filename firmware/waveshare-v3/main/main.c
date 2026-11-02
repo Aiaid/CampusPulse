@@ -8,6 +8,8 @@
 #include "cp_v3_transport.h"
 #include "cp_v3_capture.h"
 #include "cp_v3_small_results.h"
+#include "cp_v3_startup.h"
+#include "cp_v3_clock_bootstrap.h"
 #include "local_raw.h"
 #include "runtime_logic.h"
 #include "runtime_json.h"
@@ -33,6 +35,8 @@
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_attr.h"
+#include "driver/gpio.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include <unistd.h>
@@ -53,9 +57,15 @@
 #define FS_POOL 262144u
 #define WORKING_MAX 4194304u
 #define WRITE_MAX 67108864u
+#define AUTO_CYCLE_MS 1200000u
+#define FORCE_USB_MAGIC UINT32_C(0x43505553)
 static const char *TAG="v3small";
 static char s_node[16],s_boot[37];
 static trial_bootstrap_t s_bootstrap;
+static cp_v3_startup_profile_t *s_startup_profile;
+static bool s_autonomous,s_signed_time,s_cycle_ready,s_auto_retry=true;
+static _Atomic bool s_startup_saved,s_auto_starting;
+static RTC_NOINIT_ATTR uint32_t s_force_usb_magic,s_force_usb_inverse;
 static cp_v3_control_t *s_control;
 static cp_v3_control_workspace_t *s_workspace;
 static cp_v3_queue_t *s_queue;
@@ -210,6 +220,50 @@ static bool lifecycle_directory(void) {
 }
 static bool media_sync(void *ctx){(void)ctx;return raw_v3_queue_sd_sync(raw_storage_card_handle());}
 static bool cancelled(void){return s_stop;}
+static void phase(const char *name);
+static _Noreturn void fault(const char *reason);
+/* Only after all writers/transport have safely stopped. RTC pad hold preserves
+ * the V2 GPIO17 battery latch over the actual software restart. */
+static bool restart_saved(bool force_usb) {
+    if(!s_safe||s_power_stop||raw_power_pressed()||raw_boot_pressed())return false;
+    if(gpio_set_level(GPIO_NUM_17,1)!=ESP_OK||gpio_hold_en(GPIO_NUM_17)!=ESP_OK)return false;
+    s_force_usb_magic=force_usb?FORCE_USB_MAGIC:0;s_force_usb_inverse=~s_force_usb_magic;
+    esp_restart();return false;
+}
+static bool automatic_bootstrap(void) {
+    phase("AUTO CLOCK");s_auto_starting=true;s_selected_mqtt=true;s_bootstrapped=true;
+    for(unsigned attempt=0;!s_usb_stop&&!s_power_stop;attempt++){
+        cp_v3_time_t trusted;
+        esp_err_t result=cp_v3_clock_bootstrap(&s_startup_profile->settings,s_startup_profile->time_public_spki,s_startup_profile->time_key_id,cancelled,&trusted);
+        esp_err_t stopped=cp_v3_clock_stop();
+        if(stopped!=ESP_OK)fault("clock_cleanup");
+        if(result==ESP_OK&&!s_stop&&!s_usb_stop){
+            trial_bootstrap_clear(&s_bootstrap);s_bootstrap.settings=s_startup_profile->settings;
+            snprintf(s_bootstrap.origin,sizeof s_bootstrap.origin,"%s",CP_API_ORIGIN);
+            s_bootstrap.transport=CP_V3_TRANSPORT_MQTT_TLS;s_bootstrap.clock_seed=trusted;s_bootstrap.max_windows=0;
+            s_signed_time=true;s_autonomous=true;s_cycle_ready=true;s_auto_starting=false;
+            cp_v3_startup_clear(s_startup_profile);
+            ESP_LOGI(TAG,"signed_clock_verified=1 uncertainty_ms=%lu autonomous=1",(unsigned long)trusted.uncertainty_ms);return true;
+        }
+        if(s_stop||s_usb_stop||s_power_stop)break;
+        ESP_LOGW(TAG,"startup_clock_retry error=%ld attempt=%u",(long)result,attempt+1);
+        uint32_t backoff=attempt<4?(30u<<attempt):300u;
+        for(uint32_t waited=0;waited<backoff*10&&!s_stop&&!s_usb_stop&&!s_power_stop;waited++)vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    s_auto_starting=false;s_bootstrapped=false;return false;
+}
+static bool save_startup_profile(void) {
+    if(!s_bootstrap.save_startup)return true;
+    cp_v3_startup_clear(s_startup_profile);s_startup_profile->settings=s_bootstrap.settings;s_startup_profile->auto_start=true;
+    memcpy(s_startup_profile->time_key_id,s_bootstrap.clock_key_id,sizeof s_startup_profile->time_key_id);
+    memcpy(s_startup_profile->time_public_spki,s_bootstrap.clock_public_spki,91);s_startup_profile->time_public_spki_len=91;
+    xSemaphoreTake(s_tf,portMAX_DELAY);
+    uint64_t cost=s_bootstrap.startup_reconfigure?CP_V3_STARTUP_RECONFIGURE_LOGICAL_WRITE_BYTES:CP_V3_STARTUP_LOGICAL_WRITE_BYTES;
+    esp_err_t result=write_charge(NULL,cost)?(s_bootstrap.startup_reconfigure?cp_v3_startup_reconfigure(s_startup_profile):cp_v3_startup_save(s_startup_profile)):ESP_ERR_NO_MEM;
+    xSemaphoreGive(s_tf);
+    if(result!=ESP_OK){s_startup_saved=false;s_autonomous=false;s_usb_stop=true;puts("V3 STARTUP SAVE FAILED");fflush(stdout);ESP_LOGE(TAG,"startup_save_failed error=%ld",(long)result);return false;}
+    s_startup_saved=true;s_cycle_ready=true;puts("V3 STARTUP SAVED");fflush(stdout);return true;
+}
 static void phase(const char *name) {
     portENTER_CRITICAL(&s_lock);snprintf(s_phase,sizeof s_phase,"%s",name);portEXIT_CRITICAL(&s_lock);
     ESP_LOGI(TAG,"phase=%s internal=%u largest=%u psram=%u",name,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -239,6 +293,12 @@ static edge_ui_phase_t ui_phase(const char *name,const cp_v3_capture_status_t *c
     if(capture->running)return EDGE_UI_COLLECTING;
     if(!strcmp(name,"LEASE PAUSED")||(s_storage_gate&&capture->paused))return EDGE_UI_PAUSED;
     return EDGE_UI_STARTING;
+}
+static bool enter_usb_wait(void) {
+    portENTER_CRITICAL(&s_lock);
+    bool allowed=!s_power_stop;
+    if(allowed){s_stop=false;s_bootstrapped=false;s_auto_starting=false;s_usb_stop=false;}
+    portEXIT_CRITICAL(&s_lock);return allowed;
 }
 static void display_task(void *unused) {
     (void)unused;bool ready=raw_display_init()==ESP_OK;(void)raw_battery_init();
@@ -276,6 +336,7 @@ static void display_task(void *unused) {
         metrics.windows=s_windows;metrics.confirmed_windows=s_window_acks;metrics.last_body_bytes=s_last_body;
         metrics.upload_failures=s_upload_failures;metrics.retries=s_retries;
         metrics.transport_known=s_bootstrapped;metrics.mqtt_tls=s_selected_mqtt;
+        metrics.startup_saved=s_startup_saved;metrics.auto_starting=s_auto_starting;
         uint64_t elapsed=now>=previous_ms?now-previous_ms:0;
         metrics.rate_known=s_capture_ready&&c.running&&previous_known&&elapsed&&elapsed<=60000&&c.callback_reports>=previous_reports;
         if(metrics.rate_known){uint64_t delta=c.callback_reports-previous_reports;uint64_t rate=delta>UINT64_MAX/1000?UINT64_MAX:delta*1000/elapsed;snap.reports_per_second=ui_count(rate);memmove(rate_bins,rate_bins+1,9*sizeof *rate_bins);rate_bins[9]=snap.reports_per_second;}
@@ -302,8 +363,8 @@ static void display_task(void *unused) {
 static void key_task(void *unused) {
     (void)unused;unsigned power=0,boot=0;bool armed=false,boot_held=false,boot_long=false;
     for(;;){
-        bool pressed=raw_power_pressed();if(!pressed){armed=true;power=0;}else if(armed&&++power>=50){s_power_stop=true;s_usb_stop=false;s_stop=true;cp_v3_transport_cancel();}
-        bool b=raw_boot_pressed();if(b){if(!boot_held){boot_held=true;boot_long=false;boot=0;}if(!boot_long&&++boot>=100){boot_long=true;s_usb_stop=true;if(s_bootstrapped){s_stop=true;cp_v3_transport_cancel();}portENTER_CRITICAL(&s_lock);s_display.page=4;portEXIT_CRITICAL(&s_lock);}}
+        bool pressed=raw_power_pressed();if(!pressed){armed=true;power=0;}else if(armed&&++power>=50){portENTER_CRITICAL(&s_lock);s_power_stop=true;s_usb_stop=false;s_stop=true;portEXIT_CRITICAL(&s_lock);cp_v3_transport_cancel();}
+        bool b=raw_boot_pressed();if(b){if(!boot_held){boot_held=true;boot_long=false;boot=0;}if(!boot_long&&++boot>=100){boot_long=true;bool cancel=false;portENTER_CRITICAL(&s_lock);if(!s_power_stop){s_usb_stop=true;if(s_bootstrapped){s_stop=true;cancel=true;}}s_display.page=4;portEXIT_CRITICAL(&s_lock);if(cancel)cp_v3_transport_cancel();}}
         else if(boot_held){if(!boot_long&&boot>=2){unsigned pages=!s_bootstrapped||s_usb_stop?5:4;portENTER_CRITICAL(&s_lock);s_display.page=s_display.page+1>=pages?0:s_display.page+1;portEXIT_CRITICAL(&s_lock);}boot_held=false;}
         if(s_stop&&s_safe&&s_power_stop&&s_display_asleep&&!pressed)(void)raw_power_shutdown();
         vTaskDelay(pdMS_TO_TICKS(20));
@@ -351,7 +412,7 @@ static bool calibrate_rtc(void) {
     if(checked){uint64_t seconds=t.utc_ms/1000;checked=raw_clock_set(seconds)==ESP_OK&&raw_clock_get(&readback)==ESP_OK&&(readback>seconds?readback-seconds:seconds-readback)<=1;}
     portENTER_CRITICAL(&s_lock);s_display.clock_known=checked;s_display.clock_calibrated=checked;s_display.utc_epoch=checked?readback:0;portEXIT_CRITICAL(&s_lock);
     ESP_LOGI(TAG,"rtc_set_readback_verified=%u",(unsigned)checked);
-    return local_raw_set_clock(s_raw,raw_rtc_clock,NULL,RAW_CLOCK_HOST_CALIBRATED_RTC,checked)==ESP_OK;
+    return local_raw_set_clock(s_raw,raw_rtc_clock,NULL,s_signed_time?RAW_CLOCK_RTC:RAW_CLOCK_HOST_CALIBRATED_RTC,checked)==ESP_OK;
 }
 static bool raw_hook(void *ctx,const cp_v3_stats_report_t *r){(void)ctx;return s_raw?local_raw_hook(s_raw,r):false;}
 static cp_v3_apply_result_t actual_apply(void *ctx,const cp_v3_trial_policy_t *p,cp_v3_boundary_t *b) {
@@ -376,7 +437,7 @@ static cp_v3_apply_result_t actual_apply(void *ctx,const cp_v3_trial_policy_t *p
     }
     cp_v3_capture_config_t config={.statistics={.capacity=p->stats_max_addresses,.window_ms=p->window_ms,.bin_ms=p->bin_ms,.rules_version=CP_V3_STATS_RULESET},
         .temporal_enabled=p->temporal.rolling,.report_events=p->candidate_events,.context={1,p->scope.assignment_generation,p->scope.assignment_generation},
-        .report_slots=128,.window_slots=4,.event_slots=4,.stop_after_windows=s_bootstrap.max_windows,.min_internal_free=56000,.min_internal_largest=20000,.min_psram_free=512u*1024,.min_psram_largest=128u*1024,
+        .report_slots=128,.window_slots=4,.event_slots=4,.stop_after_windows=s_autonomous?AUTO_CYCLE_MS/p->window_ms:s_bootstrap.max_windows,.min_internal_free=56000,.min_internal_largest=20000,.min_psram_free=512u*1024,.min_psram_largest=128u*1024,
         .clock=clock_copy,.entropy=entropy,.raw=p->local_raw.enabled?raw_hook:NULL};
     config.temporal=(cp_v3_temporal_config_t){p->temporal.max_tracks,p->temporal.max_open_events,4,(uint16_t)p->temporal.slice_ms,p->temporal.history_ms,p->temporal.gap_ms,p->temporal.max_event_ms};
     size_t temporal=p->temporal.rolling?cp_v3_temporal_memory_bytes(&config.temporal):0;
@@ -415,6 +476,8 @@ static bool request_mode(cp_v3_http_method_t method,const char *path,const void 
         cp_v3_transport_request(method,path,body,bytes,s_reply,CP_V3_TRANSPORT_RESPONSE_MAX,r);
     if(e!=ESP_OK||!r->complete||r->http_status<200||r->http_status>=300){
         if(e==ESP_OK&&r->complete)s_error_code=edge_error_code(s_reply,r->body_bytes,&s_error_retryable);
+        bool identity_denied=r->http_status==401||(r->http_status==403&&strcmp(s_error_code,"v3_statistics_policy_mismatch"))||r->mqtt_connect_code==4||r->mqtt_connect_code==5;
+        if(identity_denied){s_auto_retry=false;if(s_capture_ready)(void)cp_v3_capture_pause(s_capture,CP_V3_TEMPORAL_LEASE_EXPIRED,0);}
         int status=r->complete?r->http_status:r->parsed_http_status;
         s_error_retryable=edge_http_response_retryable(status,s_error_retryable);
         s_upload_failures++;
@@ -634,7 +697,8 @@ static bool upload_one(cp_v3_queue_kind_t kind) {
     ESP_LOGI(TAG,"durable_acked stream=%u bytes=%u historical=%u window_acks=%lu status_acks=%lu",(unsigned)kind,(unsigned)bytes,(unsigned)historical,(unsigned long)s_window_acks,(unsigned long)s_status_acks);return true;
 }
 static bool run(void) {
-    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.server_ca_pem=s_bootstrap.server_ca_pem[0]?s_bootstrap.server_ca_pem:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=edge_request_timeout_ms(s_bootstrap.origin),.server_clock_error_ms=100,.mode=s_bootstrap.transport,.active_boot=s_boot};
+    if(s_stop)return false;
+    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.server_ca_pem=s_bootstrap.server_ca_pem[0]?s_bootstrap.server_ca_pem:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=edge_request_timeout_ms(s_bootstrap.origin),.server_clock_error_ms=100,.mode=s_bootstrap.transport,.active_boot=s_boot,.cancelled=cancelled};
     phase("WIFI CONNECT");if(cp_v3_transport_start(&s_bootstrap.settings,&config)!=ESP_OK)return false;s_transport_started=true;
     ui_network_snapshot();
     cp_v3_time_t t;if(!current(&t))return false;
@@ -659,6 +723,7 @@ static bool run(void) {
     if(!body||!control_exchange("config_ack","/api/v3/device/config/ack",body,bytes,s_control_seq,false))return false;
     if(s_control->apply_result!=CP_V3_APPLY_OK){ESP_LOGE(TAG,"failed_apply_committed result=%u",(unsigned)s_control->apply_result);return false;}
     ESP_LOGI(TAG,"policy_applied_committed=1 control_reclaimed=1");
+    if(!save_startup_profile())return false;
     cp_v3_control_permissions_t permission={0};
     for(unsigned i=0;i<300&&!s_stop;i++){
         if(!current(&t))return false;
@@ -675,8 +740,10 @@ static bool run(void) {
     if(cp_v3_capture_start(s_capture,&s_control->policy.scope,1,s_control->policy.scan_interval_units,s_control->policy.scan_window_units,permission.deadline_mono_ms)!=ESP_OK)return false;
     s_storage_gate=true;
     phase("SMALL COLLECT");uint64_t lease_at=monotonic_ms()+s_control->policy.lease_ms/3;uint32_t contact=0;
+    uint64_t cycle_deadline=s_autonomous?monotonic_ms()+AUTO_CYCLE_MS:0;
     bool okay=true;
-    while(!s_stop&&!s_storage_fault){
+    while(!s_stop&&!s_storage_fault&&s_auto_retry){
+        if(cycle_deadline&&monotonic_ms()>=cycle_deadline){ESP_LOGI(TAG,"autonomous_cycle_boundary=1");break;}
         if(!current(&t)){okay=false;break;}permission=cp_v3_control_permissions(s_control,t);
         cp_v3_capture_status_t bounded;cp_v3_capture_status(s_capture,&bounded);
         if(bounded.bounded_complete)break;
@@ -721,7 +788,7 @@ static bool run(void) {
     ESP_LOGI(TAG,"run_finished windows=%lu window_acks=%lu status_acks=%lu events=%lu retry=%u boot_write_charges=%llu boot_tx_bytes=%llu storage_fault=%u",(unsigned long)s_windows,(unsigned long)s_window_acks,(unsigned long)s_status_acks,(unsigned long)s_event_acks,s_retry_tested,(unsigned long long)s_writes,(unsigned long long)s_tx_bytes,(unsigned)s_storage_fault);
     xSemaphoreTake(s_tf,portMAX_DELAY);uint64_t total_pending=cp_v3_queue_pending(s_queue,CP_V3_QUEUE_WINDOW)+cp_v3_queue_pending(s_queue,CP_V3_QUEUE_EVENT)+cp_v3_queue_pending(s_queue,CP_V3_QUEUE_STATUS);uint64_t current_pending=edge_upload_pending_current(s_queue,CP_V3_QUEUE_WINDOW,s_boot)+edge_upload_pending_current(s_queue,CP_V3_QUEUE_EVENT,s_boot)+edge_upload_pending_current(s_queue,CP_V3_QUEUE_STATUS,s_boot);xSemaphoreGive(s_tf);
     ESP_LOGI(TAG,"backlog current=%llu historical=%llu historical_acks=%lu",(unsigned long long)current_pending,(unsigned long long)(total_pending-current_pending),(unsigned long)s_historical_acks);
-    return okay;
+    return okay&&s_auto_retry;
 }
 static void safe_usb_standby(void) {
     /* This boot's scanner arena cannot be reallocated. Keep the single USB
@@ -732,7 +799,8 @@ static void safe_usb_standby(void) {
         if(byte=='\r')continue;
         if(byte!='\n'){if(byte<32||byte>126||used+1>=sizeof line)overflow=true;else if(!overflow)line[used++]=(char)byte;continue;}
         line[used]=0;
-        if(!overflow&&!strcmp(line,"RESTART")){volatile char *wipe=line;for(size_t i=0;i<sizeof line;i++)wipe[i]=0;esp_restart();}
+        if(!overflow&&!strcmp(line,"RUN SAVED")&&s_startup_saved){if(!restart_saved(false))puts("V3 RESTART FAILED");}
+        if(!overflow&&!strcmp(line,"RESTART")){volatile char *wipe=line;for(size_t i=0;i<sizeof line;i++)wipe[i]=0;if(!restart_saved(true))puts("V3 RESTART FAILED");}
         bool nonce=!overflow&&used==38&&!strncmp(line,"HELLO ",6);
         for(size_t i=6;nonce&&i<38;i++)if(!((line[i]>='0'&&line[i]<='9')||(line[i]>='a'&&line[i]<='f')))nonce=false;
         if(nonce)printf("V3 HELLO {\"node_id\":\"%s\",\"boot_id\":\"%s\",\"request_id\":\"%s\",\"mono_ms\":%llu,\"restart_required\":true}\n",s_node,s_boot,line+6,(unsigned long long)monotonic_ms());
@@ -742,14 +810,40 @@ static void safe_usb_standby(void) {
 }
 static void main_task(void *unused) {
     (void)unused;if(raw_power_init()!=ESP_OK)fault("power");
+    if(gpio_hold_dis(GPIO_NUM_17)!=ESP_OK)fault("power_hold_release");
     if(nvs_flash_init()!=ESP_OK)fault("nvs");
     uint8_t mac[6];if(esp_efuse_mac_get_default(mac)!=ESP_OK)fault("identity");snprintf(s_node,sizeof s_node,"cp_%02x%02x%02x%02x%02x%02x",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);memset(mac,0,sizeof mac);
     bootloader_random_enable();uuid4(s_boot);bootloader_random_disable();(void)raw_clock_init();
+    bool force_usb=esp_reset_reason()==ESP_RST_SW&&s_force_usb_magic==FORCE_USB_MAGIC&&s_force_usb_inverse==~FORCE_USB_MAGIC;
+    s_force_usb_magic=0;s_force_usb_inverse=0;
+    s_startup_profile=psram(sizeof *s_startup_profile);if(!s_startup_profile)fault("startup_profile_memory");
+    esp_err_t profile_result=cp_v3_startup_load(s_node,s_startup_profile);
+    bool saved=profile_result==ESP_OK&&s_startup_profile->auto_start;s_startup_saved=saved;
+    if(profile_result!=ESP_OK&&profile_result!=ESP_ERR_NOT_FOUND)ESP_LOGW(TAG,"startup_profile_unavailable error=%ld",(long)profile_result);
     if(xTaskCreate(display_task,"v3_display",6144,NULL,1,NULL)!=pdPASS)fault("display_task");
     if(xTaskCreate(key_task,"v3_keys",3072,NULL,2,NULL)!=pdPASS)fault("key_task");
-    phase("WAIT USB");
-    if(trial_bootstrap_wait(s_node,s_boot,&s_bootstrap,cancelled)!=ESP_OK){s_safe=true;vTaskDelete(NULL);return;}
-    s_selected_mqtt=s_bootstrap.transport==CP_V3_TRANSPORT_MQTT_TLS;s_bootstrapped=true;s_usb_stop=false;publish_anchor(s_bootstrap.clock_seed);
+    bool automatic=false;
+    if(saved&&!force_usb){
+        phase("AUTO START");s_auto_starting=true;
+        for(unsigned i=0;i<30&&!s_usb_stop&&!s_power_stop;i++)vTaskDelay(pdMS_TO_TICKS(100));
+        if(!s_usb_stop&&!s_power_stop)automatic=automatic_bootstrap();
+    }
+    for(;;){
+        if(s_power_stop){cp_v3_startup_clear(s_startup_profile);s_safe=true;vTaskDelete(NULL);return;}
+        if(!automatic){
+            if(!enter_usb_wait())continue;
+            phase("WAIT USB");
+            if(trial_bootstrap_wait(s_node,s_boot,&s_bootstrap,cancelled)!=ESP_OK){cp_v3_startup_clear(s_startup_profile);s_safe=true;vTaskDelete(NULL);return;}
+            s_autonomous=s_bootstrap.save_startup&&s_bootstrap.max_windows==0;
+        }
+        portENTER_CRITICAL(&s_lock);
+        bool accepted=!s_stop&&!s_power_stop&&!s_usb_stop;
+        if(accepted){s_selected_mqtt=s_bootstrap.transport==CP_V3_TRANSPORT_MQTT_TLS;s_bootstrapped=true;}
+        portEXIT_CRITICAL(&s_lock);
+        if(accepted)break;
+        trial_bootstrap_clear(&s_bootstrap);automatic=false;
+    }
+    publish_anchor(s_bootstrap.clock_seed);
     s_tf=xSemaphoreCreateMutex();s_control=psram(sizeof *s_control);s_workspace=psram(sizeof *s_workspace);s_queue=psram(sizeof *s_queue);s_store=psram(sizeof *s_store);s_reply=psram(CP_V3_TRANSPORT_RESPONSE_MAX);s_network_body=psram(4096);
     bool okay=s_tf&&s_control&&s_workspace&&s_queue&&s_store&&s_reply&&s_network_body;
     if(okay){xSemaphoreTake(s_tf,portMAX_DELAY);okay=budget_open()&&uplink_open();xSemaphoreGive(s_tf);}
@@ -804,6 +898,13 @@ static void main_task(void *unused) {
     ESP_LOGI(TAG,"cleanup safe=%u storage=%ld raw=%ld network=%ld",(unsigned)safe,(long)unmount,(long)raw_stop,(long)network_stop);
     phase(okay&&safe?"SMALL TEST PASSED":"SMALL STOPPED ERROR");
     s_safe=safe;
+    cp_v3_startup_clear(s_startup_profile);
+    if(s_safe&&s_autonomous&&s_cycle_ready&&s_auto_retry&&!s_usb_stop&&!s_power_stop){
+        phase(okay?"AUTO RESTART":"AUTO RETRY");
+        unsigned delay=okay?5:30;
+        for(unsigned i=0;i<delay*10&&!s_usb_stop&&!s_power_stop;i++)vTaskDelay(pdMS_TO_TICKS(100));
+        if(!s_usb_stop&&!s_power_stop&&!restart_saved(false))ESP_LOGE(TAG,"autonomous_restart_failed=1");
+    }
     /* A safe long-BOOT enters physical USB standby, never automatic Wi-Fi.
      * Reboot is required to allocate a changed policy's one-instance scanner. */
     if(s_safe&&!s_power_stop){s_usb_stop=true;phase("USB SAFE REBOOT");safe_usb_standby();}

@@ -1,5 +1,6 @@
 #include "trial_bootstrap.h"
 #include "cp_v3_transport.h"
+#include "cp_v3_startup.h"
 #include "mbedtls/x509_crt.h"
 #ifndef TRIAL_BOOTSTRAP_HOST_TEST
 #include "esp_timer.h"
@@ -69,6 +70,22 @@ static bool ascii_text(const char *text, bool empty) {
     return true;
 }
 static bool digit(char c) { return c >= '0' && c <= '9'; }
+static bool boolean(const char **p,bool *out) {
+    if(!strncmp(*p,"true",4)){*p+=4;*out=true;return true;}
+    if(!strncmp(*p,"false",5)){*p+=5;*out=false;return true;}
+    return false;
+}
+static bool public_key_decode(const char *text,uint8_t out[91]) {
+    if(strlen(text)!=122)return false;
+    uint32_t acc=0;unsigned bits=0;size_t used=0;
+    for(size_t i=0;i<122;i++){
+        unsigned char c=(unsigned char)text[i];int d=c>='A'&&c<='Z'?c-'A':c>='a'&&c<='z'?c-'a'+26:c>='0'&&c<='9'?c-'0'+52:c=='-'?62:c=='_'?63:-1;
+        if(d<0)return false;
+        acc=(acc<<6)|(unsigned)d;bits+=6;
+        if(bits>=8){bits-=8;if(used>=91)return false;out[used++]=(uint8_t)(acc>>bits);}
+    }
+    return used==91&&bits==4&&(acc&15u)==0;
+}
 static int base64_digit(unsigned char c) {
     if (c >= 'A' && c <= 'Z') return c-'A';
     if (c >= 'a' && c <= 'z') return c-'a'+26;
@@ -185,18 +202,20 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
     /* Physical USB records are printable ASCII. Escaped JSON newlines are
      * decoded only within strings; encoded record size is bounded separately. */
     for (size_t i = 0; i < length; ++i) if ((unsigned char)json[i] < 32 || (unsigned char)json[i] > 126) return false;
-    bool ok = false, seen[17] = {0};
+    bool ok = false, seen[21] = {0};
     static const char *keys[] = {"node_id","boot_id","origin","device_token","ssid","password","utc_ms","uncertainty_ms","max_windows","security","anchor_mono_ms","server_ca_pem",
-        "uplink_transport","mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace"};
+        "uplink_transport","mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace",
+        "save_startup","startup_reconfigure","clock_key_id","clock_public_spki"};
     char key[32] = {0}, given_boot[37] = {0}, security[16] = {0},transport[16]={0};
+    char public_key[123]={0};
     uint64_t utc = 0, uncertainty = 0, windows = 0, anchor = 0;
     const char *p = json;
     space(&p); if (*p != '{') goto done; ++p;
     for (;;) {
         space(&p);
         if (!string(&p,key,sizeof key)) goto done;
-        unsigned k; for (k = 0; k < 17 && strcmp(key,keys[k]); ++k) {}
-        if (k == 17 || seen[k]) goto done;
+        unsigned k; for (k = 0; k < 21 && strcmp(key,keys[k]); ++k) {}
+        if (k == 21 || seen[k]) goto done;
         seen[k] = true;
         space(&p); if (*p != ':') goto done; ++p; space(&p);
         char *target = NULL; size_t cap = 0;
@@ -209,7 +228,7 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
             case 5: target = out->settings.password; cap = sizeof out->settings.password; break;
             case 6: if (!integer(&p,946684800000ULL,4102444799000ULL,&utc)) goto done; break;
             case 7: if (!integer(&p,1,2000,&uncertainty)) goto done; break;
-            case 8: if (!integer(&p,1,3,&windows)) goto done; break;
+            case 8: if (!integer(&p,0,3,&windows)) goto done; break;
             case 9: target = security; cap = sizeof security; break;
             case 10: if (!integer(&p,0,9007199254740991ULL,&anchor)) goto done; break;
             case 11: target = out->server_ca_pem; cap = sizeof out->server_ca_pem; break;
@@ -218,6 +237,10 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
             case 14: target = out->settings.mqtt_username; cap = sizeof out->settings.mqtt_username; break;
             case 15: target = out->settings.mqtt_password; cap = sizeof out->settings.mqtt_password; break;
             case 16: target = out->settings.mqtt_namespace; cap = sizeof out->settings.mqtt_namespace; break;
+            case 17: if(!boolean(&p,&out->save_startup))goto done;break;
+            case 18: if(!boolean(&p,&out->startup_reconfigure))goto done;break;
+            case 19: target=out->clock_key_id;cap=sizeof out->clock_key_id;break;
+            case 20: target=public_key;cap=sizeof public_key;break;
         }
         if (target && (!string(&p,target,cap) || (k != 11 && !ascii_text(target,k == 5)))) goto done;
         space(&p);
@@ -252,9 +275,17 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
     snprintf(out->settings.api_origin,sizeof out->settings.api_origin,"%s",CP_API_ORIGIN);
     out->clock_seed = (cp_v3_time_t){.utc_ms=utc,.mono_ms=mono,.clock_epoch=1,.uncertainty_ms=(uint32_t)uncertainty};
     out->max_windows = (unsigned)windows;
+    if(seen[17]||seen[18]||seen[19]||seen[20]){
+        if(!out->save_startup||!seen[19]||!seen[20]||out->transport!=CP_V3_TRANSPORT_MQTT_TLS||
+           !public_key_decode(public_key,out->clock_public_spki))goto done;
+        cp_v3_startup_profile_t candidate={.settings=out->settings,.auto_start=true,.time_public_spki_len=91};
+        memcpy(candidate.time_key_id,out->clock_key_id,sizeof candidate.time_key_id);memcpy(candidate.time_public_spki,out->clock_public_spki,91);
+        bool valid=cp_v3_startup_validate(&candidate,node);cp_v3_startup_clear(&candidate);if(!valid)goto done;
+    }
+    if(!windows&&!out->save_startup)goto done;
     ok = true;
 done:
-    wipe(key,sizeof key); wipe(given_boot,sizeof given_boot); wipe(security,sizeof security);
+    wipe(key,sizeof key); wipe(given_boot,sizeof given_boot); wipe(security,sizeof security);wipe(public_key,sizeof public_key);
     if (!ok) trial_bootstrap_clear(out);
     return ok;
 }
@@ -265,12 +296,14 @@ static bool hello_id(const char *value) {
     for (unsigned i = 0; i < 32; ++i) if (!((value[i] >= '0' && value[i] <= '9') || (value[i] >= 'a' && value[i] <= 'f'))) return false;
     return true;
 }
-esp_err_t trial_bootstrap_wait(const char *node, const char *boot, trial_bootstrap_t *out, bool (*cancelled)(void)) {
+esp_err_t trial_bootstrap_wait_for(const char *node, const char *boot, trial_bootstrap_t *out, bool (*cancelled)(void),uint32_t grace_ms) {
     static char line[TRIAL_BOOTSTRAP_LINE_MAX + 1u]; size_t used = 0;
     bool overflow = false, pending_cr = false;
+    uint64_t began=(uint64_t)esp_timer_get_time()/1000u;
     trial_bootstrap_clear(out); puts("V3 READY"); fflush(stdout);
     for (;;) {
         if(cancelled&&cancelled()){wipe(line,sizeof line);trial_bootstrap_clear(out);return ESP_ERR_INVALID_STATE;}
+        if(grace_ms&&(uint64_t)esp_timer_get_time()/1000u-began>=grace_ms){wipe(line,sizeof line);trial_bootstrap_clear(out);return ESP_ERR_TIMEOUT;}
         unsigned char byte; ssize_t n = read(STDIN_FILENO,&byte,1);
         if (n != 1) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
         if (pending_cr && byte != '\n') overflow = true;
@@ -279,11 +312,16 @@ esp_err_t trial_bootstrap_wait(const char *node, const char *boot, trial_bootstr
             if (used + 1 < sizeof line && !overflow) line[used++] = (char)byte; else overflow=true; continue; }
         line[used] = 0;
         if (!overflow && !strncmp(line,"HELLO ",6) && hello_id(line+6)) {
+            grace_ms=0;
             printf("V3 HELLO {\"node_id\":\"%s\",\"boot_id\":\"%s\",\"request_id\":\"%s\",\"mono_ms\":%llu}\n",node,boot,line+6,(unsigned long long)((uint64_t)esp_timer_get_time()/1000u)); fflush(stdout);
+        } else if(!overflow&&!strcmp(line,"SETUP")){grace_ms=0;puts("V3 USB SETUP");fflush(stdout);
         } else if (!overflow && !strncmp(line,"V3START ",8) && trial_bootstrap_parse(line+8,node,boot,(uint64_t)esp_timer_get_time()/1000u,out)) {
             wipe(line,sizeof line); puts("V3 START ACCEPTED"); fflush(stdout); return ESP_OK;
         } else { puts("V3 ERR BOOTSTRAP"); fflush(stdout); }
         wipe(line,sizeof line); used=0; overflow=false; pending_cr=false;
     }
+}
+esp_err_t trial_bootstrap_wait(const char *node,const char *boot,trial_bootstrap_t *out,bool (*cancelled)(void)) {
+    return trial_bootstrap_wait_for(node,boot,out,cancelled,0);
 }
 #endif

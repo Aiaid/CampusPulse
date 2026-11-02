@@ -6,6 +6,37 @@
 
 static const char base[] = "{\"node_id\":\"te-test\",\"boot_id\":\"boot-test\",\"origin\":\"https://trial.invalid\",\"uplink_transport\":\"https\",\"device_token\":\"synthetic-token\",\"ssid\":\"test-net\",\"password\":\"test-pass\",\"utc_ms\":1800000000000,\"uncertainty_ms\":10,\"max_windows\":1,\"security\":\"personal\",\"anchor_mono_ms\":1000}";
 static unsigned checks;
+static void startup_profiles(void){
+    const char *production="{\"node_id\":\"cp_001122334455\",\"boot_id\":\"boot-test\",\"origin\":\"" CP_API_ORIGIN "\",\"uplink_transport\":\"mqtt_tls\",\"device_token\":\"synthetic_device_credential_32_bytes\",\"ssid\":\"test-net\",\"password\":\"test-pass\",\"utc_ms\":1800000000000,\"uncertainty_ms\":10,\"max_windows\":0,\"security\":\"personal\",\"anchor_mono_ms\":1000,\"mqtt_uri\":\"" CP_MQTT_PRODUCTION_URI "\",\"mqtt_username\":\"synthetic-user\",\"mqtt_password\":\"synthetic-password\",\"mqtt_namespace\":\"synthetic-node\",\"save_startup\":true,\"startup_reconfigure\":false,\"clock_key_id\":\"synthetic-key-1\",\"clock_public_spki\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP40Li_hp_m47n60p8D54WK84zV2sxXs7LtkBoN79R9Q\"}";
+    trial_bootstrap_t out;
+    assert(trial_bootstrap_parse(production,"cp_001122334455","boot-test",1100,&out));
+    assert(out.save_startup&&!out.startup_reconfigure&&!out.max_windows&&out.clock_public_spki[0]==0x30);
+    char input[4096];
+    static const struct{const char *old,*replacement;} bad[]={
+        {"\"save_startup\":true","\"save_startup\":false"},
+        {"\"save_startup\":true","\"save_startup\":null"},
+        {"\"save_startup\":true","\"save_startup\":\"true\""},
+        {"\"save_startup\":true,",""},
+        {"\"clock_key_id\":\"synthetic-key-1\",",""},
+        {"\"clock_key_id\":\"synthetic-key-1\"","\"clock_key_id\":null"},
+        {"\"startup_reconfigure\":false","\"startup_reconfigure\":null"},
+        {"\"startup_reconfigure\":false","\"startup_reconfigure\":\"false\""},
+        {"\"max_windows\":0","\"max_windows\":4"},
+        {"\"clock_key_id\":","\"unknown_startup_key\":"},
+        {"MFkwEwYH","MFkwEwYI"}
+    };
+    for(size_t i=0;i<sizeof bad/sizeof *bad;i++){
+        const char *at=strstr(production,bad[i].old);assert(at);
+        size_t prefix=(size_t)(at-production);memcpy(input,production,prefix);
+        snprintf(input+prefix,sizeof input-prefix,"%s%s",bad[i].replacement,at+strlen(bad[i].old));
+        memset(&out,0xa5,sizeof out);assert(!trial_bootstrap_parse(input,"cp_001122334455","boot-test",1100,&out));
+        const uint8_t *p=(const uint8_t*)&out;for(size_t j=0;j<sizeof out;j++)assert(!p[j]);
+    }
+    strcpy(input,production);char *recover=strstr(input,"\"startup_reconfigure\":false");assert(recover);
+    memmove(recover+strlen("\"startup_reconfigure\":true"),recover+strlen("\"startup_reconfigure\":false"),strlen(recover+strlen("\"startup_reconfigure\":false"))+1);
+    memcpy(recover,"\"startup_reconfigure\":true",strlen("\"startup_reconfigure\":true"));
+    assert(trial_bootstrap_parse(input,"cp_001122334455","boot-test",1100,&out)&&out.startup_reconfigure);
+}
 static bool zero(const void *data, size_t n) {
     const unsigned char *p = data;
     while (n--) if (*p++) return false;
@@ -107,6 +138,7 @@ static void mutate(const char *json) {
     free(changed);
 }
 int main(int argc, char **argv) {
+    startup_profiles();
     assert(argc == 3);
     trial_bootstrap_t out;
     char *production=replace(base,"https://trial.invalid",CP_API_ORIGIN);

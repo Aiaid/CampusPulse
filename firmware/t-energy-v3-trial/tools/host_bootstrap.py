@@ -204,8 +204,8 @@ def validate_inputs(backend, wifi, *, allow_public_test=False, allow_production=
                 raise BootstrapError("production requires native MQTT/TLS; HTTPS fallback is forbidden")
             if backend.get("mqtt_uri") != PRODUCTION_MQTT_URI:
                 raise BootstrapError("the fixed production MQTT broker is required")
-            username = _text(backend["mqtt_username"], 1, 128)
-            broker_password = _text(backend["mqtt_password"], 1, 256)
+            username = _text(backend["mqtt_username"], 1, 64)
+            broker_password = _text(backend["mqtt_password"], 1, 96)
             namespace = _text(backend["mqtt_namespace"], 1, 15)
             if (any(ord(c) < 33 or ord(c) > 126 for c in username + broker_password)
                     or not re.fullmatch(r"[a-z0-9_-]{1,15}", namespace)):
@@ -243,9 +243,14 @@ def validate_inputs(backend, wifi, *, allow_public_test=False, allow_production=
         raise BootstrapError("invalid private bootstrap configuration") from None
 
 
-def validate_hello(hello, node_id, request_id):
-    if type(hello) is not dict or set(hello) != {"node_id", "boot_id", "request_id", "mono_ms"}:
+def validate_hello(hello, node_id, request_id, *, allow_safe_restart=False):
+    if type(allow_safe_restart) is not bool:
+        raise BootstrapError("safe restart permission must be explicit")
+    required={"node_id", "boot_id", "request_id", "mono_ms"}
+    if type(hello) is not dict or set(hello)-{"restart_required"} != required:
         raise BootstrapError("invalid HELLO identity")
+    if "restart_required" in hello and type(hello["restart_required"]) is not bool:
+        raise BootstrapError("invalid HELLO restart state")
     if hello["request_id"] != request_id or not NONCE_RE.fullmatch(request_id):
         raise BootstrapError("HELLO nonce mismatch")
     if hello["node_id"] != node_id or not NODE_RE.fullmatch(node_id):
@@ -253,7 +258,40 @@ def validate_hello(hello, node_id, request_id):
     if type(hello["boot_id"]) is not str or not BOOT_RE.fullmatch(hello["boot_id"]):
         raise BootstrapError("invalid HELLO boot identity")
     _integer(hello["mono_ms"], 0, 9007199254740991)
+    if hello.get("restart_required") and not allow_safe_restart:
+        raise BootstrapError("device requires an explicitly approved safe USB restart")
     return hello
+
+
+def startup_fields(clock_key=None, *, save_startup=False, startup_reconfigure=False, allow_production=False):
+    """A trusted operator supplies metadata downloaded over the canonical HTTPS
+    endpoint. This validates its shape/key, never substitutes a key from radio."""
+    if type(save_startup) is not bool or type(startup_reconfigure) is not bool:
+        raise BootstrapError("startup options must be explicit booleans")
+    if not save_startup:
+        if startup_reconfigure or clock_key is not None:
+            raise BootstrapError("startup recovery and clock key require explicit save")
+        return {}
+    if not allow_production or type(clock_key) is not dict or set(clock_key) != {"schema", "audience", "key_id", "public_key_spki"}:
+        raise BootstrapError("startup save requires trusted production clock metadata")
+    try:
+        if (clock_key["schema"] != "cp-v3-signed-clock-key/1" or clock_key["audience"] != "https://" + PRODUCTION_HOST
+                or type(clock_key["key_id"]) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", clock_key["key_id"])
+                or type(clock_key["public_key_spki"]) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{122}", clock_key["public_key_spki"])):
+            raise ValueError()
+        encoded = clock_key["public_key_spki"]
+        der = base64.b64decode(encoded.replace("-", "+").replace("_", "/") + "==", validate=True)
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        key = serialization.load_der_public_key(der)
+        if (len(der) != 91 or base64.urlsafe_b64encode(der).rstrip(b"=").decode() != encoded
+                or not isinstance(key, ec.EllipticCurvePublicKey) or not isinstance(key.curve, ec.SECP256R1)
+                or key.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo) != der):
+            raise ValueError()
+        return dict(save_startup=True, startup_reconfigure=startup_reconfigure,
+                    clock_key_id=clock_key["key_id"], clock_public_spki=encoded)
+    except (ValueError, TypeError):
+        raise BootstrapError("invalid pinned production clock key") from None
 
 
 def encode_frame(payload):
@@ -266,10 +304,12 @@ def encode_frame(payload):
 
 
 def build_frame(backend, wifi, hello, request_id, sent_wall_ms, sent_mono_ms,
-                received_wall_ms, received_mono_ms, *, windows=1, allow_public_test=False, allow_production=False):
+                received_wall_ms, received_mono_ms, *, windows=1, allow_public_test=False, allow_production=False,
+                save_startup=False, startup_reconfigure=False, clock_key=None):
     """Pure schema/time/frame operation; no file, serial or network IO."""
     payload = validate_inputs(backend, wifi, allow_public_test=allow_public_test, allow_production=allow_production)
     validate_hello(hello, payload["node_id"], request_id)
+    payload.update(startup_fields(clock_key,save_startup=save_startup,startup_reconfigure=startup_reconfigure,allow_production=allow_production))
     for value in (sent_wall_ms, received_wall_ms):
         _integer(value, 1704067200000, 4102444799000)
     for value in (sent_mono_ms, received_mono_ms):
@@ -279,7 +319,7 @@ def build_frame(backend, wifi, hello, request_id, sent_wall_ms, sent_mono_ms,
         raise BootstrapError("host clock exchange is not bounded")
     payload.update(boot_id=hello["boot_id"], utc_ms=(sent_wall_ms + received_wall_ms) // 2,
                    uncertainty_ms=(rtt + 1) // 2 + 251,
-                   anchor_mono_ms=hello["mono_ms"], max_windows=_integer(windows, 1, 3))
+                   anchor_mono_ms=hello["mono_ms"], max_windows=_integer(windows, 0 if save_startup else 1, 3))
     return encode_frame(payload)
 
 
@@ -341,10 +381,15 @@ def _write(port, frame, clock):
 def run_bootstrap(backend, wifi, port_name, *, serial_factory, clock=None,
                   nonce_factory=lambda: uuid.uuid4().hex, windows=1,
                   hello_attempts=3, hello_timeout_ms=2000, accept_timeout_ms=5000,
-                  allow_public_test=False, allow_production=False):
+                  allow_public_test=False, allow_production=False, save_startup=False,
+                  startup_reconfigure=False, clock_key=None, startup_saved_timeout_ms=300000,safe_restart=False):
     """Serial only; closes even after open/write/read failures. Never logs RX."""
     validate_inputs(backend, wifi, allow_public_test=allow_public_test, allow_production=allow_production)  # Fail closed before opening a device.
-    _integer(windows, 1, 3)
+    startup_fields(clock_key,save_startup=save_startup,startup_reconfigure=startup_reconfigure,allow_production=allow_production)
+    _integer(windows, 0 if save_startup else 1, 3)
+    _integer(startup_saved_timeout_ms, 1, 600000)
+    if type(safe_restart) is not bool:
+        raise BootstrapError("safe restart permission must be explicit")
     _integer(hello_attempts, 1, 15)
     _integer(hello_timeout_ms, 1, 2000)
     _integer(accept_timeout_ms, 1, 30000)
@@ -359,6 +404,7 @@ def run_bootstrap(backend, wifi, port_name, *, serial_factory, clock=None,
         port.reset_input_buffer()
         reader = LineReader(port, clock)
         hello = None
+        restarted = False
         used_nonces = set()
         for _ in range(hello_attempts):
             request_id = nonce_factory()
@@ -381,7 +427,19 @@ def run_bootstrap(backend, wifi, port_name, *, serial_factory, clock=None,
                 # Delayed replies to earlier nonces never authorize credentials.
                 if candidate.get("request_id") != request_id:
                     continue
-                validate_hello(candidate, backend["node_id"], request_id)
+                validate_hello(candidate, backend["node_id"], request_id,allow_safe_restart=safe_restart)
+                if candidate.get("restart_required"):
+                    if restarted:
+                        raise BootstrapError("safe restart did not enter a fresh USB setup boot")
+                    _write(port,b"RESTART\n",clock)
+                    port.close()
+                    time.sleep(1)
+                    port.open()
+                    port.reset_input_buffer()
+                    reader.clear()
+                    reader=LineReader(port,clock)
+                    restarted=True
+                    break
                 hello = candidate
                 break
             if hello is not None:
@@ -390,7 +448,8 @@ def run_bootstrap(backend, wifi, port_name, *, serial_factory, clock=None,
             raise BootstrapError("fresh HELLO timed out; no bootstrap sent")
         frame = build_frame(backend, wifi, hello, request_id, sent_wall, sent_mono,
                             received_wall, received_mono, windows=windows,
-                            allow_public_test=allow_public_test, allow_production=allow_production)
+                            allow_public_test=allow_public_test, allow_production=allow_production,
+                            save_startup=save_startup,startup_reconfigure=startup_reconfigure,clock_key=clock_key)
         current_wall, current_mono = clock.wall_ms(), clock.mono_ms()
         age = current_mono - received_mono
         if not 0 <= age <= 2000 or abs(current_wall - received_wall - age) > 20:
@@ -404,7 +463,16 @@ def run_bootstrap(backend, wifi, port_name, *, serial_factory, clock=None,
         while clock.mono_ms() < deadline:
             line = reader.next(deadline)
             if line == "V3 START ACCEPTED":
-                return
+                if not save_startup:
+                    return
+                deadline = clock.mono_ms() + startup_saved_timeout_ms
+                while clock.mono_ms() < deadline:
+                    saved_line = reader.next(deadline)
+                    if saved_line == "V3 STARTUP SAVED":
+                        return {"accepted": True, "saved": True}
+                    if saved_line in ("V3 STARTUP SAVE FAILED", "V3 ERR BOOTSTRAP"):
+                        raise BootstrapError("startup save unconfirmed; inspect diagnostics before reconfiguration")
+                raise BootstrapError("startup save confirmation timed out; saved profile state unknown")
             if line == "V3 ERR BOOTSTRAP":
                 raise BootstrapError("device rejected bootstrap")
             if line and "runtime_blocked=" in line:
@@ -435,22 +503,30 @@ def main(argv=None):
     origins.add_argument("--allow-public-test", action="store_true", help="explicitly permit an isolated HTTPS DNS/public IPv4 test origin using the public CA bundle; does not enable USB")
     origins.add_argument("--allow-production", action="store_true", help="permit native MQTT/TLS with canonical logical origin and fixed-broker credentials/system CA; does not enable USB")
     parser.add_argument("--port")
-    parser.add_argument("--windows", type=int, choices=(1, 2, 3), default=1)
+    parser.add_argument("--windows", type=int, choices=(0, 1, 2, 3), default=1)
+    parser.add_argument("--save-startup",action="store_true",help="explicitly save only after actual applied ACK; wait for independent SAVED marker")
+    parser.add_argument("--startup-reconfigure",action="store_true",help="explicit trusted-USB recovery, requires --save-startup")
+    parser.add_argument("--startup-key-file","--clock-key-file",dest="clock_key_file",type=Path,help="owned mode-0600 JSON metadata downloaded from the canonical HTTPS clock/key endpoint")
+    parser.add_argument("--safe-restart",action="store_true",help="permit exactly one RESTART only after fresh node/nonce-verified safe restart_required HELLO")
     args = parser.parse_args(argv)
     if args.send and not args.port:
         parser.error("--send requires --port")
-    backend = wifi = None
+    backend = wifi = clock_key = None
     try:
         backend = read_private_json(args.private_dir / "backend-bootstrap-tenergy.json")
         wifi = read_private_json(args.wifi_file)
+        clock_key = read_private_json(args.clock_key_file) if args.clock_key_file else None
         validate_inputs(backend, wifi, allow_public_test=args.allow_public_test, allow_production=args.allow_production)
+        startup_fields(clock_key,save_startup=args.save_startup,startup_reconfigure=args.startup_reconfigure,allow_production=args.allow_production)
+        _integer(args.windows,0 if args.save_startup else 1,3)
         if not args.send:
             print("Private inputs validated. No device opened. Real-device acceptance remains unverified.")
             return 0
         import serial
         run_bootstrap(backend, wifi, args.port, serial_factory=serial.Serial, windows=args.windows,
-                      allow_public_test=args.allow_public_test, allow_production=args.allow_production)
-        print("Bootstrap explicitly accepted. TLS, collection and upload remain unverified.")
+                      allow_public_test=args.allow_public_test, allow_production=args.allow_production,
+                      save_startup=args.save_startup,startup_reconfigure=args.startup_reconfigure,clock_key=clock_key,safe_restart=args.safe_restart)
+        print("Startup save explicitly confirmed; untethered hardware acceptance remains unverified." if args.save_startup else "Bootstrap explicitly accepted. TLS, collection and upload remain unverified.")
         return 0
     except KeyboardInterrupt:
         print("Bootstrap interrupted; device state unknown; private values withheld.", file=sys.stderr)
@@ -466,6 +542,8 @@ def main(argv=None):
             backend.clear()
         if wifi is not None:
             wifi.clear()
+        if clock_key is not None:
+            clock_key.clear()
 
 
 if __name__ == "__main__":
