@@ -191,6 +191,27 @@ export async function runAdminV3Browser(focus='all') {
    const enroll=async()=>{await page.evaluate(()=>{window.syntheticV3State={credential_state:'ready',mqtt_state:'ready'};});await page.getByRole('button',{name:'连接 V3 USB',exact:true}).click();const d=page.getByRole('dialog',{name:'连接并部署 V3 设备',exact:true});await d.getByRole('button',{name:'选择 USB 串口并核对 V3 身份',exact:true}).click();await d.getByRole('button',{name:'登记此设备并分配 MQTT 授权',exact:true}).click();await d.getByLabel('Wi-Fi SSID',{exact:true}).waitFor();return d;};
    const failedEnrollment=await enroll();await failedEnrollment.getByLabel('Wi-Fi SSID',{exact:true}).fill('Synthetic中文');await failedEnrollment.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption('open');const beforeEnrollment=await startCount();await failedEnrollment.getByRole('button',{name:'发送并启动有界 V3 采集',exact:true}).click();await expect(failedEnrollment.getByRole('alert')).toContainText('ASCII');await expect(failedEnrollment.getByLabel('设备凭证',{exact:true})).toHaveValue('');await expect(failedEnrollment.getByRole('button',{name:'读取本设备已验证 MQTT 授权',exact:true})).toBeVisible();await expect(failedEnrollment.getByRole('button',{name:'发送并启动有界 V3 采集',exact:true})).toBeDisabled();assert.equal(await startCount(),beforeEnrollment);await closeSaved(failedEnrollment);
    const enrollment=await enroll();await enrollment.getByLabel('Wi-Fi SSID',{exact:true}).fill('Synthetic WiFi');await enrollment.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption('open');await enrollment.getByRole('button',{name:'发送并启动有界 V3 采集',exact:true}).click();await enrollment.getByText(/已收到 V3 START ACCEPTED/).waitFor();assert.deepEqual(await page.evaluate(({newToken,mockMqtt})=>{const b=JSON.parse(window.syntheticV3Usb.filter(s=>s.startsWith('V3START ')).at(-1).slice(8));return{token:b.device_token===newToken,mqtt:b.mqtt_password===mockMqtt.password,reuse:Object.hasOwn(b,'reuse_saved_credential')||Object.hasOwn(b,'reuse_saved_mqtt')};},{newToken,mockMqtt}),{token:true,mqtt:true,reuse:false});await closeSaved(enrollment);await page.unroute(deviceUrl);await page.unroute(devicesUrl);page.off('request',countMqtt);
+   // Reproduce the blocked form with synthetic inputs only: a legacy HELLO
+   // omits saved-state fields, while backup token and protected MQTT are supplied.
+   for(const outerIdentity of ['', 'synthetic_anonymous']){
+    const d=await openSaved({}),start=d.getByRole('button',{name:'发送并启动有界 V3 采集',exact:true});
+    await d.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption('enterprise_peap');
+    await expect(d.getByLabel('PEAP 认证服务器验证',{exact:true})).toHaveValue('none');
+    await expect(d.getByText('可选；留空时使用 PEAP 用户名，也可按网络管理员要求指定匿名外层身份。',{exact:true})).toBeVisible();
+    const descriptionId=await start.getAttribute('aria-describedby');assert.ok(descriptionId);
+    const reasons=d.locator(`[id="${descriptionId}"]`);
+    await expect(start).toBeDisabled();await expect(reasons).toContainText('请填写 PEAP 用户名。');await expect(reasons).toContainText('请填写 PEAP 密码。');
+    await d.getByLabel('PEAP 用户名',{exact:true}).fill('synthetic_eap_username');
+    await expect(start).toBeDisabled();await expect(reasons).not.toContainText('请填写 PEAP 用户名。');await expect(reasons).toContainText('请填写 PEAP 密码。');
+    await d.getByLabel('PEAP 密码',{exact:true}).fill('synthetic_eap_password');
+    await expect(start).toBeDisabled();await expect(reasons).toContainText('请填写本设备的备份设备凭证');
+    await d.getByLabel('设备凭证',{exact:true}).fill(token);await expect(start).toBeDisabled();await expect(reasons).toContainText('请读取本设备已验证 MQTT 授权');
+    await d.getByLabel('PEAP 外层身份',{exact:true}).fill(outerIdentity);
+    await d.getByRole('button',{name:'读取本设备已验证 MQTT 授权',exact:true}).click();await expect(start).toBeEnabled();await expect(reasons).toBeEmpty();
+    const before=await startCount();await start.click();await d.getByText(/已收到 V3 START ACCEPTED/).waitFor();assert.equal(await startCount(),before+1);
+    assert.deepEqual(await page.evaluate(expected=>{const b=JSON.parse(window.syntheticV3Usb.filter(s=>s.startsWith('V3START ')).at(-1).slice(8));return{identity:b.eap_identity===expected,username:b.eap_username==='synthetic_eap_username',mode:b.eap_server_verification,token:typeof b.device_token,mqtt:typeof b.mqtt_password,noCa:!Object.hasOwn(b,'eap_ca_pem')&&!Object.hasOwn(b,'eap_domain')};},outerIdentity||'synthetic_eap_username'),{identity:true,username:true,mode:'none',token:'string',mqtt:'string',noCa:true});
+    await closeSaved(d);
+   }
 
   }
   if(['all','diagnostics'].includes(focus)){

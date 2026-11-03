@@ -53,7 +53,7 @@ describe('native V3 USB bootstrap',()=>{
   expect(JSON.parse(buildV3Start({...input,security:'personal',password:'a'.repeat(64)}).slice(8)).password).toBe('a'.repeat(64));
  });
  it('rejects unknown modes, cross-mode material, missing credentials and byte/control violations',()=>{
-  for(const invalid of [{security:'other'},{security:'open',password:'nonempty'},{security:'personal',eapUsername:''},{security:'open',password:'',eapCaPem:caPem},{...peap,password:'nonempty'},...['eapUsername','eapIdentity','eapPassword','eapCaPem','eapDomain'].flatMap(field=>[{...peap,[field]:undefined},{...peap,[field]:''}]),...['eapUsername','eapIdentity','eapPassword'].flatMap(field=>[{...peap,[field]:'中'.repeat(43)},{...peap,[field]:'synthetic\nvalue'}])])expect(()=>buildV3Start({...input,...invalid})).toThrow();
+  for(const invalid of [{security:'other'},{security:'open',password:'nonempty'},{security:'personal',eapUsername:''},{security:'open',password:'',eapCaPem:caPem},{...peap,password:'nonempty'},...['eapUsername','eapPassword','eapCaPem','eapDomain'].flatMap(field=>[{...peap,[field]:undefined},{...peap,[field]:''}]),...['eapUsername','eapIdentity','eapPassword'].flatMap(field=>[{...peap,[field]:'中'.repeat(43)},{...peap,[field]:'synthetic\nvalue'}])])expect(()=>buildV3Start({...input,...invalid})).toThrow();
   for(const password of ['a'.repeat(8),'a'.repeat(63)])expect(JSON.parse(buildV3Start({...input,password}).slice(8)).password).toBe(password);
   expect(()=>buildV3Start({...input,password:'中'.repeat(22)})).toThrow();
   for(const field of ['eapUsername','eapIdentity','eapPassword'])expect(()=>buildV3Start({...input,...peap,[field]:'a'.repeat(128)})).not.toThrow();
@@ -99,4 +99,15 @@ describe('native V3 USB bootstrap',()=>{
  it('reports failed save as uncertain without asserting which selector survived',async()=>{const port=portFixture((line,emit)=>{if(line.startsWith('HELLO '))emit('V3 HELLO '+JSON.stringify({...identity,request_id:line.trim().slice(6)})+'\n');if(line.startsWith('V3START '))emit('V3 START ACCEPTED\nV3 STARTUP SAVE FAILED\n');});const client=await openV3Serial(port);await client.start({...input,saveStartup:true,clockKey});await expect(client.waitStartupSaved(50)).rejects.toThrow('保存未确认');await client.close();});
  it('requires explicit allow to inspect a safe restart identity and rechecks a fresh nonce before RESTART',async()=>{expect(()=>validateV3Hello({...identity,restart_required:true},nonce,node)).toThrow();expect(validateV3Hello({...identity,restart_required:true},nonce,node,{allowRestartRequired:true}).restart_required).toBe(true);const port=portFixture((line,emit)=>{if(line.startsWith('HELLO '))emit('V3 HELLO '+JSON.stringify({...identity,restart_required:true,request_id:line.trim().slice(6)})+'\n');});const client=await openV3Serial(port);expect((await client.hello(node,{allowRestartRequired:true})).identity.restart_required).toBe(true);expect(await client.restart(node)).toMatchObject({restart_requested:true,node_id:node});expect(port.writes.filter(line=>line.startsWith('HELLO '))).toHaveLength(2);expect(port.writes.at(-1)).toBe('RESTART\n');expect(port.writes.every(line=>!line.includes(input.token))).toBe(true);await client.close();});
  it('never restarts a normal or mismatched-node device and never transfers credentials from restart-required state',async()=>{for(const actual of [{...identity},{...identity,node_id:'cp_ffeeddccbbaa',restart_required:true}]){const port=portFixture((line,emit)=>{if(line.startsWith('HELLO '))emit('V3 HELLO '+JSON.stringify({...actual,request_id:line.trim().slice(6)})+'\n');});const client=await openV3Serial(port);await expect(client.restart(node)).rejects.toThrow();expect(port.writes.some(line=>line==='RESTART\n')).toBe(false);await client.close();}expect(()=>buildV3Start({...input,identity:{...identity,restart_required:true},saveStartup:true,clockKey})).toThrow();});
+});
+
+it('defaults only an omitted or empty PEAP outer identity to the username on the wire',()=>{
+ for(const eapIdentity of [undefined,'']){
+  const verified=JSON.parse(buildV3Start({...input,...peap,eapIdentity}).slice(8));
+  expect(verified.eap_identity).toBe(peap.eapUsername);
+  const unverified=JSON.parse(buildV3Start({...input,...peap,eapIdentity,eapCaPem:undefined,eapDomain:undefined,eapServerVerification:'none'}).slice(8));
+  expect(unverified.eap_identity).toBe(peap.eapUsername);
+ }
+ expect(JSON.parse(buildV3Start({...input,...peap,eapIdentity:'anonymous@synthetic.invalid'}).slice(8)).eap_identity).toBe('anonymous@synthetic.invalid');
+ for(const eapIdentity of [null,17,false])expect(()=>buildV3Start({...input,...peap,eapIdentity})).toThrow();
 });

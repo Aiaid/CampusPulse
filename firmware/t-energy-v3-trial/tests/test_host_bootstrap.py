@@ -207,11 +207,30 @@ class BootstrapTests(unittest.TestCase):
                             allow_production=True, save_startup=True, clock_key=startup_key(), windows=0)[8:])
             self.assertTrue(body["save_startup"])
 
+    def test_empty_or_omitted_outer_identity_uses_username_before_wire_encoding(self):
+        for verified in (False, True):
+            for supplied in (False, True):
+                wifi = self.enterprise()
+                if supplied:
+                    wifi["eap_identity"] = ""
+                else:
+                    wifi.pop("eap_identity")
+                if not verified:
+                    wifi.pop("eap_ca_pem"); wifi.pop("eap_domain")
+                    wifi["eap_server_verification"] = "none"
+                body = json.loads(self.frame(wifi=wifi, backend=self.production_backend, allow_production=True)[8:])
+                self.assertEqual(body["eap_identity"], wifi["eap_username"])
+                self.assertEqual(wifi.get("eap_identity", ""), "")
+        wifi = self.enterprise()
+        body = json.loads(self.frame(wifi=wifi)[8:])
+        self.assertEqual(body["eap_identity"], "synthetic-identity")
+
     def test_eap_failures_and_save_rejected_before_usb(self):
         good = self.enterprise()
         invalid = []
         for key in ("eap_username", "eap_identity", "eap_password", "eap_ca_pem", "eap_domain"):
-            absent = good.copy(); absent.pop(key); invalid += [absent, good | {key: ""}, good | {key: None}]
+            absent = good.copy(); absent.pop(key)
+            invalid += [good | {key: None}] if key == "eap_identity" else [absent, good | {key: ""}, good | {key: None}]
             invalid += [self.wifi | {key: ""}, dict(ssid="synthetic-open", password="", security="open") | {key: ""}]
         invalid += [good | {"password": "wrong-personal-password"}, good | {"eap_ca_pem": self.leaf},
                     good | {"eap_ca_pem": self.ca * 2}, good | {"eap_ca_pem": "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"}]

@@ -43,12 +43,13 @@ export function validateV3Wifi({ssid,password,security='personal',eapUsername,ea
   return {ssid,password,security};
  }
  if(password!=='')throw new Error('PEAP 不使用个人 Wi-Fi 密码。');
- if([eapUsername,eapIdentity,eapPassword].some(value=>typeof value!=='string'||utf8Bytes(value)<1||utf8Bytes(value)>128||!printableAsciiPattern.test(value)))throw new Error('当前 USB 的 PEAP 用户名、外层身份和密码均仅支持 1–128 个可打印 ASCII 字符。');
+ const outerIdentity=eapIdentity===undefined||eapIdentity===''?eapUsername:eapIdentity;
+ if([eapUsername,outerIdentity,eapPassword].some(value=>typeof value!=='string'||utf8Bytes(value)<1||utf8Bytes(value)>128||!printableAsciiPattern.test(value)))throw new Error('当前 USB 的 PEAP 用户名和密码需为 1–128 个可打印 ASCII 字符；外层身份可留空使用用户名。');
  const emptyTrust=value=>value===undefined||value==='';
  const hasTrust=!emptyTrust(eapCaPem)||!emptyTrust(eapDomain);
  const verification=eapServerVerification===undefined?(hasTrust?'ca':'none'):eapServerVerification;
  if(!['none','ca'].includes(verification))throw new Error('PEAP 服务器验证方式无效。');
- const base={ssid,password:'',security,eap_username:eapUsername,eap_identity:eapIdentity,eap_password:eapPassword,eap_server_verification:verification};
+ const base={ssid,password:'',security,eap_username:eapUsername,eap_identity:outerIdentity,eap_password:eapPassword,eap_server_verification:verification};
  if(verification==='none'){
   if(hasTrust)throw new Error('不验证服务器时不能携带 CA 或域名；提供的证书不会被自动忽略。');
   return base;

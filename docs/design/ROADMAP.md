@@ -437,6 +437,15 @@ Historical context: the raw-first implementation direction was **superseded as
 
 ## Completed archive
 
+- [x] 2026-11-03: Fix PEAP send-button readiness (2026-11-03): preserve the legacy optional
+      outer identity by defaulting an empty input to the username before USB
+      encoding, keep the normalized firmware field nonempty, and show concrete
+      non-sensitive reasons for a disabled provisioning button. Verify the real
+      browser with empty identity and existing/unknown credential states without
+      submitting the user's live form or disturbing its serial connection.
+
+
+
 - [x] 2026-11-03: Restore the user-confirmed provisioning behavior (2026-11-03): PEAP
       server verification is optional, with an explicit unverified mode when no
       CA is supplied and strict CA/name/date checks when verification is chosen.

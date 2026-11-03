@@ -45,7 +45,8 @@ personal-network default. Tools always send it explicitly: the firmware's
 | Open `password` | Present and empty |
 | Personal `password` | 8–63 printable-ASCII characters, or exactly 64 hexadecimal digits |
 | PEAP `password` | Present and empty; this is the personal-network field |
-| PEAP `eap_username`, `eap_identity`, `eap_password` | Each 1–128 printable-ASCII characters; outer identity is explicit |
+| PEAP `eap_username`, `eap_password` | Each 1–128 printable-ASCII characters |
+| PEAP outer identity | Optional in the page/private host input; omitted or empty defaults to the username. The tools always encode a nonempty `eap_identity` on USB. A supplied anonymous identity is preserved exactly |
 | PEAP `eap_server_verification` | `none` or `ca`; the UI defaults to `none` |
 | PEAP `none` | Omit `eap_ca_pem` and `eap_domain`; do not verify the RADIUS server |
 | PEAP `ca`: `eap_ca_pem` | Exactly one real PEM X.509 CA certificate, at most 4096 bytes; Basic Constraints must assert CA, and Key Usage must permit certificate signing if present |
@@ -150,16 +151,28 @@ recovery capability. Missing/unavailable/unknown material keeps manual backup
 and recovery actions available, without automatic credential rotation or making
 every returning operator enter credentials again.
 
+## Send-button readiness correction
+
+An empty PEAP outer identity is optional in the page and host input. Both
+normalize it to the username before USB encoding, matching the old provisioning
+behavior; the firmware still receives a valid nonempty field. An explicitly
+provided anonymous/outer identity is not changed. The page reports concrete
+non-sensitive reasons whenever START is disabled. A real local browser test
+reproduces an older HELLO without credential-state fields, a manually supplied
+backup token, recovered MQTT authorization, unverified PEAP and an empty outer
+identity; its normal click emits the correctly normalized START. Tests do not
+modify or submit the operator's live form.
+
 ## Scoped local verification
 
 The optional-verification and credential-reuse correction has local software
 checks for browser/host contracts, simulated USB interaction, strict CA parsing
 and cryptographic negatives, and saved-credential selection/fault handling.
-The final local repository suite passed 93 files / 1,229 tests, and the
+The final local repository suite passed 94 files / 1,243 tests, and the
 production frontend build passed. The browser exercised local-only reuse,
-explicit server-MQTT recovery and failure-source latches; its 35 serial unit
+explicit server-MQTT recovery and failure-source latches; its 36 serial unit
 cases also passed. T-Energy completed its full host chain, including 23,404
-parser checks and 43 CLI cases; Waveshare CLI and parser checks passed. Both
+parser checks and 44 CLI cases; Waveshare CLI and parser checks passed. Both
 S3 application builds passed. These suites overlap and are not additive.
 Publication must be confirmed by the actual release workflow. No new flash or
 real PEAP wireless handshake has been performed for this correction.
