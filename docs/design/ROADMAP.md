@@ -25,6 +25,7 @@ publication/deployment is checked against the actual main workflow run.
 
 ## P0 — Deliver the core MVP
 
+
 - [ ] Finish autonomous V3 startup (2026-11-02 user request): save an explicitly
       validated first USB configuration in a dedicated V3 store; restart without
       USB, recover authenticated time without weakening TLS checks, register real
@@ -436,15 +437,34 @@ Historical context: the raw-first implementation direction was **superseded as
 
 ## Completed archive
 
-- [x] 2026-11-03: Restore V3 USB network authentication parity locally. Browser,
+- [x] 2026-11-03: Restore the user-confirmed provisioning behavior (2026-11-03): PEAP
+      server verification is optional, with an explicit unverified mode when no
+      CA is supplied and strict CA/name/date checks when verification is chosen.
+      Never silently downgrade invalid provided trust material or weaken MQTT
+      TLS. Reuse same-node saved device/MQTT credentials on the physical device,
+      exposing readiness rather than credential values; keep missing, corrupt
+      and unknown states distinct and avoid implicit credential rotation.
+      Verify both USB receivers, browser/host tooling, local recovery and clear
+      verification-state reporting without changing existing stored profiles.
+      Manual PEAP save/autostart remains unsupported in both modes because its
+      profile/boot path lacks verification-choice/trust support; the no-CA case
+      is not blocked by an EAP certificate-date prerequisite. Keep HELLO/START
+      readiness separate from network success and actual saved-state evidence.
+
+
+- [x] 2026-11-03: Earlier V3 USB authentication repair (mandatory-CA policy
+      superseded by the user-confirmed optional-verification item above). Browser,
       host tools and both S3 receivers expose open/personal/manual PEAP with a
       shared printable-ASCII contract. PEAP requires a real single CA, expected
       DNS hostname and fresh trusted USB time before Wi-Fi; certificate time
       checks stay enabled. Keep manual PEAP while refusing save/autostart until
       cold boot has a pre-network trusted clock. Open/personal saved startup,
       signed-clock recovery, profile format and historical data are preserved.
-      This current security requirement supersedes the older Passport roadmap
-      proposal to skip RADIUS certificate checks. Local Chromium USB/startup,
+      The earlier claim that CA verification must supersede the older Passport
+      no-CA behavior is withdrawn; it was not the user's intended policy.
+      The earlier clock-only explanation for rejecting all PEAP persistence is
+      also superseded; current limits are documented in the linked note.
+      Local Chromium USB/startup,
       parser/CLI, actual host mbedTLS negative cases and fresh S3 builds passed;
       final integrated release checks and actual CI/CD publication remain
       separate. No serial access, flash or real PEAP wireless acceptance.

@@ -1,6 +1,7 @@
 #include "trial_bootstrap.h"
 #include "cp_v3_transport.h"
 #include "cp_v3_startup.h"
+#include "cp_v3_saved_credentials.h"
 #ifndef TRIAL_BOOTSTRAP_HOST_TEST
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -141,8 +142,8 @@ static bool integer(const char **p, uint64_t min, uint64_t max, uint64_t *out) {
     *p = scan; *out = value; return true;
 }
 
-bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
-                          uint64_t mono, trial_bootstrap_t *out) {
+bool trial_bootstrap_parse_with_credentials(const char *json, const char *node, const char *boot,
+                          uint64_t mono, const cp_settings_t *saved, trial_bootstrap_t *out) {
     if (!out) return false;
     trial_bootstrap_clear(out);
     if (!json || !node || !boot) return false;
@@ -152,14 +153,15 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
     /* Physical USB records are printable ASCII. Escaped JSON newlines are
      * decoded only within strings; encoded record size is bounded separately. */
     for (size_t i = 0; i < length; ++i) if ((unsigned char)json[i] < 32 || (unsigned char)json[i] > 126) return false;
-    bool ok = false, seen[26] = {0};
+    bool ok = false, seen[29] = {0};
     static const char *keys[] = {"node_id","boot_id","origin","device_token","ssid","password","utc_ms","uncertainty_ms","max_windows","security","anchor_mono_ms","server_ca_pem",
         "uplink_transport","mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace",
         "save_startup","startup_reconfigure","clock_key_id","clock_public_spki",
-        "eap_username","eap_identity","eap_password","eap_ca_pem","eap_domain"};
+        "eap_username","eap_identity","eap_password","eap_ca_pem","eap_domain","eap_server_verification","reuse_saved_credential","reuse_saved_mqtt"};
     const unsigned key_count=sizeof keys/sizeof keys[0];
     char key[32] = {0}, given_boot[37] = {0}, security[16] = {0},transport[16]={0};
-    char public_key[123]={0};
+    char public_key[123]={0},verification[8]={0};
+    bool reuse_credential=false,reuse_mqtt=false;
     uint64_t utc = 0, uncertainty = 0, windows = 0, anchor = 0;
     const char *p = json;
     space(&p); if (*p != '{') goto done; ++p;
@@ -198,6 +200,9 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
             case 23: target=out->settings.eap_password;cap=sizeof out->settings.eap_password;break;
             case 24: target=out->eap_ca_pem;cap=sizeof out->eap_ca_pem;break;
             case 25: target=out->eap_domain;cap=sizeof out->eap_domain;break;
+            case 26: target=verification;cap=sizeof verification;break;
+            case 27: if(!boolean(&p,&reuse_credential))goto done;break;
+            case 28: if(!boolean(&p,&reuse_mqtt))goto done;break;
         }
         if (target && (!string(&p,target,cap) || (k != 11 && k != 24 && !ascii_text(target,k == 5)))) goto done;
         space(&p);
@@ -206,7 +211,18 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
         ++p;
     }
     space(&p); if (*p) goto done;
-    for (unsigned k = 0; k < 11; ++k) if (!seen[k]) goto done;
+    for (unsigned k = 0; k < 11; ++k) if (k!=3&&!seen[k]) goto done;
+    if(reuse_credential){
+        if(seen[3]||!cp_v3_saved_credential_ready(saved,node))goto done;
+        memcpy(out->settings.device_token,saved->device_token,sizeof out->settings.device_token);
+    }else if(!seen[3])goto done;
+    if(reuse_mqtt){
+        if(seen[13]||seen[14]||seen[15]||seen[16]||!cp_v3_saved_mqtt_ready(saved,node))goto done;
+        memcpy(out->settings.mqtt_uri,saved->mqtt_uri,sizeof out->settings.mqtt_uri);
+        memcpy(out->settings.mqtt_username,saved->mqtt_username,sizeof out->settings.mqtt_username);
+        memcpy(out->settings.mqtt_password,saved->mqtt_password,sizeof out->settings.mqtt_password);
+        memcpy(out->settings.mqtt_namespace,saved->mqtt_namespace,sizeof out->settings.mqtt_namespace);
+    }
     if (strcmp(node,out->settings.node_id) || strcmp(boot,given_boot) ||
         anchor > mono || mono-anchor > 30000 ||
         (seen[11] && !cp_v3_ca_validate(out->server_ca_pem))) goto done;
@@ -214,7 +230,15 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
     else if(!strcmp(security,"open"))out->settings.wifi_security=CP_WIFI_OPEN;
     else if(!strcmp(security,"enterprise_peap"))out->settings.wifi_security=CP_WIFI_ENTERPRISE_PEAP;
     else goto done;
-    for(unsigned k=21;k<key_count;k++)if(seen[k]!=(out->settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP))goto done;
+    for(unsigned k=21;k<24;k++)if(seen[k]!=(out->settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP))goto done;
+    if(out->settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP){
+        if(!seen[26]){if(!seen[24]||!seen[25])goto done;}
+        else if(!strcmp(verification,"none")){
+            if(seen[24]||seen[25])goto done;
+            out->eap_verification=CP_V3_EAP_VERIFY_NONE;
+        }else if(strcmp(verification,"ca"))goto done;
+        if(out->eap_verification==CP_V3_EAP_VERIFY_CA&&(!seen[24]||!seen[25]))goto done;
+    }else if(seen[24]||seen[25]||seen[26])goto done;
     /* Production is one canonical origin and always the SDK public bundle.
      * A CA field is forbidden even when empty. Host CLI permission is checked
      * before USB; the physical frame cannot weaken the device TLS boundary. */
@@ -223,10 +247,10 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
      * choose HTTPS, never silently route a test endpoint through the broker. */
     if(!seen[12]){if(!production)goto done;snprintf(transport,sizeof transport,"mqtt_tls");}
     if(!strcmp(transport,"mqtt_tls")){
-        if(!production||seen[11]||!seen[13]||!seen[14]||!seen[15]||!seen[16]||!cp_settings_mqtt_ready(&out->settings))goto done;
+        if(!production||seen[11]||(!reuse_mqtt&&(!seen[13]||!seen[14]||!seen[15]||!seen[16]))||!cp_settings_mqtt_ready(&out->settings))goto done;
         out->transport=CP_V3_TRANSPORT_MQTT_TLS;
     }else if(!strcmp(transport,"https")){
-        if(production||seen[13]||seen[14]||seen[15]||seen[16]||!cp_v3_transport_origin_allowed(out->origin,seen[11]))goto done;
+        if(production||reuse_credential||reuse_mqtt||seen[13]||seen[14]||seen[15]||seen[16]||!cp_v3_transport_origin_allowed(out->origin,seen[11]))goto done;
         out->transport=CP_V3_TRANSPORT_HTTPS;
     }else goto done;
     uint64_t age = mono-anchor;
@@ -235,7 +259,7 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
     out->settings.version = CP_SETTINGS_VERSION;
     /* The independent transport validates the explicit origin separately. */
     snprintf(out->settings.api_origin,sizeof out->settings.api_origin,"%s",CP_API_ORIGIN);
-    if(!cp_v3_wifi_validate(&out->settings,out->eap_ca_pem,out->eap_domain))goto done;
+    if(!cp_v3_wifi_validate_mode(&out->settings,out->eap_ca_pem,out->eap_domain,out->eap_verification))goto done;
     out->clock_seed = (cp_v3_time_t){.utc_ms=utc,.mono_ms=mono,.clock_epoch=1,.uncertainty_ms=(uint32_t)uncertainty};
     out->max_windows = (unsigned)windows;
     if(seen[17]||seen[18]||seen[19]||seen[20]){
@@ -253,7 +277,15 @@ done:
     return ok;
 }
 
+bool trial_bootstrap_parse(const char *json,const char *node,const char *boot,uint64_t mono,trial_bootstrap_t *out) {
+    return trial_bootstrap_parse_with_credentials(json,node,boot,mono,NULL,out);
+}
 #ifndef TRIAL_BOOTSTRAP_HOST_TEST
+static bool parse_saved(const char *json,const char *node,const char *boot,trial_bootstrap_t *out) {
+    cp_v3_saved_credentials_t saved;cp_v3_saved_credentials_load(node,&saved);
+    bool ok=trial_bootstrap_parse_with_credentials(json,node,boot,(uint64_t)esp_timer_get_time()/1000u,&saved.settings,out);
+    cp_v3_saved_credentials_clear(&saved);return ok;
+}
 static bool hello_id(const char *value) {
     if (strlen(value) != 32) return false;
     for (unsigned i = 0; i < 32; ++i) if (!((value[i] >= '0' && value[i] <= '9') || (value[i] >= 'a' && value[i] <= 'f'))) return false;
@@ -276,9 +308,11 @@ esp_err_t trial_bootstrap_wait_for(const char *node, const char *boot, trial_boo
         line[used] = 0;
         if (!overflow && !strncmp(line,"HELLO ",6) && hello_id(line+6)) {
             grace_ms=0;
-            printf("V3 HELLO {\"node_id\":\"%s\",\"boot_id\":\"%s\",\"request_id\":\"%s\",\"mono_ms\":%llu}\n",node,boot,line+6,(unsigned long long)((uint64_t)esp_timer_get_time()/1000u)); fflush(stdout);
+            cp_v3_saved_credentials_t saved;cp_v3_saved_credentials_load(node,&saved);
+            printf("V3 HELLO {\"node_id\":\"%s\",\"boot_id\":\"%s\",\"request_id\":\"%s\",\"mono_ms\":%llu,\"credential_state\":\"%s\",\"mqtt_state\":\"%s\"}\n",node,boot,line+6,(unsigned long long)((uint64_t)esp_timer_get_time()/1000u),cp_v3_saved_state_name(saved.credential_state),cp_v3_saved_state_name(saved.mqtt_state));
+            cp_v3_saved_credentials_clear(&saved);fflush(stdout);
         } else if(!overflow&&!strcmp(line,"SETUP")){grace_ms=0;puts("V3 USB SETUP");fflush(stdout);
-        } else if (!overflow && !strncmp(line,"V3START ",8) && trial_bootstrap_parse(line+8,node,boot,(uint64_t)esp_timer_get_time()/1000u,out)) {
+        } else if (!overflow && !strncmp(line,"V3START ",8) && parse_saved(line+8,node,boot,out)) {
             wipe(line,sizeof line); puts("V3 START ACCEPTED"); fflush(stdout); return ESP_OK;
         } else { puts("V3 ERR BOOTSTRAP"); fflush(stdout); }
         wipe(line,sizeof line); used=0; overflow=false; pending_cr=false;

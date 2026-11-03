@@ -11,6 +11,10 @@ void *heap_caps_calloc(size_t count, size_t size, unsigned flags) { (void)flags;
 void heap_caps_free(void *data) { free(data); }
 #endif
 
+static bool parse(const char *json,const char *node,const char *boot,trial_bootstrap_t *out){return parse_with_credentials(json,node,boot,NULL,out);}
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+void cp_v3_saved_credentials_load(const char *node,cp_v3_saved_credentials_t *saved){(void)node;cp_v3_saved_credentials_clear(saved);}
+#endif
 static cJSON *input(const char *origin) {
     cJSON *root = cJSON_CreateObject(); assert(root);
     cJSON_AddStringToObject(root,"node_id","cp_001122334455");
@@ -127,8 +131,48 @@ static void wifi_modes(const char *ca,const char *leaf){
     r=saved_input();cJSON_SetValuestring(cJSON_GetObjectItem(r,"security"),"open");cJSON_SetValuestring(cJSON_GetObjectItem(r,"password"),"");assert(send_named(r,"cp_aabbccddeeff"));
 #endif
 }
+static void optional_ca_and_reuse(const char *ca){
+    cJSON *r=peap_input(input("https://isolated.example"),ca);
+    cJSON_DeleteItemFromObject(r,"eap_ca_pem");cJSON_DeleteItemFromObject(r,"eap_domain");
+    assert(!send_input(cJSON_Duplicate(r,true)));
+    cJSON_AddStringToObject(r,"eap_server_verification","none");
+    assert(send_input(cJSON_Duplicate(r,true)));
+    const char *trust[]={"eap_ca_pem","eap_domain"};
+    for(unsigned i=0;i<2;++i){cJSON *bad=cJSON_Duplicate(r,true);cJSON_AddStringToObject(bad,trust[i],"");assert(!send_input(bad));}
+    cJSON_SetValuestring(cJSON_GetObjectItem(r,"eap_server_verification"),"ca");assert(!send_input(r));
+    r=peap_input(input("https://isolated.example"),ca);cJSON_AddStringToObject(r,"eap_server_verification","none");assert(!send_input(r));
+    r=peap_input(input("https://isolated.example"),ca);cJSON_AddStringToObject(r,"eap_server_verification","ca");assert(send_input(r));
+    r=input("https://isolated.example");cJSON_AddStringToObject(r,"eap_server_verification","none");assert(!send_input(r));
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+    r=mqtt_input();char *json=cJSON_PrintUnformatted(r);trial_bootstrap_t out;
+    assert(parse(json,"cp_001122334455","12345678-1234-4123-8123-123456789abc",&out));free(json);
+    cp_settings_t saved=out.settings;
+    cJSON_DeleteItemFromObject(r,"device_token");cJSON_AddBoolToObject(r,"reuse_saved_credential",true);
+    const char *fields[]={"mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace"};
+    for(unsigned i=0;i<4;i++)cJSON_DeleteItemFromObject(r,fields[i]);
+    cJSON_AddBoolToObject(r,"reuse_saved_mqtt",true);
+    cJSON_SetValuestring(cJSON_GetObjectItem(r,"ssid"),"new-wifi");
+    for(unsigned i=0;i<11;++i){
+        cJSON *candidate=cJSON_Duplicate(r,true);cp_settings_t snapshot=saved;
+        if(i==1)cJSON_AddStringToObject(candidate,"device_token","");
+        if(i>=2&&i<=5)cJSON_AddStringToObject(candidate,fields[i-2],"");
+        if(i==6)cJSON_SetValuestring(cJSON_GetObjectItem(candidate,"origin"),"https://isolated.example");
+        if(i==7)cJSON_SetValuestring(cJSON_GetObjectItem(candidate,"uplink_transport"),"https");
+        if(i==8)strcpy(snapshot.node_id,"cp_112233445566");
+        if(i==9)snapshot.mqtt_password[0]=0;
+        if(i==10){cJSON_DeleteItemFromObject(candidate,"reuse_saved_credential");cJSON_AddBoolToObject(candidate,"reuse_saved_credential",false);}
+        json=cJSON_PrintUnformatted(candidate);cJSON_Delete(candidate);
+        bool ok=parse_with_credentials(json,"cp_001122334455","12345678-1234-4123-8123-123456789abc",&snapshot,&out);free(json);
+        assert(ok==(i==0));
+        if(ok)assert(!strcmp(out.settings.device_token,saved.device_token)&&!strcmp(out.settings.mqtt_password,saved.mqtt_password)&&!strcmp(out.settings.ssid,"new-wifi"));
+        else for(size_t j=0;j<sizeof out;j++)assert(!((unsigned char*)&out)[j]);
+        cp_settings_clear_sensitive(&snapshot);
+    }
+    assert(!send_input(r));cp_settings_clear_sensitive(&saved);trial_bootstrap_clear(&out);
+#endif
+}
 int main(int argc,char **argv) {
-    assert(argc==3);char *ca=read_pem(argv[1]),*leaf=read_pem(argv[2]);wifi_modes(ca,leaf);
+    assert(argc==3);char *ca=read_pem(argv[1]),*leaf=read_pem(argv[2]);wifi_modes(ca,leaf);optional_ca_and_reuse(ca);
     assert(!check(CP_API_ORIGIN,NULL,false)); /* no production HTTPS */
     assert(check("https://192.168.1.2:8799",NULL,false));
     assert(check("https://isolated.example",NULL,false));

@@ -14,6 +14,9 @@
 /* Zero preserves existing isolated HTTPS test callers. Production applications
  * explicitly select native MQTT/TLS; the legacy cp_network owner is not started. */
 typedef enum { CP_V3_TRANSPORT_HTTPS=0, CP_V3_TRANSPORT_MQTT_TLS=1 } cp_v3_transport_mode_t;
+/* Zero keeps existing callers in verified mode. NONE is a deliberate PEAP-only
+ * user choice; it never changes broker, HTTPS or signed-clock verification. */
+typedef enum { CP_V3_EAP_VERIFY_CA=0, CP_V3_EAP_VERIFY_NONE=1 } cp_v3_eap_verification_t;
 
 typedef struct {
     /* MQTT requires logical CP_API_ORIGIN; its actual peer is the fixed broker.
@@ -23,8 +26,9 @@ typedef struct {
      * CA is required for isolated servers only. Production requires NULL.
      * CA pointers remain valid until stop. No insecure option. */
     const char *server_ca_pem;
-    /* PEAP requires explicit CA and expected RADIUS certificate domain. */
+    /* Verified PEAP requires both. Explicit unverified PEAP requires neither. */
     const char *eap_ca_pem, *eap_domain;
+    cp_v3_eap_verification_t eap_verification;
     /* Caller-trusted RTC/physical-host anchor, captured on this boot's monotonic
      * clock. Mandatory before TLS; no unauthenticated SNTP bootstrap. */
     cp_v3_time_t clock_seed;
@@ -46,7 +50,7 @@ typedef struct {
     bool (*cancelled)(void);
 } cp_v3_transport_config_t;
 
-/* Explicit enterprise trust is independent of the fixed MQTT/public HTTPS CA.
+/* Enterprise verification choice is independent of MQTT/public HTTPS trust.
  * These pure checks parse one bounded CA; they do not authenticate a peer or
  * replace SDK chain/expected-name/date verification during PEAP. */
 #define CP_V3_EAP_CA_MAX 4096u
@@ -55,6 +59,8 @@ bool cp_v3_ca_validate(const char *pem);
 bool cp_v3_eap_domain_validate(const char *domain);
 bool cp_v3_eap_validate(const char *ca, const char *domain);
 bool cp_v3_wifi_validate(const cp_settings_t *, const char *ca, const char *domain);
+bool cp_v3_wifi_validate_mode(const cp_settings_t *, const char *ca,
+    const char *domain, cp_v3_eap_verification_t);
 
 /* Pure USB preflight: validates origin syntax and production's bundle-only rule.
  * It performs no DNS/TLS and grants no policy or collection authority. */

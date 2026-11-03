@@ -17,7 +17,7 @@ esp_err_t nvs_set_u8(nvs_handle_t h,const char *k,uint8_t v)
 { (void)h; assert(!strcmp(k,"active")); if(fail())return ESP_FAIL;pending.active=v;pending.have_active=true;return ESP_OK; }
 static unsigned slot_index(const char *k) { assert(!strcmp(k,"settings_a")||!strcmp(k,"settings_b")); return k[9]=='b'; }
 esp_err_t nvs_get_blob(nvs_handle_t h,const char *k,void *v,size_t *n)
-{ (void)h;unsigned i=slot_index(k); if(fail())return ESP_FAIL;if(!pending.have_slot[i])return ESP_ERR_NVS_NOT_FOUND; size_t size=pending.slot_size[i]?pending.slot_size[i]:sizeof(cp_settings_t);assert(*n>=size);*n=size;memcpy(v,&pending.slot[i],*n);return ESP_OK; }
+{ (void)h;unsigned i=slot_index(k); if(fail())return ESP_FAIL;if(!pending.have_slot[i])return ESP_ERR_NVS_NOT_FOUND; size_t size=pending.slot_size[i]?pending.slot_size[i]:sizeof(cp_settings_t);if(v){assert(*n>=size);memcpy(v,&pending.slot[i],size);}*n=size;return ESP_OK; }
 esp_err_t nvs_set_blob(nvs_handle_t h,const char *k,const void *v,size_t n)
 { (void)h;unsigned i=slot_index(k);if(fail())return ESP_FAIL; assert(n==sizeof(cp_settings_t));memcpy(&pending.slot[i],v,n);pending.slot_size[i]=n;pending.have_slot[i]=true;return ESP_OK; }
 esp_err_t nvs_get_str(nvs_handle_t h,const char *k,char *out,size_t *n)
@@ -63,6 +63,16 @@ int main(void)
     ((unsigned char *)&saved.slot[0])[767]=0xa5;legacy=saved;
     assert(cp_settings_load(&out)==ESP_OK&&out.version==3&&out.wifi_security==CP_WIFI_ENTERPRISE_PEAP&&!strcmp(out.eap_password,"synthetic-eap-password")&&!cp_settings_mqtt_ready(&out));
     assert(!memcmp(&saved,&legacy,sizeof saved));saved=baseline;
+    /* Reuse treats only complete absence as missing; never promote an orphan. */
+    saved=(db_t){0};assert(cp_settings_load_for_reuse(&out)==ESP_ERR_NOT_FOUND);
+    saved=baseline;assert(cp_settings_load_for_reuse(&out)==ESP_OK&&!memcmp(&saved,&baseline,sizeof saved));
+    saved.have_active=false;legacy=saved;
+    assert(cp_settings_load_for_reuse(&out)==ESP_ERR_INVALID_STATE&&!memcmp(&saved,&legacy,sizeof saved));
+    saved=baseline;saved.have_slot[saved.active]=false;legacy=saved;
+    assert(cp_settings_load_for_reuse(&out)==ESP_ERR_INVALID_STATE&&!memcmp(&saved,&legacy,sizeof saved));
+    saved=baseline;saved.active=9;assert(cp_settings_load_for_reuse(&out)==ESP_ERR_INVALID_STATE);
+    for(size_t i=0;i<sizeof out;++i)assert(!((unsigned char *)&out)[i]);
+    saved=baseline;
     cp_settings_t candidate=s;strcpy(candidate.ssid,"replacement-test-ap");
     for(int n=1;n<=6;++n) {
         saved=baseline;operation=0;fail_at=n;

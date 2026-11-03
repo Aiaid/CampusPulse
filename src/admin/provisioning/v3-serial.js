@@ -22,19 +22,20 @@ export async function fetchV3ClockKey(fetcher=globalThis.fetch) {
 }
 export function validateV3Hello(value,nonce,expectedNode,{allowRestartRequired=false}={}) {
  if (typeof nonce!=='string'||!noncePattern.test(nonce)||!value||typeof value!=='object'||Array.isArray(value)||!nodePattern.test(value.node_id)||!bootPattern.test(value.boot_id)||value.request_id!==nonce||!Number.isSafeInteger(value.mono_ms)||value.mono_ms<0||
-  Object.keys(value).some(k=>!['node_id','boot_id','request_id','mono_ms','restart_required'].includes(k))) throw new Error('V3 USB 身份或 nonce 校验失败；未发送凭证。');
+  Object.keys(value).some(k=>!['node_id','boot_id','request_id','mono_ms','restart_required','credential_state','mqtt_state'].includes(k))) throw new Error('V3 USB 身份或 nonce 校验失败；未发送凭证。');
  if (expectedNode&&value.node_id!==expectedNode) throw new Error('连接的设备与所选节点不一致；未发送凭证。');
  if (value.restart_required===true&&allowRestartRequired!==true) throw new Error('设备要求安全重启进入 USB 配置，当前未发送凭证。');
  if (value.restart_required!==undefined&&typeof value.restart_required!=='boolean') throw new Error('设备启动状态无效。');
+ for(const key of ['credential_state','mqtt_state'])if(value[key]!==undefined&&!['ready','missing','unavailable'].includes(value[key]))throw new Error('设备保存凭证状态无效。');
  return value;
 }
 const utf8Bytes=value=>new TextEncoder().encode(value).length;
 const printableAsciiPattern=/^[\x20-\x7e]+$/;
 /** Structural browser checks only. Firmware parses and verifies X.509 and the server chain. */
-export function validateV3Wifi({ssid,password,security='personal',eapUsername,eapIdentity,eapPassword,eapCaPem,eapDomain}) {
+export function validateV3Wifi({ssid,password,security='personal',eapUsername,eapIdentity,eapPassword,eapCaPem,eapDomain,eapServerVerification}) {
  if(typeof ssid!=='string'||utf8Bytes(ssid)<1||utf8Bytes(ssid)>32||!printableAsciiPattern.test(ssid))throw new Error('当前 USB 的 SSID 仅支持 1–32 个可打印 ASCII 字符，不支持中文等非 ASCII 文本。');
  if(!['open','personal','enterprise_peap'].includes(security))throw new Error('请选择支持的 Wi-Fi 认证方式。');
- const eap=[eapUsername,eapIdentity,eapPassword,eapCaPem,eapDomain];
+ const eap=[eapUsername,eapIdentity,eapPassword,eapCaPem,eapDomain,eapServerVerification];
  if(security!=='enterprise_peap'&&eap.some(value=>value!==undefined))throw new Error('开放或个人网络不能携带企业认证材料。');
  if(security==='open'){if(password!=='')throw new Error('开放网络不使用密码。');return {ssid,password:'',security};}
  if(security==='personal'){
@@ -43,22 +44,34 @@ export function validateV3Wifi({ssid,password,security='personal',eapUsername,ea
  }
  if(password!=='')throw new Error('PEAP 不使用个人 Wi-Fi 密码。');
  if([eapUsername,eapIdentity,eapPassword].some(value=>typeof value!=='string'||utf8Bytes(value)<1||utf8Bytes(value)>128||!printableAsciiPattern.test(value)))throw new Error('当前 USB 的 PEAP 用户名、外层身份和密码均仅支持 1–128 个可打印 ASCII 字符。');
+ const emptyTrust=value=>value===undefined||value==='';
+ const hasTrust=!emptyTrust(eapCaPem)||!emptyTrust(eapDomain);
+ const verification=eapServerVerification===undefined?(hasTrust?'ca':'none'):eapServerVerification;
+ if(!['none','ca'].includes(verification))throw new Error('PEAP 服务器验证方式无效。');
+ const base={ssid,password:'',security,eap_username:eapUsername,eap_identity:eapIdentity,eap_password:eapPassword,eap_server_verification:verification};
+ if(verification==='none'){
+  if(hasTrust)throw new Error('不验证服务器时不能携带 CA 或域名；提供的证书不会被自动忽略。');
+  return base;
+ }
  if(typeof eapDomain!=='string'||utf8Bytes(eapDomain)>253||/^[0-9.]+$/.test(eapDomain)||eapDomain.split('.').some(label=>!/^([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]{0,61}[A-Za-z0-9])$/.test(label)))throw new Error('PEAP 预期服务器域名须为单个 DNS 名称，不能使用 IP、URL、通配符或列表。');
  if(typeof eapCaPem!=='string'||utf8Bytes(eapCaPem)>4096||!/^-----BEGIN CERTIFICATE-----\r?\n[A-Za-z0-9+/=\r\n]+\r?\n-----END CERTIFICATE-----(?:\r?\n)?$/.test(eapCaPem))throw new Error('PEAP 必须提供单个 PEM CA 证书，最多 4096 个 UTF-8 字节；固件将进一步解析并验证证书。');
- return {ssid,password:'',security,eap_username:eapUsername,eap_identity:eapIdentity,eap_password:eapPassword,eap_ca_pem:eapCaPem,eap_domain:eapDomain};
+ return {...base,eap_ca_pem:eapCaPem,eap_domain:eapDomain};
 }
-export function buildV3Start({identity,nonce,expectedNode,token,mqtt,ssid,password,security='personal',eapUsername,eapIdentity,eapPassword,eapCaPem,eapDomain,windows=1,saveStartup=false,startupReconfigure=false,clockKey,sentWall,sentMono,receivedWall,receivedMono}) {
+export function buildV3Start({identity,nonce,expectedNode,bootId,token,mqtt,reuseSavedCredential=false,reuseSavedMqtt=false,ssid,password,security='personal',eapUsername,eapIdentity,eapPassword,eapCaPem,eapDomain,eapServerVerification,windows=1,saveStartup=false,startupReconfigure=false,clockKey,sentWall,sentMono,receivedWall,receivedMono}) {
  validateV3Hello(identity,nonce,expectedNode);
- if (typeof token!=='string'||!/^[A-Za-z0-9_-]{32,192}$/.test(token)) throw new Error('请输入本设备有效的设备凭证。');
- const bytes=utf8Bytes,wifi=validateV3Wifi({ssid,password,security,eapUsername,eapIdentity,eapPassword,eapCaPem,eapDomain});
- if(security==='enterprise_peap'&&saveStartup===true)throw new Error('PEAP 服务器证书的时间校验需要联网前可信时钟；目前仅支持 USB 临时运行 1–3 个窗口，不能保存或自动启动。');
+ if(typeof reuseSavedCredential!=='boolean'||typeof reuseSavedMqtt!=='boolean')throw new Error('保存凭证复用选项无效。');
+ if((reuseSavedCredential||reuseSavedMqtt)&&(!expectedNode||bootId!==identity.boot_id))throw new Error('复用保存凭证必须核对同一设备和本次启动。');
+ if(reuseSavedCredential?(token!==undefined||identity.credential_state!=='ready'):(typeof token!=='string'||!/^[A-Za-z0-9_-]{32,192}$/.test(token)))throw new Error('请输入本设备有效的设备凭证，或核对设备已保存且可用的凭证；不能混用。');
+ if(reuseSavedMqtt&&(mqtt!==undefined||identity.mqtt_state!=='ready'))throw new Error('设备未确认已保存可用的 MQTT 授权，或与提供的授权混用。');
+ const bytes=utf8Bytes,wifi=validateV3Wifi({ssid,password,security,eapUsername,eapIdentity,eapPassword,eapCaPem,eapDomain,eapServerVerification});
+ if(security==='enterprise_peap'&&saveStartup===true)throw new Error('当前持久启动配置尚未保存 PEAP 验证选择或实现其启动流程；PEAP 仅支持 USB 临时运行 1–3 个窗口。');
  if (typeof saveStartup!=='boolean'||typeof startupReconfigure!=='boolean'||startupReconfigure&&!saveStartup||clockKey!==undefined&&!saveStartup) throw new Error('启动保存选项无效。');
  if (![1,2,3].includes(windows)&&!(saveStartup&&windows===0)) throw new Error('临时运行仅支持 1–3 个窗口；保存模式才可选择连续运行。');
  const rtt=receivedMono-sentMono;
  if (![sentWall,sentMono,receivedWall,receivedMono].every(Number.isFinite)||rtt<0||rtt>2000||Math.abs(receivedWall-sentWall-rtt)>20) throw new Error('USB 时钟交换超时或主机时间跳变，请重试。');
- const m=mqttSettings(mqtt);
- const payload={node_id:identity.node_id,boot_id:identity.boot_id,uplink_transport:'mqtt_tls',origin:V3_ORIGIN,device_token:token,...wifi,
-  mqtt_uri:m.uri,mqtt_username:m.username,mqtt_password:m.password,mqtt_namespace:m.namespace,
+ const m=reuseSavedMqtt?null:mqttSettings(mqtt);
+ const payload={node_id:identity.node_id,boot_id:identity.boot_id,uplink_transport:'mqtt_tls',origin:V3_ORIGIN,...(reuseSavedCredential?{reuse_saved_credential:true}:{device_token:token}),...wifi,
+  ...(reuseSavedMqtt?{reuse_saved_mqtt:true}:{mqtt_uri:m.uri,mqtt_username:m.username,mqtt_password:m.password,mqtt_namespace:m.namespace}),
   utc_ms:Math.floor((sentWall+receivedWall)/2),uncertainty_ms:Math.ceil(rtt/2)+251,anchor_mono_ms:identity.mono_ms,max_windows:windows};
  if(saveStartup){const key=validateV3ClockKey(clockKey);Object.assign(payload,{save_startup:true,startup_reconfigure:startupReconfigure,clock_key_id:key.key_id,clock_public_spki:key.public_key_spki});}
  const frame=`V3START ${JSON.stringify(payload).replace(/[\u007f-\uffff]/g,c=>'\\u'+c.charCodeAt(0).toString(16).padStart(4,'0'))}\n`;

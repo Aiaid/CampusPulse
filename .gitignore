@@ -31,6 +31,8 @@ node_modules/
 dist/
 build/
 managed_components/
+# Component-manager output can contain machine-local read-only LVGL overrides.
+/firmware/waveshare-v3/dependencies.lock
 sdkconfig
 sdkconfig.old
 

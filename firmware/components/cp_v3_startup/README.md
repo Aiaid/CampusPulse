@@ -1,8 +1,10 @@
 # V3 startup profile store
 
 This component stores one explicitly approved production startup profile in the
-dedicated `cpv3start` NVS namespace. It never reads, migrates, writes or erases
-legacy `cp_settings`, queues, captures or another namespace. Initialization only
+dedicated `cpv3start` NVS namespace. The profile store never reads, migrates,
+writes or erases legacy `cp_settings`, queues, captures or another namespace.
+The separate credential-reuse helper described below permits read-only legacy
+fallback only on genuine V3-store absence. Initialization only
 calls the SDK's non-erasing `nvs_flash_init()`; SDK initialization errors remain
 errors. The caller serializes access and charges
 `CP_V3_STARTUP_LOGICAL_WRITE_BYTES` (8192 bytes) before an approved save. That
@@ -21,10 +23,15 @@ the public pin. Public keys are not secrets, but NVS contains network/device
 credentials under the existing ordinary NVS security model; this component makes
 no encryption-at-rest, secure-boot, hardware anti-rollback or physical-tamper claim.
 
-`auto_start=true` admits personal PSK/open Wi-Fi only. PEAP requires trusted time
-before sending RADIUS credentials, so its structurally valid profile can only be
-saved with `auto_start=false` for an explicit USB flow with independently trusted
-time. A saved profile contains no wall-clock seed, boot UUID, raw capture, batch
+The USB save/autostart path admits personal PSK/open Wi-Fi only. Manual PEAP
+supports explicit unverified-server (`none`) or strict CA/name/date (`ca`) modes,
+but neither is supported by saved startup: the unchanged profile lacks the
+verification choice/trust material and its boot path is not implemented.
+Verified PEAP additionally needs trusted time before RADIUS authentication;
+that clock requirement does not explain the `none` persistence restriction.
+The historical codec can represent PEAP account fields with `auto_start=false`,
+but this does not establish a supported PEAP save/boot flow. A saved profile
+contains no wall-clock seed, boot UUID, raw capture, batch
 ID, policy/lease authority or bounded-test window limit. Each boot must acquire
 authenticated time and fresh cloud policy authority before collection.
 
@@ -65,6 +72,26 @@ removed and committed before retrying the write. No namespace or partition is
 erased. Read/commit errors still fail closed, with no selector rollback. This
 software fault-injection model does not establish arbitrary-power-loss hardware
 acceptance.
+
+## Read-only same-node credential reuse
+
+`cp_v3_saved_credentials_load()` reports independent bearer and MQTT readiness
+for physical USB HELLO/START without exporting secrets. It first validates the
+selected V3 profile for the requested node. Only `ESP_ERR_NOT_FOUND` from a
+genuinely absent V3 store allows `cp_settings_load_for_reuse()` to inspect legacy
+settings without writing. A damaged/missing selector in a nonempty store,
+missing selected blob, wrong node or I/O error remains `unavailable`; no inactive
+slot is promoted. Genuine absence of stored material is `missing`; usable
+same-node material is `ready`. These states do not establish network or cloud success.
+
+The USB receiver copies only device-bearer/MQTT fields into newly supplied
+network settings, restricted to canonical production API/native MQTT. Explicit
+`reuse_saved_credential:true` omits `device_token`; `reuse_saved_mqtt:true` omits
+all four MQTT fields. The choices are independent, rechecked for fresh identity
+and readiness, and never trigger writes, migration or automatic rotation. A new
+registration uses its newly issued secrets instead. Clear helper-owned secret
+copies with `cp_v3_saved_credentials_clear()` after use. HELLO emits only
+`ready`, `missing` or `unavailable`, never token/hash/password values.
 
 Run the synthetic ASan/UBSan codec and storage-fault tests with:
 

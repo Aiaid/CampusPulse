@@ -1,5 +1,6 @@
 #include "trial_bootstrap.h"
 #include "cp_v3_transport.h"
+#include "cp_v3_saved_credentials.h"
 #include "cJSON.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -42,7 +43,7 @@ static bool integer(cJSON *root, const char *key, double min, double max, uint64
     if (!cJSON_IsNumber(v) || !isfinite(v->valuedouble) || v->valuedouble < min || v->valuedouble > max || floor(v->valuedouble) != v->valuedouble) return false;
     *out = (uint64_t)v->valuedouble; return true;
 }
-static bool parse(const char *json, const char *node, const char *boot, trial_bootstrap_t *out) {
+static bool parse_with_credentials(const char *json, const char *node, const char *boot, const cp_settings_t *saved, trial_bootstrap_t *out) {
     trial_bootstrap_clear(out);
     if(!json||!node||!boot||!out)return false;
     size_t wire_length=strlen(json);
@@ -60,12 +61,12 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
     }
     const char *end = NULL;
     cJSON *root = cJSON_ParseWithOpts(json, &end, true);
-    bool ok = cJSON_IsObject(root), seen[26] = {0};
+    bool ok = cJSON_IsObject(root), seen[29] = {0};
     static const char *keys[] = {"node_id","boot_id","origin","device_token","ssid","password","utc_ms","uncertainty_ms","max_windows","security","anchor_mono_ms","uplink_transport",
-        "eap_username","eap_identity","eap_password","eap_ca_pem","eap_domain"
+        "eap_username","eap_identity","eap_password","eap_ca_pem","eap_domain","eap_server_verification"
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
         ,"server_ca_pem","mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace",
-        "save_startup","startup_reconfigure","clock_key_id","clock_public_spki"
+        "save_startup","startup_reconfigure","clock_key_id","clock_public_spki","reuse_saved_credential","reuse_saved_mqtt"
 #endif
     };
     const unsigned key_count=sizeof keys/sizeof keys[0];
@@ -74,13 +75,19 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
         unsigned k; for (k = 0; k < key_count && strcmp(v->string, keys[k]); ++k) {}
         if (k == key_count || seen[k]) { ok = false; break; } seen[k] = true;
     }
-    for (unsigned k = 0; k < 12; ++k) if (!seen[k]) ok = false;
+    for (unsigned k = 0; k < 12; ++k) if (k!=3&&!seen[k]) ok = false;
+    cJSON *reuse_token=cJSON_GetObjectItemCaseSensitive(root,"reuse_saved_credential"),*reuse_broker=cJSON_GetObjectItemCaseSensitive(root,"reuse_saved_mqtt");
+    bool reuse_credential=cJSON_IsTrue(reuse_token),reuse_mqtt=cJSON_IsTrue(reuse_broker);
+    if((reuse_token&&!cJSON_IsBool(reuse_token))||(reuse_broker&&!cJSON_IsBool(reuse_broker)))ok=false;
+    if(ok&&reuse_credential){
+        ok=!seen[3]&&cp_v3_saved_credential_ready(saved,node);
+        if(ok)memcpy(out->settings.device_token,saved->device_token,sizeof out->settings.device_token);
+    }else if(ok)ok=text(root,"device_token",out->settings.device_token,sizeof out->settings.device_token,false);
     char given_boot[37] = {0}, security[16] = {0},transport[16]={0}; uint64_t utc = 0, uncertainty = 0, windows = 0, anchor=0;
     if (ok) ok = text(root,"node_id",out->settings.node_id,sizeof out->settings.node_id,false) &&
         text(root,"boot_id",given_boot,sizeof given_boot,false) && !strcmp(node,out->settings.node_id) && !strcmp(boot,given_boot) &&
         text(root,"origin",out->origin,sizeof out->origin,false) &&
         text(root,"uplink_transport",transport,sizeof transport,false) &&
-        text(root,"device_token",out->settings.device_token,sizeof out->settings.device_token,false) &&
         text(root,"ssid",out->settings.ssid,sizeof out->settings.ssid,false) &&
         text(root,"password",out->settings.password,sizeof out->settings.password,true) &&
         text(root,"security",security,sizeof security,false) &&
@@ -97,16 +104,26 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
         else if(!strcmp(security,"open"))out->settings.wifi_security=CP_WIFI_OPEN;
         else if(!strcmp(security,"enterprise_peap"))out->settings.wifi_security=CP_WIFI_ENTERPRISE_PEAP;
         else ok=false;
-        for(unsigned k=12;k<17;k++)if(seen[k]!=(out->settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP))ok=false;
+        for(unsigned k=12;k<15;k++)if(seen[k]!=(out->settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP))ok=false;
+        if(out->settings.wifi_security!=CP_WIFI_ENTERPRISE_PEAP&&(seen[15]||seen[16]||seen[17]))ok=false;
     }
     if(ok&&out->settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP){
-        cJSON *ca=cJSON_GetObjectItemCaseSensitive(root,"eap_ca_pem");
-        ok=text(root,"eap_username",out->settings.eap_username,sizeof out->settings.eap_username,false)&&
+        char verification[8]={0};
+        if(seen[17]){
+            ok=text(root,"eap_server_verification",verification,sizeof verification,false);
+            if(ok&&!strcmp(verification,"none"))out->eap_verification=CP_V3_EAP_VERIFY_NONE;
+            else if(ok&&strcmp(verification,"ca"))ok=false;
+        }
+        if(ok)ok=text(root,"eap_username",out->settings.eap_username,sizeof out->settings.eap_username,false)&&
             text(root,"eap_identity",out->settings.eap_identity,sizeof out->settings.eap_identity,false)&&
-            text(root,"eap_password",out->settings.eap_password,sizeof out->settings.eap_password,false)&&
-            text(root,"eap_domain",out->eap_domain,sizeof out->eap_domain,false)&&
-            cJSON_IsString(ca)&&ca->valuestring&&strlen(ca->valuestring)<sizeof out->eap_ca_pem;
-        if(ok)memcpy(out->eap_ca_pem,ca->valuestring,strlen(ca->valuestring)+1);
+            text(root,"eap_password",out->settings.eap_password,sizeof out->settings.eap_password,false);
+        if(ok&&out->eap_verification==CP_V3_EAP_VERIFY_NONE)ok=!seen[15]&&!seen[16];
+        else if(ok){
+            cJSON *ca=cJSON_GetObjectItemCaseSensitive(root,"eap_ca_pem");
+            ok=text(root,"eap_domain",out->eap_domain,sizeof out->eap_domain,false)&&
+                cJSON_IsString(ca)&&ca->valuestring&&strlen(ca->valuestring)<sizeof out->eap_ca_pem;
+            if(ok)memcpy(out->eap_ca_pem,ca->valuestring,strlen(ca->valuestring)+1);
+        }
     }
     uint64_t mono=(uint64_t)esp_timer_get_time()/1000u;
     if(ok)ok=anchor<=mono&&mono-anchor<=30000;
@@ -121,19 +138,29 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
     if(ok){
         if(!strcmp(transport,"https")){
             out->transport=CP_V3_TRANSPORT_HTTPS;
-            ok=strcmp(out->origin,CP_API_ORIGIN)!=0;
+            ok=strcmp(out->origin,CP_API_ORIGIN)!=0&&!reuse_credential&&!reuse_mqtt;
             const char *mqtt_keys[]={"mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace"};
             for(unsigned i=0;i<4;i++)if(cJSON_GetObjectItemCaseSensitive(root,mqtt_keys[i]))ok=false;
         }
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
         else if(!strcmp(transport,"mqtt_tls")){
             out->transport=CP_V3_TRANSPORT_MQTT_TLS;
-            ok=!strcmp(out->origin,CP_API_ORIGIN)&&!cJSON_GetObjectItemCaseSensitive(root,"server_ca_pem")&&
-                text(root,"mqtt_uri",out->settings.mqtt_uri,sizeof out->settings.mqtt_uri,false)&&
+            ok=!strcmp(out->origin,CP_API_ORIGIN)&&!cJSON_GetObjectItemCaseSensitive(root,"server_ca_pem");
+            if(ok&&reuse_mqtt){
+                const char *mqtt_keys[]={"mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace"};
+                for(unsigned i=0;i<4;i++)if(cJSON_GetObjectItemCaseSensitive(root,mqtt_keys[i]))ok=false;
+                if(ok)ok=cp_v3_saved_mqtt_ready(saved,node);
+                if(ok){
+                    memcpy(out->settings.mqtt_uri,saved->mqtt_uri,sizeof out->settings.mqtt_uri);
+                    memcpy(out->settings.mqtt_username,saved->mqtt_username,sizeof out->settings.mqtt_username);
+                    memcpy(out->settings.mqtt_password,saved->mqtt_password,sizeof out->settings.mqtt_password);
+                    memcpy(out->settings.mqtt_namespace,saved->mqtt_namespace,sizeof out->settings.mqtt_namespace);
+                }
+            }else if(ok)ok=text(root,"mqtt_uri",out->settings.mqtt_uri,sizeof out->settings.mqtt_uri,false)&&
                 text(root,"mqtt_username",out->settings.mqtt_username,sizeof out->settings.mqtt_username,false)&&
                 text(root,"mqtt_password",out->settings.mqtt_password,sizeof out->settings.mqtt_password,false)&&
-                text(root,"mqtt_namespace",out->settings.mqtt_namespace,sizeof out->settings.mqtt_namespace,false)&&
-                cp_settings_mqtt_ready(&out->settings);
+                text(root,"mqtt_namespace",out->settings.mqtt_namespace,sizeof out->settings.mqtt_namespace,false);
+            if(ok)ok=cp_settings_mqtt_ready(&out->settings);
         }
 #endif
         else ok=false;
@@ -148,7 +175,7 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
         out->clock_seed = (cp_v3_time_t){.utc_ms=utc,.mono_ms=mono,.clock_epoch=1,.uncertainty_ms=(uint32_t)uncertainty};
         out->max_windows = (unsigned)windows;
     }
-    if(ok)ok=cp_v3_wifi_validate(&out->settings,out->eap_ca_pem,out->eap_domain);
+    if(ok)ok=cp_v3_wifi_validate_mode(&out->settings,out->eap_ca_pem,out->eap_domain,out->eap_verification);
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
     cJSON *save=cJSON_GetObjectItemCaseSensitive(root,"save_startup"),*recover=cJSON_GetObjectItemCaseSensitive(root,"startup_reconfigure");
     cJSON *key_id=cJSON_GetObjectItemCaseSensitive(root,"clock_key_id"),*key=cJSON_GetObjectItemCaseSensitive(root,"clock_public_spki");
@@ -170,6 +197,15 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
     cJSON_Delete(root); wipe(given_boot,sizeof given_boot); wipe(security,sizeof security);wipe(transport,sizeof transport);
     if (!ok) trial_bootstrap_clear(out);
     return ok;
+}
+static bool parse_saved(const char *json,const char *node,const char *boot,trial_bootstrap_t *out) {
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+    cp_v3_saved_credentials_t saved;cp_v3_saved_credentials_load(node,&saved);
+    bool ok=parse_with_credentials(json,node,boot,&saved.settings,out);
+    cp_v3_saved_credentials_clear(&saved);return ok;
+#else
+    return parse_with_credentials(json,node,boot,NULL,out);
+#endif
 }
 esp_err_t trial_bootstrap_wait(const char *node, const char *boot, trial_bootstrap_t *out, bool (*cancelled)(void)) {
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
@@ -193,8 +229,15 @@ esp_err_t trial_bootstrap_wait(const char *node, const char *boot, trial_bootstr
             if (used + 1 < capacity && !overflow) line[used++] = (char)byte; else overflow=true; continue; }
         line[used] = 0;
         if (!overflow && !strncmp(line,"HELLO ",6) && hello_id(line+6)) {
-            printf("V3 HELLO {\"node_id\":\"%s\",\"boot_id\":\"%s\",\"request_id\":\"%s\",\"mono_ms\":%llu}\n",node,boot,line+6,(unsigned long long)((uint64_t)esp_timer_get_time()/1000u)); fflush(stdout);
-        } else if (!overflow && !strncmp(line,"V3START ",8) && parse(line+8,node,boot,out)) {
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+            cp_v3_saved_credentials_t saved;cp_v3_saved_credentials_load(node,&saved);
+            printf("V3 HELLO {\"node_id\":\"%s\",\"boot_id\":\"%s\",\"request_id\":\"%s\",\"mono_ms\":%llu,\"credential_state\":\"%s\",\"mqtt_state\":\"%s\"}\n",node,boot,line+6,(unsigned long long)((uint64_t)esp_timer_get_time()/1000u),cp_v3_saved_state_name(saved.credential_state),cp_v3_saved_state_name(saved.mqtt_state));
+            cp_v3_saved_credentials_clear(&saved);
+#else
+            printf("V3 HELLO {\"node_id\":\"%s\",\"boot_id\":\"%s\",\"request_id\":\"%s\",\"mono_ms\":%llu}\n",node,boot,line+6,(unsigned long long)((uint64_t)esp_timer_get_time()/1000u));
+#endif
+            fflush(stdout);
+        } else if (!overflow && !strncmp(line,"V3START ",8) && parse_saved(line+8,node,boot,out)) {
             wipe(line,capacity);
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
             heap_caps_free(line);

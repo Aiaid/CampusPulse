@@ -4,7 +4,8 @@
 #include <string.h>
 
 /* Pure preflight only. Peer chain/name/time authentication remains mandatory
- * in the SDK TLS client after the physical USB clock has been installed. */
+ * in verified PEAP after the physical USB clock has been installed. Explicit
+ * unverified PEAP is not represented as successful peer authentication. */
 static int base64_digit(unsigned char c) {
     if (c >= 'A' && c <= 'Z') return c-'A';
     if (c >= 'a' && c <= 'z') return c-'a'+26;
@@ -87,11 +88,21 @@ bool cp_v3_eap_validate(const char *ca, const char *domain)
     return cp_v3_eap_domain_validate(domain) && cp_v3_ca_validate(ca);
 }
 
+bool cp_v3_wifi_validate_mode(const cp_settings_t *settings, const char *ca,
+    const char *domain, cp_v3_eap_verification_t mode)
+{
+    if (!cp_settings_validate(settings) ||
+        (mode != CP_V3_EAP_VERIFY_CA && mode != CP_V3_EAP_VERIFY_NONE)) return false;
+    if (settings->wifi_security == CP_WIFI_ENTERPRISE_PEAP) {
+        if (mode == CP_V3_EAP_VERIFY_NONE)
+            return (!ca || !*ca) && (!domain || !*domain);
+        return cp_v3_eap_validate(ca, domain);
+    }
+    /* Cross-mode field presence is additionally checked by each USB parser. */
+    return mode == CP_V3_EAP_VERIFY_CA && (!ca || !*ca) && (!domain || !*domain);
+}
+
 bool cp_v3_wifi_validate(const cp_settings_t *settings, const char *ca, const char *domain)
 {
-    if (!cp_settings_validate(settings)) return false;
-    if (settings->wifi_security == CP_WIFI_ENTERPRISE_PEAP)
-        return cp_v3_eap_validate(ca, domain);
-    /* Cross-mode field presence is additionally checked by each USB parser. */
-    return (!ca || !*ca) && (!domain || !*domain);
+    return cp_v3_wifi_validate_mode(settings, ca, domain, CP_V3_EAP_VERIFY_CA);
 }

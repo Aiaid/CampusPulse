@@ -17,6 +17,7 @@ typedef struct {
     cp_v3_time_t clock_seed;
     unsigned max_windows;
     cp_v3_transport_mode_t transport;
+    cp_v3_eap_verification_t eap_verification;
     bool save_startup, startup_reconfigure;
     char clock_key_id[33];
     uint8_t clock_public_spki[91];
@@ -36,10 +37,17 @@ void trial_bootstrap_clear(trial_bootstrap_t *);
  * Canonical CP_API_ORIGIN requires native MQTT/system bundle and forbids the CA field;
  * production spellings with ports, paths or aliases are not accepted.
  * security selects open/personal/enterprise_peap. Only PEAP admits/requires
- * all five eap_* fields, with password empty and a separate CA/domain binding.
+ * three EAP credentials and an explicit none/ca server-verification selection.
+ * CA mode requires its separate CA/domain binding; none forbids those fields.
+ * Legacy frames with a CA/domain pair imply ca. PEAP has an empty password.
  * PEAP cannot be saved for autonomous startup. Other modes forbid EAP fields,
  * including empty ones. API server trust and EAP trust remain separate.
  * Any failure clears the complete output. Caller owns/wipes the input JSON.
  * Parsing a CA does not validate a server, hostname, date or isolated origin. */
 bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
                           uint64_t mono_ms, trial_bootstrap_t *out);
+
+/* Reuse is explicit in the wire schema. The supplied validated same-node
+ * snapshot is read-only; only device token and/or MQTT fields are copied. */
+bool trial_bootstrap_parse_with_credentials(const char *json, const char *node, const char *boot,
+                          uint64_t mono_ms, const cp_settings_t *saved, trial_bootstrap_t *out);

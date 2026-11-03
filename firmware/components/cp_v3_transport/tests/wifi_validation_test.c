@@ -33,6 +33,15 @@ int main(int argc,char **argv) {
     s.wifi_security=CP_WIFI_PERSONAL;strcpy(s.password,"synthetic-pass");assert(cp_v3_wifi_validate(&s,NULL,NULL));assert(!cp_v3_wifi_validate(&s,NULL,"radius"));
     s.wifi_security=CP_WIFI_ENTERPRISE_PEAP;s.password[0]=0;strcpy(s.eap_username,"synthetic-user");strcpy(s.eap_identity,"synthetic-outer");strcpy(s.eap_password,"synthetic-eap-pass");
     assert(cp_v3_wifi_validate(&s,ca,"radius.synthetic.invalid"));assert(!cp_v3_wifi_validate(&s,NULL,"radius"));assert(!cp_v3_wifi_validate(&s,ca,NULL));
+    assert(cp_v3_wifi_validate_mode(&s,NULL,NULL,CP_V3_EAP_VERIFY_NONE));
+    assert(cp_v3_wifi_validate_mode(&s,"","",CP_V3_EAP_VERIFY_NONE));
+    assert(!cp_v3_wifi_validate(&s,NULL,NULL));
+    assert(!cp_v3_wifi_validate_mode(&s,ca,NULL,CP_V3_EAP_VERIFY_NONE));
+    assert(!cp_v3_wifi_validate_mode(&s,NULL,"radius",CP_V3_EAP_VERIFY_NONE));
+    assert(!cp_v3_wifi_validate_mode(&s,"broken","radius",CP_V3_EAP_VERIFY_CA));
+    assert(!cp_v3_wifi_validate_mode(&s,NULL,NULL,(cp_v3_eap_verification_t)2));
+    s.wifi_security=CP_WIFI_OPEN;s.eap_username[0]=s.eap_identity[0]=s.eap_password[0]=0;
+    assert(!cp_v3_wifi_validate_mode(&s,NULL,NULL,CP_V3_EAP_VERIFY_NONE));
     uint32_t flags=0;assert(!verify(ca,leaf,"radius.synthetic.invalid",&flags)&&!flags);
     assert(verify(wrong,leaf,"radius.synthetic.invalid",&flags)&&flags);
     assert(verify(ca,leaf,"different.synthetic.invalid",&flags)&&(flags&MBEDTLS_X509_BADCERT_CN_MISMATCH));

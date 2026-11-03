@@ -19,7 +19,7 @@ _Static_assert(sizeof(legacy_settings_v2_t)==768,"Legacy v2 layout changed");
 _Static_assert(offsetof(cp_settings_t,mqtt_uri)==767,"Settings prefix changed");
 static const char *slots[2] = {"settings_a", "settings_b"};
 esp_err_t cp_settings_init(void) { return nvs_flash_init(); }
-esp_err_t cp_settings_load(cp_settings_t *out)
+static esp_err_t load(cp_settings_t *out, bool strict_absence)
 {
     if (!out) return ESP_ERR_INVALID_ARG;
     memset(out, 0, sizeof(*out));
@@ -29,9 +29,19 @@ esp_err_t cp_settings_load(cp_settings_t *out)
     if (e!=ESP_OK) return e;
     uint8_t slot=0;
     e=nvs_get_u8(h,"active",&slot);
+    if (strict_absence && e==ESP_ERR_NVS_NOT_FOUND) {
+        for(unsigned i=0;i<2;++i){
+            size_t stored=0;esp_err_t present=nvs_get_blob(h,slots[i],NULL,&stored);
+            if(present==ESP_OK){e=ESP_ERR_INVALID_STATE;break;}
+            if(present!=ESP_ERR_NVS_NOT_FOUND){e=present;break;}
+        }
+    }
     if (e==ESP_OK && slot>1) e=ESP_ERR_INVALID_STATE;
     size_t size=sizeof(*out);
-    if (e==ESP_OK) e=nvs_get_blob(h,slots[slot],out,&size);
+    if (e==ESP_OK) {
+        e=nvs_get_blob(h,slots[slot],out,&size);
+        if(strict_absence&&e==ESP_ERR_NVS_NOT_FOUND)e=ESP_ERR_INVALID_STATE;
+    }
     nvs_close(h);
     if (e==ESP_OK && size==sizeof(legacy_settings_t)) {
         legacy_settings_t legacy; memcpy(&legacy,out,sizeof legacy);
@@ -53,6 +63,8 @@ esp_err_t cp_settings_load(cp_settings_t *out)
     if (e!=ESP_OK) cp_settings_clear_sensitive(out);
     return e==ESP_ERR_NVS_NOT_FOUND ? ESP_ERR_NOT_FOUND : e;
 }
+esp_err_t cp_settings_load(cp_settings_t *out) { return load(out, false); }
+esp_err_t cp_settings_load_for_reuse(cp_settings_t *out) { return load(out, true); }
 esp_err_t cp_settings_save(const cp_settings_t *settings)
 {
     if (!cp_settings_validate(settings)) return ESP_ERR_INVALID_ARG;

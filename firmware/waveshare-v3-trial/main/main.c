@@ -257,7 +257,7 @@ static bool enqueue(cp_v3_queue_kind_t kind,const cp_v3_expected_t *expected,siz
     return true;
 }
 static bool run(void) {
-    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.eap_ca_pem=s_bootstrap.eap_ca_pem[0]?s_bootstrap.eap_ca_pem:NULL,.eap_domain=s_bootstrap.eap_domain[0]?s_bootstrap.eap_domain:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=15000,.server_clock_error_ms=100};
+    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.eap_verification=s_bootstrap.eap_verification,.eap_ca_pem=s_bootstrap.eap_ca_pem[0]?s_bootstrap.eap_ca_pem:NULL,.eap_domain=s_bootstrap.eap_domain[0]?s_bootstrap.eap_domain:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=15000,.server_clock_error_ms=100};
     phase("V3 WIFI");if(cp_v3_transport_start(&s_bootstrap.settings,&config)!=ESP_OK)return false;
     portENTER_CRITICAL(&s_lock);s_display.wifi_enabled=s_display.wifi_connected=true;portEXIT_CRITICAL(&s_lock);
     cp_v3_time_t t;if(!now(&t))return false;

@@ -101,23 +101,43 @@ diagnostic endpoints and their custom HTTPS CAs cannot be persisted. `max_window
 allowed only with explicit save. Values 1–3 can also save a profile while keeping
 this boot bounded; the saved profile never contains that test limit. Both open
 and personal Wi-Fi can be provisioned and saved. Manual USB PEAP supports the
-same one-to-three-window run but refuses saving/autostart: cold boot currently
-has no trusted clock before RADIUS authentication. This restriction does not
-remove manual PEAP or disable certificate checks.
+same one-to-three-window run but refuses saving/autostart in both verification
+modes: the unchanged profile lacks verification choice/trust material and the
+saved PEAP boot path is not implemented. Verified PEAP additionally needs a
+trusted clock before RADIUS authentication. That clock requirement does not
+explain the `none` persistence restriction.
 
 USB Wi-Fi selects `security:"open"`, `"personal"` or `"enterprise_peap"`.
 Open requires an empty `password`; personal requires an 8–63 printable-ASCII
 passphrase or exactly 64 hex digits. PEAP requires an empty personal `password`,
-`eap_username`, `eap_identity`, `eap_password`, one real CA in `eap_ca_pem` and
+`eap_username`, `eap_identity`, `eap_password` and explicit
+`eap_server_verification:"none"|"ca"`. UI-default `none` omits CA/domain and
+leaves the server unverified, with a visible warning that a fake server may obtain
+enterprise account credentials. `ca` requires one real CA in `eap_ca_pem` and
 one expected DNS hostname in `eap_domain`. SSID/credential text shares the
 printable-ASCII browser/CLI/firmware contract; arbitrary UTF-8 SSIDs are not
 supported by this path. Host and firmware parse the X.509 CA; browser PEM shape
 checks alone are not certificate authentication. Fresh trusted physical-USB time
-is installed before Wi-Fi starts; the transport selects PEAP only, supplies the
-CA/hostname and enables certificate time checks. EAP trust material is temporary
+is installed before Wi-Fi starts; the transport selects PEAP only and, in `ca`
+mode, supplies CA/hostname and enables certificate-date checks. Invalid trust
+never silently falls back to `none`. EAP trust material is temporary
 and cannot change MQTT/HTTPS server trust or the existing NVS profile format.
 See [authentication contract and local verification](../../docs/notes/v3-usb-wifi-auth-2026-11-03.md).
 This repair has no new flash or real PEAP wireless-handshake acceptance.
+
+HELLO reports independent `credential_state`/`mqtt_state` (`ready`, `missing`,
+`unavailable`), never token/hash/password values. A registered same-node device
+defaults to local reuse when ready; START explicitly requests
+`reuse_saved_credential:true` without `device_token` and/or
+`reuse_saved_mqtt:true` without all four MQTT fields. The host exposes
+`--reuse-saved-credential` and `--reuse-saved-mqtt`. Fresh identity/readiness is
+rechecked, and reuse is restricted to canonical production API/native MQTT,
+never isolated HTTPS. A valid selected V3 profile wins; only genuine absence
+permits read-only legacy fallback. Corrupt/foreign/I/O data stays unavailable,
+with no inactive-slot promotion, format migration or writes. Only bearer/MQTT
+fields are reused, not prior network fields. Missing/unknown states retain manual
+backup/recovery actions without automatic rotation. Readiness does not establish
+network/cloud success or saving, and a fresh registration uses its new secrets.
 
 `V3 START ACCEPTED` confirms only receipt of the physical USB material. After the
 actual cloud applied-ACK receipt is committed and reclaimed, the runtime charges

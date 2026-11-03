@@ -12,6 +12,39 @@ const clockKey={schema:'cp-v3-signed-clock-key/1',audience:V3_ORIGIN,key_id:'syn
 function portFixture(onWrite){let controller;const writes=[];return{writes,readable:new ReadableStream({start(c){controller=c;}}),writable:new WritableStream({write(bytes){const line=new TextDecoder().decode(bytes);writes.push(line);onWrite(line,text=>controller.enqueue(new TextEncoder().encode(text)));}}),async open(){},async setSignals(){},async close(){}};}
 describe('native V3 USB bootstrap',()=>{
  it('matches native V3START and conservative MQTT/raw-off onboarding without legacy fields',()=>{const frame=buildV3Start(input);expect(frame.startsWith('V3START ')).toBe(true);const body=JSON.parse(frame.slice(8));expect(body).toMatchObject({node_id:node,boot_id:boot,security:'personal',uplink_transport:'mqtt_tls',max_windows:1,utc_ms:1800000000010,uncertainty_ms:261,anchor_mono_ms:1234});expect(body).not.toHaveProperty('capture_config');expect(body).not.toHaveProperty('reuse_saved_credential');});
+ it('allows explicit or inferred unverified PEAP without trust fields, never downgrades supplied CA',()=>{
+  const {eapCaPem,eapDomain,...unverified}=peap;
+  for(const eapServerVerification of [undefined,'none']){const body=JSON.parse(buildV3Start({...input,...unverified,eapServerVerification}).slice(8));expect(body.eap_server_verification).toBe('none');expect(body).not.toHaveProperty('eap_ca_pem');expect(body).not.toHaveProperty('eap_domain');}
+  expect(JSON.parse(buildV3Start({...input,...peap}).slice(8)).eap_server_verification).toBe('ca');
+  for(const extra of [{eapServerVerification:'none'},{eapCaPem:'invalid'},{eapServerVerification:'invalid'},{eapServerVerification:null}])expect(()=>buildV3Start({...input,...peap,...extra})).toThrow();
+  for(const security of ['open','personal'])expect(()=>buildV3Start({...input,security,password:security==='open'?'':input.password,eapServerVerification:'none'})).toThrow();
+ });
+ it('accepts only bounded optional readiness states without requiring new fields from old firmware',()=>{
+  expect(validateV3Hello(identity,nonce,node)).toEqual(identity);
+  for(const state of ['ready','missing','unavailable'])expect(validateV3Hello({...identity,credential_state:state,mqtt_state:state},nonce,node).credential_state).toBe(state);
+  for(const state of [null,true,'unknown','corrupt',1])for(const key of ['credential_state','mqtt_state'])expect(()=>validateV3Hello({...identity,[key]:state},nonce,node)).toThrow();
+ });
+ it('normalizes only absent or exactly empty PEAP trust inputs before emitting explicit none',()=>{
+  for(const eapServerVerification of [undefined,'none'])for(const eapCaPem of [undefined,''])for(const eapDomain of [undefined,'']){
+   const body=JSON.parse(buildV3Start({...input,...peap,eapServerVerification,eapCaPem,eapDomain}).slice(8));
+   expect(body.eap_server_verification).toBe('none');expect(body).not.toHaveProperty('eap_ca_pem');expect(body).not.toHaveProperty('eap_domain');
+  }
+ });
+ it('never treats malformed or nonempty PEAP trust as absent, including explicit none',()=>{
+  for(const eapServerVerification of [undefined,'none'])for(const value of [null,' ','\n','invalid PEM',42,false,{}])for(const field of ['eapCaPem','eapDomain'])expect(()=>buildV3Start({...input,...peap,eapCaPem:'',eapDomain:'',eapServerVerification,[field]:value})).toThrow();
+  expect(()=>buildV3Start({...input,...peap,eapServerVerification:'ca',eapCaPem:'',eapDomain:''})).toThrow();
+ });
+ it('reuses local credentials without exporting secret fields and rejects mixed, unavailable or unbound reuse',()=>{
+  const saved={...input,identity:{...identity,credential_state:'ready',mqtt_state:'ready'},bootId:boot,token:undefined,mqtt:undefined,reuseSavedCredential:true,reuseSavedMqtt:true};
+  const body=JSON.parse(buildV3Start(saved).slice(8));expect(body).toMatchObject({reuse_saved_credential:true,reuse_saved_mqtt:true});
+  for(const key of ['device_token','mqtt_uri','mqtt_username','mqtt_password','mqtt_namespace'])expect(body).not.toHaveProperty(key);
+  for(const extra of [{token:input.token},{mqtt:input.mqtt},{expectedNode:undefined},{bootId:undefined},{bootId:'22222222-2222-4222-8222-222222222222'},{reuseSavedCredential:1}])expect(()=>buildV3Start({...saved,...extra})).toThrow();
+  for(const state of [undefined,'missing','unavailable'])for(const key of ['credential_state','mqtt_state'])expect(()=>buildV3Start({...saved,identity:{...saved.identity,[key]:state}})).toThrow();
+  const mixed=JSON.parse(buildV3Start({...saved,reuseSavedMqtt:false,mqtt:input.mqtt}).slice(8));expect(mixed.reuse_saved_credential).toBe(true);expect(mixed.mqtt_password).toBe(input.mqtt.password);expect(mixed).not.toHaveProperty('device_token');
+ });
+ it('requires readiness to remain ready in fresh same-boot HELLO before reuse START',async()=>{
+  for(const state of [undefined,'missing','unavailable']){const port=portFixture((line,emit)=>{if(line.startsWith('HELLO '))emit('V3 HELLO '+JSON.stringify({...identity,credential_state:state,mqtt_state:'ready',request_id:line.trim().slice(6)})+'\n');});const client=await openV3Serial(port);await expect(client.start({...input,bootId:boot,token:undefined,mqtt:undefined,reuseSavedCredential:true,reuseSavedMqtt:true})).rejects.toThrow();expect(port.writes.some(line=>line.startsWith('V3START '))).toBe(false);await client.close();}
+ });
  it('rejects changed node/boot nonce, restart state, clock jump and unsupported broker',()=>{expect(()=>validateV3Hello({...identity,node_id:'cp_ffeeddccbbaa'},nonce,node)).toThrow();expect(()=>validateV3Hello(identity,'b'.repeat(32),node)).toThrow();expect(()=>validateV3Hello({...identity,restart_required:true},nonce,node)).toThrow();expect(()=>buildV3Start({...input,receivedMono:2201})).toThrow();expect(()=>buildV3Start({...input,receivedWall:1800000000100})).toThrow();expect(()=>mqttSettings({...input.mqtt,uri:'mqtts://other.invalid'})).toThrow();});
  it('does not downgrade absent personal passwords or enable unbounded manual runs',()=>{for(const password of ['', 'short','z'.repeat(64)])expect(()=>buildV3Start({...input,password})).toThrow();expect(()=>buildV3Start({...input,windows:0})).toThrow();expect(()=>buildV3Start({...input,ssid:'中'.repeat(11)})).toThrow();});
  it('writes exactly the selected authentication mode and keeps open passwords empty',()=>{
@@ -46,7 +79,7 @@ describe('native V3 USB bootstrap',()=>{
   expect(()=>buildV3Start({...input,...peap,eapCaPem})).toThrow('固件上限');
  });
  it('blocks only PEAP startup persistence while allowing open/personal saved and bounded profiles',()=>{
-  for(const windows of [0,1,2,3])expect(()=>buildV3Start({...input,...peap,windows,saveStartup:true,clockKey})).toThrow('联网前可信时钟');
+  for(const windows of [0,1,2,3])expect(()=>buildV3Start({...input,...peap,windows,saveStartup:true,clockKey})).toThrow('持久启动配置');
   expect(()=>buildV3Start({...input,...peap,windows:0})).toThrow('1–3');
   expect(()=>buildV3Start({...input,...peap,startupReconfigure:true})).toThrow();
   expect(()=>buildV3Start({...input,...peap,clockKey})).toThrow();

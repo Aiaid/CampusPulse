@@ -85,8 +85,16 @@ ports, trailing spellings and production subdomains are rejected. This adds no
 automatic startup, enrollment, policy or collection permission. Historical
 isolated acceptance records remain limited to their original test environment.
 Do not print the bootstrap payload, settings, request headers, token or CA input.
-PEAP requires a caller-supplied RADIUS CA and expected certificate domain, with
-certificate date validation enabled. There is no unverified-PEAP mode.
+PEAP has an explicit server-verification choice. The zero-valued enum retains
+CA verification for existing callers: one real RADIUS CA, expected DNS hostname
+and certificate-date validation are required. The USB flow may explicitly select
+`eap_server_verification:"none"`, supplying neither EAP CA nor EAP domain. The
+SDK then receives no EAP CA and no EAP CA bundle, selecting its unverified-server
+behavior; changing the time-check flag alone is not the mechanism. A fake
+authentication server may obtain enterprise account credentials in this mode,
+and the UI visibly states that risk. Invalid supplied CA material never silently
+falls back to `none`. PEAP selection remains explicit; neither mode changes
+MQTT, HTTPS, Cloudflare authentication or signed-clock verification.
 
 The caller supplies a trusted per-boot `clock_seed`, for example from physical
 USB plus host UTC, including the corresponding board monotonic milliseconds,

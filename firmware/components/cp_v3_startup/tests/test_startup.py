@@ -27,6 +27,7 @@ class StartupTests(unittest.TestCase):
                 "-I", str(SETTINGS / "include"), "-I", str(SETTINGS / "tests/host"),
                 *crypto_flags,
                 str(COMPONENT / "profile.c"), str(COMPONENT / "startup_nvs.c"),
+                str(COMPONENT / "saved_credentials.c"),
                 str(SETTINGS / "settings_validate.c"), str(COMPONENT / "tests/host_crypto.c"),
                 str(COMPONENT / "tests/fixture.c"), "-o", str(output),
             ], check=True)

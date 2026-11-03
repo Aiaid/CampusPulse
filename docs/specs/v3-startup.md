@@ -55,16 +55,20 @@ USB messages distinguish saved configuration from first setup.
 
 The dedicated ordinary-NVS namespace `cpv3start` stores validated native
 production settings, explicit auto-start choice and pinned P256 SPKI/key ID.
-It never implicitly loads/migrates legacy settings or queues. UTC seeds,
-boot/batch identity, test-window limits and isolated CA/origins are not saved.
+Autonomous startup never implicitly loads/migrates legacy settings or queues.
+UTC seeds, boot/batch identity, test-window limits and isolated CA/origins are not
+saved.
 Open and personal profiles can be provisioned, saved and automatically started.
 Manual USB setup also supports enterprise PEAP, including the administrator
-page's temporary one-to-three-window run. PEAP requires fresh trusted physical-USB
-time installed before Wi-Fi authentication, an explicit authentication CA and an
-expected RADIUS server DNS hostname, with certificate validity checks enabled.
-Saving or automatically starting PEAP is separately refused: a cold boot does
-not yet have trusted time before network authentication. That restriction does
-not remove manual PEAP or relax certificate checks. See the
+page's temporary one-to-three-window run. `eap_server_verification:"none"` is the
+default UI choice when no CA is supplied; it leaves the authentication server
+unverified and visibly warns that a fake server may obtain enterprise account
+credentials. `"ca"` requires one real CA, an expected RADIUS DNS hostname and
+certificate-date checks, with fresh trusted physical-USB time before Wi-Fi.
+Invalid supplied trust never silently falls back to `none`. Saving or
+automatically starting PEAP is refused in both modes: the unchanged profile does
+not store verification choice/trust and the boot path does not implement saved
+PEAP. Verified PEAP additionally needs a pre-network trusted clock. See the
 [USB Wi-Fi authentication contract and evidence](../notes/v3-usb-wifi-auth-2026-11-03.md).
 
 All three modes currently share a printable-ASCII USB/CLI/firmware text contract,
@@ -84,6 +88,33 @@ Owned RAM secret copies are wiped after confirmed teardown; secret values never
 enter source or logs. If network stop is unconfirmed, borrowed EAP CA storage
 must remain alive until confirmed stop. This is not a claim that the SDK's entire
 heap is zeroed.
+
+## Same-node credential reuse during USB setup
+
+`V3 HELLO` exposes only independent `credential_state` and `mqtt_state` readiness
+(`ready`, `missing`, `unavailable`), never a token, token hash or password.
+Absent fields in older firmware mean unknown. Already registered same-node
+devices default to local reuse when ready; START explicitly carries
+`reuse_saved_credential:true` without `device_token` and/or
+`reuse_saved_mqtt:true` without all four MQTT fields. Fresh node/boot/readiness
+checks are required before admission. This is restricted to canonical
+`CP_API_ORIGIN` with native production MQTT; it cannot send saved secrets to an
+isolated HTTPS endpoint. Readiness does not establish successful network/cloud
+authentication or a saved configuration.
+
+The read-only credential helper prefers the valid selected V3 profile and only
+falls back to legacy settings on genuine V3-store absence. Corruption, invalid
+selector, missing selected blob, wrong node or I/O yields `unavailable`, never
+inactive-slot promotion or implicit repair. The receiver reuses only bearer/MQTT
+fields; the newly supplied SSID and other network settings remain authoritative.
+No legacy writes, profile-format changes or migration occur.
+
+A ready bearer and missing MQTT can independently reuse the bearer and recover
+MQTT through the protected administrator endpoint. The server retains only a
+device-bearer hash, so cannot recover the original bearer; encrypted MQTT
+material can be recovered separately. Missing/unavailable/unknown states retain
+manual backup/recovery controls without automatic rotation. Fresh registration
+uses its newly returned secrets rather than an old stored slot.
 
 ## Authenticated time
 

@@ -61,7 +61,7 @@ class HostOrigin(unittest.TestCase):
     def test_all_modes_reach_actual_host_frame_without_secret_output(self):
         for wifi in (dict(ssid='synthetic-personal', password='synthetic-secret'),
                      dict(ssid='synthetic-open', password='', security='open'), self.enterprise()):
-            backend = self.backend() | dict(node_id='cp_aabbccddeeff', device_bearer='synthetic-device-token')
+            backend = self.backend() | dict(node_id='cp_aabbccddeeff', device_bearer='synthetic-device-token-at-least-thirty-two-bytes')
             identity = dict(node_id=backend['node_id'], boot_id='12345678-1234-4123-8123-123456789abc', mono_ms=1000)
             port = MagicMock(); port.__enter__.return_value = port
             port.readline.return_value = b'v3small: phase=SMALL TEST PASSED\n'
@@ -88,13 +88,64 @@ class HostOrigin(unittest.TestCase):
         for value, save in ((wifi, True), (wifi | {'eap_ca_pem': 'invalid'}, False),
                             (wifi | {'eap_domain': '*.example'}, False),
                             (dict(ssid='synthetic-open', password='', security='open', eap_username=''), False)):
-            with patch.object(runner, 'read_private', side_effect=[self.backend(), value]), \
+            with patch.object(runner, 'read_private', side_effect=[self.backend() | dict(node_id='cp_aabbccddeeff',device_bearer='synthetic-device-token-at-least-thirty-two-bytes'), value]), \
                     patch.object(runner.os, 'chmod'), patch.object(runner.serial, 'Serial') as serial, \
                     patch.object(runner, 'fetch_clock_key') as key, \
                     patch('sys.argv', ['run_small.py', '--port', 'synthetic', '--private-dir', '/tmp', '--allow-production'] + (['--save-startup'] if save else [])):
                 with self.assertRaises(ValueError):
                     runner.main()
                 serial.assert_not_called(); key.assert_not_called()
+
+    def test_saved_reuse_reaches_actual_host_frame_without_credentials(self):
+        backend = dict(node_id='cp_aabbccddeeff',endpoint=runner.PRODUCTION_ORIGIN,tls='public_ca_bundle',uplink_transport='mqtt_tls')
+        wifi = dict(ssid='synthetic-network',password='synthetic-password')
+        identity = dict(node_id=backend['node_id'],boot_id='12345678-1234-4123-8123-123456789abc',mono_ms=1000,credential_state='ready',mqtt_state='ready')
+        port = MagicMock();port.__enter__.return_value=port;port.readline.return_value=b'v3small: phase=SMALL TEST PASSED\n'
+        sent=[];port.write.side_effect=lambda frame:sent.append(bytes(frame))
+        with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()), \
+                patch.object(runner,'read_private',side_effect=[backend,wifi]), \
+                patch.object(runner,'hello',return_value=(identity,1800000000000,1000,1800000000100,1100)), \
+                patch.object(runner.serial,'Serial',return_value=port), \
+                patch('sys.argv',['run_small.py','--port','synthetic','--private-dir',folder,'--allow-production','--reuse-saved-credential','--reuse-saved-mqtt']):
+            self.assertEqual(runner.main(),0)
+        body=json.loads(sent[0][8:])
+        self.assertTrue(body['reuse_saved_credential'] and body['reuse_saved_mqtt'])
+        for field in ('device_token',*runner.MQTT_KEYS):self.assertNotIn(field,body)
+
+    def test_optional_ca_and_saved_reuse(self):
+        none = self.enterprise(); none.pop('eap_ca_pem'); none.pop('eap_domain')
+        self.assertEqual(runner.validate_wifi(none)['eap_server_verification'], 'none')
+        for bad in (none | dict(eap_server_verification='ca'), none | dict(eap_domain=' '),
+                    self.enterprise() | dict(eap_server_verification='none')):
+            with self.assertRaises(ValueError): runner.validate_wifi(bad)
+        backend = dict(endpoint=runner.PRODUCTION_ORIGIN, tls='public_ca_bundle', uplink_transport='mqtt_tls')
+        self.assertEqual(runner.validate_backend(backend, allow_production=True, reuse_saved_mqtt=True), runner.PRODUCTION_ORIGIN)
+        flags = dict(reuse_saved_credential=True, reuse_saved_mqtt=True)
+        fields = runner.credential_fields(backend, **flags)
+        self.assertEqual(fields, flags)
+        runner.validate_saved_readiness(dict(credential_state='ready', mqtt_state='ready'), fields)
+        for key in ('credential_state', 'mqtt_state'):
+            for state in ('missing', 'unavailable', 'unknown'):
+                with self.assertRaises(ValueError): runner.validate_saved_readiness(dict(credential_state='ready', mqtt_state='ready') | {key: state}, fields)
+        for key in ('device_bearer', *runner.MQTT_KEYS):
+            with self.assertRaises(ValueError): runner.credential_fields(backend | {key: ''}, **flags)
+        with self.assertRaises(ValueError): runner.credential_fields(backend | dict(endpoint='https://other.invalid'), **flags)
+        with self.assertRaises(ValueError): runner.validate_saved_readiness({}, fields)
+
+    def test_empty_eap_trust_normalizes_only_empty_strings(self):
+        none = self.enterprise(); none.pop('eap_ca_pem'); none.pop('eap_domain')
+        for fields in ({'eap_ca_pem': ''}, {'eap_domain': ''}, {'eap_ca_pem': '', 'eap_domain': ''}):
+            for explicit in ({}, {'eap_server_verification': 'none'}):
+                body = runner.validate_wifi(none | fields | explicit)
+                self.assertEqual(body['eap_server_verification'], 'none')
+                self.assertNotIn('eap_ca_pem', body); self.assertNotIn('eap_domain', body)
+        for field in ('eap_ca_pem', 'eap_domain'):
+            for value in (None, False, 0, [], ' ', '\t', '\n', 'invalid'):
+                for explicit in ({}, {'eap_server_verification': 'none'}):
+                    with self.assertRaises(ValueError):
+                        runner.validate_wifi(none | {'eap_ca_pem': '', 'eap_domain': '', field: value} | explicit)
+        with self.assertRaises(ValueError):
+            runner.validate_wifi(none | dict(eap_ca_pem='',eap_domain='',eap_server_verification='ca'))
 
     def test_production_constant_matches_firmware(self):
         settings = (ROOT / 'firmware/components/cp_settings/include/cp_settings.h').read_text()

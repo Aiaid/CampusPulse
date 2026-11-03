@@ -7,7 +7,7 @@ idf_component_register(
          "${RAW_DIR}/raw_display.c" "${RAW_DIR}/raw_ui.c"
          "${RAW_DIR}/raw_fonts.c" "${RAW_DIR}/raw_panel.c" "${RAW_DIR}/raw_refresh.c"
     INCLUDE_DIRS "." "${RAW_DIR}"
-    REQUIRES cp_v3_evidence cp_v3_control cp_v3_queue cp_v3_transport
+    REQUIRES cp_v3_startup cp_v3_evidence cp_v3_control cp_v3_queue cp_v3_transport
              bt nvs_flash json bootloader_support esp_timer esp_psram
              fatfs sdmmc esp_driver_sdmmc esp_driver_gpio esp_driver_spi
              esp_driver_i2c esp_driver_usb_serial_jtag esp_adc lvgl__lvgl)

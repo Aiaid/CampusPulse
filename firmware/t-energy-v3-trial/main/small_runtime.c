@@ -15,6 +15,7 @@
 #include "cp_v3_small_results.h"
 #include "cp_v3_transport.h"
 #include "cp_v3_startup.h"
+#include "cp_v3_saved_credentials.h"
 #include "cp_v3_clock_bootstrap.h"
 #include "esp_system.h"
 #include "esp_attr.h"
@@ -116,7 +117,7 @@ static void safe_usb_standby(bool safe){
         if(byte=='\r')continue;
         if(byte!='\n'){if(byte<32||byte>126||used+1>=sizeof line)overflow=true;else if(!overflow)line[used++]=(char)byte;continue;}
         line[used]=0;
-        if(!overflow&&!strncmp(line,"HELLO ",6)&&hello_nonce(line+6)&&safe)printf("V3 HELLO {\"node_id\":\"%s\",\"boot_id\":\"%s\",\"request_id\":\"%s\",\"mono_ms\":%llu,\"restart_required\":true}\n",node,boot,line+6,(unsigned long long)mono());
+        if(!overflow&&!strncmp(line,"HELLO ",6)&&hello_nonce(line+6)&&safe){cp_v3_saved_credentials_t saved;cp_v3_saved_credentials_load(node,&saved);printf("V3 HELLO {\"node_id\":\"%s\",\"boot_id\":\"%s\",\"request_id\":\"%s\",\"mono_ms\":%llu,\"restart_required\":true,\"credential_state\":\"%s\",\"mqtt_state\":\"%s\"}\n",node,boot,line+6,(unsigned long long)mono(),cp_v3_saved_state_name(saved.credential_state),cp_v3_saved_state_name(saved.mqtt_state));cp_v3_saved_credentials_clear(&saved);}
         else if(!overflow&&!strcmp(line,"RESTART")&&safe){restart(true);}
         else puts("V3 RESTART BLOCKED");
         fflush(stdout);memset(line,0,sizeof line);used=0;overflow=false;
@@ -483,7 +484,7 @@ void app_main(void){
 }
 static bool run(void){
     cp_v3_transport_config_t cfg={.origin=bootstrap.origin,.server_ca_pem=bootstrap.server_ca_pem[0]?bootstrap.server_ca_pem:NULL,
-        .eap_ca_pem=bootstrap.eap_ca_pem[0]?bootstrap.eap_ca_pem:NULL,.eap_domain=bootstrap.eap_domain[0]?bootstrap.eap_domain:NULL,.clock_seed=bootstrap.clock_seed,.wifi_timeout_ms=10000,.request_timeout_ms=te_small_request_timeout_ms(bootstrap.origin),.server_clock_error_ms=1000,
+        .eap_verification=bootstrap.eap_verification,.eap_ca_pem=bootstrap.eap_ca_pem[0]?bootstrap.eap_ca_pem:NULL,.eap_domain=bootstrap.eap_domain[0]?bootstrap.eap_domain:NULL,.clock_seed=bootstrap.clock_seed,.wifi_timeout_ms=10000,.request_timeout_ms=te_small_request_timeout_ms(bootstrap.origin),.server_clock_error_ms=1000,
         .flush_dns_on_network_failure=false,.mode=bootstrap.transport,.active_boot=boot,.cancelled=cancelled};
     if(cp_v3_transport_start(&bootstrap.settings,&cfg)!=ESP_OK)return false;
     if(!recover())return false;

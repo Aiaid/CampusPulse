@@ -9,6 +9,7 @@
 #include "cp_v3_capture.h"
 #include "cp_v3_small_results.h"
 #include "cp_v3_startup.h"
+#include "cp_v3_saved_credentials.h"
 #include "cp_v3_clock_bootstrap.h"
 #include "local_raw.h"
 #include "runtime_logic.h"
@@ -698,7 +699,7 @@ static bool upload_one(cp_v3_queue_kind_t kind) {
 }
 static bool run(void) {
     if(s_stop)return false;
-    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.server_ca_pem=s_bootstrap.server_ca_pem[0]?s_bootstrap.server_ca_pem:NULL,.eap_ca_pem=s_bootstrap.eap_ca_pem[0]?s_bootstrap.eap_ca_pem:NULL,.eap_domain=s_bootstrap.eap_domain[0]?s_bootstrap.eap_domain:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=edge_request_timeout_ms(s_bootstrap.origin),.server_clock_error_ms=100,.mode=s_bootstrap.transport,.active_boot=s_boot,.cancelled=cancelled};
+    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.server_ca_pem=s_bootstrap.server_ca_pem[0]?s_bootstrap.server_ca_pem:NULL,.eap_verification=s_bootstrap.eap_verification,.eap_ca_pem=s_bootstrap.eap_ca_pem[0]?s_bootstrap.eap_ca_pem:NULL,.eap_domain=s_bootstrap.eap_domain[0]?s_bootstrap.eap_domain:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=edge_request_timeout_ms(s_bootstrap.origin),.server_clock_error_ms=100,.mode=s_bootstrap.transport,.active_boot=s_boot,.cancelled=cancelled};
     phase("WIFI CONNECT");if(cp_v3_transport_start(&s_bootstrap.settings,&config)!=ESP_OK)return false;s_transport_started=true;
     ui_network_snapshot();
     cp_v3_time_t t;if(!current(&t))return false;
@@ -803,7 +804,7 @@ static void safe_usb_standby(void) {
         if(!overflow&&!strcmp(line,"RESTART")){volatile char *wipe=line;for(size_t i=0;i<sizeof line;i++)wipe[i]=0;if(!restart_saved(true))puts("V3 RESTART FAILED");}
         bool nonce=!overflow&&used==38&&!strncmp(line,"HELLO ",6);
         for(size_t i=6;nonce&&i<38;i++)if(!((line[i]>='0'&&line[i]<='9')||(line[i]>='a'&&line[i]<='f')))nonce=false;
-        if(nonce)printf("V3 HELLO {\"node_id\":\"%s\",\"boot_id\":\"%s\",\"request_id\":\"%s\",\"mono_ms\":%llu,\"restart_required\":true}\n",s_node,s_boot,line+6,(unsigned long long)monotonic_ms());
+        if(nonce){cp_v3_saved_credentials_t saved;cp_v3_saved_credentials_load(s_node,&saved);printf("V3 HELLO {\"node_id\":\"%s\",\"boot_id\":\"%s\",\"request_id\":\"%s\",\"mono_ms\":%llu,\"restart_required\":true,\"credential_state\":\"%s\",\"mqtt_state\":\"%s\"}\n",s_node,s_boot,line+6,(unsigned long long)monotonic_ms(),cp_v3_saved_state_name(saved.credential_state),cp_v3_saved_state_name(saved.mqtt_state));cp_v3_saved_credentials_clear(&saved);}
         else puts("V3 START REJECTED restart_required");
         fflush(stdout);volatile char *wipe=line;for(size_t i=0;i<sizeof line;i++)wipe[i]=0;used=0;overflow=false;
     }

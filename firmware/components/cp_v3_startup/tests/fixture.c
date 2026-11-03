@@ -1,4 +1,5 @@
 #include "cp_v3_startup.h"
+#include "cp_v3_saved_credentials.h"
 #include "nvs.h"
 #include <assert.h>
 #include <stdio.h>
@@ -96,6 +97,56 @@ static cp_v3_startup_profile_t profile(void) {
     };
     memcpy(p.time_public_spki, der, sizeof der); p.time_public_spki_len = sizeof der; return p;
 }
+static cp_settings_t legacy_settings;
+static esp_err_t legacy_result=ESP_ERR_NOT_FOUND;
+static unsigned legacy_reads;
+esp_err_t cp_settings_load_for_reuse(cp_settings_t *out){
+    ++legacy_reads;cp_settings_clear_sensitive(out);
+    if(legacy_result==ESP_OK)*out=legacy_settings;
+    return legacy_result;
+}
+static void saved_credentials(void){
+    cp_v3_saved_credentials_t saved;
+    cp_v3_startup_profile_t p=profile();
+    fresh();legacy_reads=0;legacy_result=ESP_ERR_NOT_FOUND;
+    cp_v3_saved_credentials_load(p.settings.node_id,&saved);
+    assert(saved.credential_state==CP_V3_SAVED_MISSING&&saved.mqtt_state==CP_V3_SAVED_MISSING&&legacy_reads==1&&!mutations);
+    legacy_settings=p.settings;legacy_result=ESP_OK;
+    cp_v3_saved_credentials_load(p.settings.node_id,&saved);
+    assert(saved.credential_state==CP_V3_SAVED_READY&&saved.mqtt_state==CP_V3_SAVED_READY&&!mutations);
+    memset(legacy_settings.mqtt_uri,0,sizeof legacy_settings.mqtt_uri);
+    memset(legacy_settings.mqtt_username,0,sizeof legacy_settings.mqtt_username);
+    memset(legacy_settings.mqtt_password,0,sizeof legacy_settings.mqtt_password);
+    memset(legacy_settings.mqtt_namespace,0,sizeof legacy_settings.mqtt_namespace);
+    cp_v3_saved_credentials_load(p.settings.node_id,&saved);
+    assert(saved.credential_state==CP_V3_SAVED_READY&&saved.mqtt_state==CP_V3_SAVED_MISSING&&!mutations);
+    strcpy(legacy_settings.mqtt_username,"partial");
+    cp_v3_saved_credentials_load(p.settings.node_id,&saved);
+    assert(saved.credential_state==CP_V3_SAVED_UNAVAILABLE&&saved.mqtt_state==CP_V3_SAVED_UNAVAILABLE&&!mutations);
+    legacy_settings=p.settings;strcpy(legacy_settings.node_id,"cp_112233445566");
+    cp_v3_saved_credentials_load(p.settings.node_id,&saved);
+    assert(saved.credential_state==CP_V3_SAVED_UNAVAILABLE&&!mutations);
+    legacy_settings=p.settings;legacy_result=ESP_ERR_INVALID_STATE;
+    cp_v3_saved_credentials_load(p.settings.node_id,&saved);assert(saved.credential_state==CP_V3_SAVED_UNAVAILABLE&&!mutations);
+    legacy_result=ESP_OK;strcpy(legacy_settings.device_token,"legacy-token-that-must-not-be-selected");
+    assert(cp_v3_startup_save(&p)==ESP_OK);store_t selected_profile=durable;
+    for(unsigned fault=0;fault<7;++fault){
+        durable=selected_profile;reset_faults();legacy_reads=0;
+        const char *node=p.settings.node_id;
+        if(fault==1)durable.selected=false;
+        if(fault==2)durable.have[durable.active]=false;
+        if(fault==3)durable.bytes[durable.active][30]^=1;
+        if(fault==4)node="cp_112233445566";
+        if(fault==5)fail_open=true;
+        if(fault==6)durable.active=9;
+        store_t before=durable;
+        cp_v3_saved_credentials_load(node,&saved);
+        assert(!legacy_reads&&!mutations&&!memcmp(&before,&durable,sizeof before));
+        if(!fault){assert(saved.credential_state==CP_V3_SAVED_READY&&!strcmp(saved.settings.device_token,p.settings.device_token));}
+        else {assert(saved.credential_state==CP_V3_SAVED_UNAVAILABLE);for(size_t i=0;i<sizeof saved.settings;++i)assert(!((unsigned char*)&saved.settings)[i]);}
+    }
+    cp_v3_saved_credentials_clear(&saved);cp_v3_startup_clear(&p);fresh();
+}
 static void cleared(const cp_v3_startup_profile_t *p) {
     const unsigned char *bytes = (const unsigned char *)p;
     for (size_t i = 0; i < sizeof *p; ++i) assert(bytes[i] == 0);
@@ -134,7 +185,7 @@ static void codec(void) {
 
 }
 int main(void) {
-    fresh(); assert(cp_v3_startup_init() == ESP_OK); codec();
+    fresh(); assert(cp_v3_startup_init() == ESP_OK); codec();saved_credentials();
     cp_v3_startup_profile_t p = profile(), candidate = p, out;
     strcpy(candidate.settings.ssid, "candidate-ap");
     fresh(); assert(cp_v3_startup_load(p.settings.node_id, &out) == ESP_ERR_NOT_FOUND); cleared(&out);

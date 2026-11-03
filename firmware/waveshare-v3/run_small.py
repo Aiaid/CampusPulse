@@ -63,10 +63,14 @@ def fetch_clock_key():
         return validate_clock_key(json.loads(payload))
 
 
-def validate_backend(backend, *, allow_public_test=False, allow_production=False):
+def validate_backend(backend, *, allow_public_test=False, allow_production=False, reuse_saved_mqtt=False):
     """Pure origin/trust preflight; runs before opening a physical serial port."""
     if type(allow_public_test) is not bool or type(allow_production) is not bool:
         raise ValueError('origin permission must be explicit')
+    if type(reuse_saved_mqtt) is not bool:
+        raise ValueError('saved MQTT reuse must be explicit')
+    if reuse_saved_mqtt and any(key in backend for key in MQTT_KEYS):
+        raise ValueError('saved MQTT reuse forbids supplied MQTT fields')
     origin = backend.get('endpoint')
     if not isinstance(origin, str) or len(origin) > 127:
         raise ValueError('invalid HTTPS origin')
@@ -86,6 +90,8 @@ def validate_backend(backend, *, allow_public_test=False, allow_production=False
             raise ValueError('production requires the system CA bundle without test CA fields')
         if transport != 'mqtt_tls':
             raise ValueError('production requires native MQTT/TLS without HTTPS fallback')
+        if reuse_saved_mqtt:
+            return origin
         if backend.get('mqtt_uri') != MQTT_URI:
             raise ValueError('fixed production MQTT broker required')
         for key, bound in (('mqtt_username', 64), ('mqtt_password', 96)):
@@ -95,7 +101,7 @@ def validate_backend(backend, *, allow_public_test=False, allow_production=False
         if not isinstance(backend.get('mqtt_namespace'), str) or not re.fullmatch(r'[a-z0-9_-]{1,15}', backend['mqtt_namespace']):
             raise ValueError('invalid MQTT namespace')
         return origin
-    if transport != 'https' or any(key in backend for key in MQTT_KEYS):
+    if reuse_saved_mqtt or transport != 'https' or any(key in backend for key in MQTT_KEYS):
         raise ValueError('isolated diagnostics require explicit HTTPS without MQTT fields')
     if allow_public_test:
         if backend.get('tls') != 'public_ca_bundle' or ca_fields:
@@ -115,6 +121,38 @@ def validate_backend(backend, *, allow_public_test=False, allow_production=False
         if not any(address in network for network in LAN_NETS):
             raise ValueError('LAN origin or an explicit origin permission required')
     return origin
+
+
+def credential_fields(backend, *, reuse_saved_credential=False, reuse_saved_mqtt=False):
+    if type(reuse_saved_credential) is not bool or type(reuse_saved_mqtt) is not bool:
+        raise ValueError('saved credential reuse must be explicit')
+    if (reuse_saved_credential or reuse_saved_mqtt) and (backend.get('endpoint') != PRODUCTION_ORIGIN or backend.get('uplink_transport', 'mqtt_tls') != 'mqtt_tls'):
+        raise ValueError('saved credentials require canonical production MQTT')
+    fields = {}
+    if reuse_saved_credential:
+        if 'device_bearer' in backend:
+            raise ValueError('saved credential reuse forbids a supplied bearer')
+        fields['reuse_saved_credential'] = True
+    else:
+        token = backend.get('device_bearer')
+        if not isinstance(token, str) or not re.fullmatch(r'[A-Za-z0-9_-]{32,192}', token):
+            raise ValueError('invalid supplied device bearer')
+        fields['device_token'] = token
+    if reuse_saved_mqtt:
+        if any(key in backend for key in MQTT_KEYS):
+            raise ValueError('saved MQTT reuse forbids supplied MQTT fields')
+        fields['reuse_saved_mqtt'] = True
+    elif backend.get('uplink_transport', 'mqtt_tls') == 'mqtt_tls':
+        fields.update({key: backend[key] for key in MQTT_KEYS})
+    return fields
+
+
+def validate_saved_readiness(identity, fields):
+    for flag, state in (('reuse_saved_credential', 'credential_state'), ('reuse_saved_mqtt', 'mqtt_state')):
+        if state in identity and identity[state] not in ('ready', 'missing', 'unavailable'):
+            raise ValueError('invalid device credential readiness')
+        if fields.get(flag) and identity.get(state) != 'ready':
+            raise ValueError('device saved credentials are not ready')
 
 
 def read_private(path):
@@ -161,14 +199,19 @@ def main():
                    help='explicit USB recovery of a damaged startup store after real ACK')
     p.add_argument('--startup-key-file', type=Path,
                    help='private copy of HTTPS-verified production clock public metadata')
+    p.add_argument('--reuse-saved-credential', action='store_true', help='reuse ready same-node on-device token; omit device_bearer')
+    p.add_argument('--reuse-saved-mqtt', action='store_true', help='reuse ready on-device MQTT credentials; omit all MQTT fields')
     args = p.parse_args()
     directory = args.private_dir.resolve()
     os.chmod(directory, 0o700)
     backend = read_private(directory / 'backend-bootstrap.json')
     wifi = read_private(directory / 'wifi.json')
     validate_backend(backend, allow_public_test=args.allow_public_test,
-                     allow_production=args.allow_production)
+                     allow_production=args.allow_production,reuse_saved_mqtt=args.reuse_saved_mqtt)
+    credentials = credential_fields(backend,reuse_saved_credential=args.reuse_saved_credential,reuse_saved_mqtt=args.reuse_saved_mqtt)
     wifi_fields = validate_wifi(wifi, save_startup=args.save_startup)
+    if wifi_fields.get('eap_server_verification') == 'none':
+        print('PEAP server certificate verification is disabled; the authentication server is unverified.')
     if args.startup_reconfigure and not args.save_startup:
         raise ValueError('startup recovery requires explicit save')
     clock_key = None
@@ -208,6 +251,7 @@ def main():
                     time.sleep(.1)
         if not re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', identity['boot_id']):
             raise ValueError('invalid actual boot identity')
+        validate_saved_readiness(identity, credentials)
         fd = os.open(directory / 'device-runtime.json', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, 'w') as out:
             json.dump(identity, out)
@@ -218,14 +262,12 @@ def main():
         # absolute-error allowance; RTT bounds the device HELLO instant.
         bootstrap = dict(node_id=identity['node_id'], boot_id=identity['boot_id'],
                          uplink_transport=backend.get('uplink_transport', 'mqtt_tls'),
-                         origin=backend['endpoint'], device_token=backend['device_bearer'],
+                         origin=backend['endpoint'], **credentials,
                          **wifi_fields,
                          utc_ms=(sent_wall + received_wall) // 2,
                          uncertainty_ms=(rtt + 1) // 2 + 251,
                          anchor_mono_ms=identity['mono_ms'],
                          max_windows=args.windows)
-        if bootstrap['uplink_transport'] == 'mqtt_tls':
-            bootstrap.update({key: backend[key] for key in MQTT_KEYS})
         if clock_key:
             bootstrap.update(save_startup=True, startup_reconfigure=args.startup_reconfigure,
                              clock_key_id=clock_key['key_id'], clock_public_spki=clock_key['public_key_spki'])

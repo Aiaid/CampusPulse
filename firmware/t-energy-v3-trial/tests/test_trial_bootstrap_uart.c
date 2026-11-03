@@ -1,6 +1,8 @@
 /* In-memory synthetic stdin and discarded output: no serial/device IO. Compile
  * the actual production wait loop, including line framing and cleanup. */
 #include "trial_bootstrap.h"
+#include "cp_v3_saved_credentials.h"
+#include <stdarg.h>
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -27,7 +29,16 @@ int bootstrap_test_puts(const char *text) {
     if (!strcmp(text,"V3 START ACCEPTED")) ++accepted;
     return 0;
 }
-int bootstrap_test_printf(const char *format, ...) { (void)format; return 0; }
+void cp_v3_saved_credentials_load(const char *node,cp_v3_saved_credentials_t *saved){
+    assert(!strcmp(node,"cp_001122334455"));cp_v3_saved_credentials_clear(saved);
+    saved->credential_state=CP_V3_SAVED_READY;saved->mqtt_state=CP_V3_SAVED_MISSING;
+    strcpy(saved->settings.device_token,"must-never-be-printed-saved-token");
+}
+int bootstrap_test_printf(const char *format, ...) {
+    char output[1024];va_list args;va_start(args,format);int n=vsnprintf(output,sizeof output,format,args);va_end(args);
+    assert(n>0&&n<(int)sizeof output&&!strstr(output,"must-never-be-printed")&&!strstr(output,"test-pass"));
+    assert(strstr(output,"\"credential_state\":\"ready\"")&&strstr(output,"\"mqtt_state\":\"missing\""));return n;
+}
 int bootstrap_test_fflush(FILE *file) { (void)file; return 0; }
 static bool cancelled(void) { return offset == input_length; }
 static bool after_grace(void) { return delays>=10; }

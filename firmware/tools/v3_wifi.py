@@ -71,7 +71,7 @@ def validate_wifi(wifi, *, save_startup=False):
     if mode not in ("open", "personal", "enterprise_peap"):
         raise WifiValidationError("unsupported Wi-Fi authentication mode")
     common = {"ssid", "password", "security"}
-    eap = {"eap_username", "eap_identity", "eap_password", "eap_ca_pem", "eap_domain"}
+    eap = {"eap_username", "eap_identity", "eap_password", "eap_ca_pem", "eap_domain", "eap_server_verification"}
     allowed = common | (eap if mode == "enterprise_peap" else set())
     if set(wifi) - allowed or not {"ssid", "password"}.issubset(wifi):
         raise WifiValidationError("unexpected or missing Wi-Fi fields")
@@ -85,9 +85,25 @@ def validate_wifi(wifi, *, save_startup=False):
         raise WifiValidationError("open and PEAP Wi-Fi require an empty personal password")
     if mode == "enterprise_peap":
         if save_startup:
-            raise WifiValidationError("PEAP requires fresh trusted USB time and is manual-only")
-        if not eap.issubset(wifi):
-            raise WifiValidationError("PEAP credentials, CA and server domain are required")
+            raise WifiValidationError("PEAP startup verification selection is not stored; use manual USB setup")
+        if not {"eap_username", "eap_identity", "eap_password"}.issubset(wifi):
+            raise WifiValidationError("PEAP credentials are required")
+        # Empty form/JSON strings mean no trust material was supplied. Reject
+        # wrong types before inference; whitespace or malformed nonempty CA
+        # material must never silently select the unverified mode.
+        for field in ("eap_ca_pem", "eap_domain"):
+            if field in wifi and type(wifi[field]) is not str:
+                raise WifiValidationError("invalid EAP trust field")
+        verification = wifi.get("eap_server_verification", "ca" if wifi.get("eap_ca_pem", "") else "none")
+        if verification not in ("ca", "none"):
+            raise WifiValidationError("invalid EAP server verification selection")
+        payload["eap_server_verification"] = verification
+        if verification == "none":
+            if wifi.get("eap_ca_pem", "") or wifi.get("eap_domain", ""):
+                raise WifiValidationError("unverified PEAP cannot include CA or server domain")
+        elif "eap_ca_pem" not in wifi or "eap_domain" not in wifi:
+            raise WifiValidationError("verified PEAP requires CA and server domain")
         payload.update({field: _text(wifi[field], 1, 128) for field in ("eap_username", "eap_identity", "eap_password")})
-        payload.update(eap_ca_pem=validate_ca(wifi["eap_ca_pem"]), eap_domain=validate_domain(wifi["eap_domain"]))
+        if verification == "ca":
+            payload.update(eap_ca_pem=validate_ca(wifi["eap_ca_pem"]), eap_domain=validate_domain(wifi["eap_domain"]))
     return payload

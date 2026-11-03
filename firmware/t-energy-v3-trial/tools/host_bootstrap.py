@@ -166,10 +166,19 @@ def validate_public_origin(origin):
     return origin
 
 
-def validate_inputs(backend, wifi, *, allow_public_test=False, allow_production=False, save_startup=False):
+def validate_inputs(backend, wifi, *, allow_public_test=False, allow_production=False, save_startup=False,
+                    reuse_saved_credential=False, reuse_saved_mqtt=False):
     try:
         if type(allow_public_test) is not bool or type(allow_production) is not bool or (allow_public_test and allow_production):
             raise BootstrapError("endpoint permission must be explicit and unambiguous")
+        if type(reuse_saved_credential) is not bool or type(reuse_saved_mqtt) is not bool:
+            raise BootstrapError("saved credential reuse must be explicit")
+        if (reuse_saved_credential or reuse_saved_mqtt) and not allow_production:
+            raise BootstrapError("saved credentials require canonical production MQTT")
+        if reuse_saved_credential and "device_bearer" in backend:
+            raise BootstrapError("saved credential reuse forbids a supplied device bearer")
+        if reuse_saved_mqtt and any(key in backend for key in ("mqtt_uri", "mqtt_username", "mqtt_password", "mqtt_namespace")):
+            raise BootstrapError("saved MQTT reuse forbids supplied MQTT fields")
         node = _text(backend["node_id"], 15, 15)
         if not NODE_RE.fullmatch(node):
             raise BootstrapError("invalid T-Energy node identity")
@@ -185,16 +194,19 @@ def validate_inputs(backend, wifi, *, allow_public_test=False, allow_production=
                 raise BootstrapError("production requires the public CA bundle without private CA fields")
             if transport != "mqtt_tls":
                 raise BootstrapError("production requires native MQTT/TLS; HTTPS fallback is forbidden")
-            if backend.get("mqtt_uri") != PRODUCTION_MQTT_URI:
-                raise BootstrapError("the fixed production MQTT broker is required")
-            username = _text(backend["mqtt_username"], 1, 64)
-            broker_password = _text(backend["mqtt_password"], 1, 96)
-            namespace = _text(backend["mqtt_namespace"], 1, 15)
-            if (any(ord(c) < 33 or ord(c) > 126 for c in username + broker_password)
-                    or not re.fullmatch(r"[a-z0-9_-]{1,15}", namespace)):
-                raise BootstrapError("invalid private MQTT settings")
-            mqtt_fields = dict(mqtt_uri=PRODUCTION_MQTT_URI, mqtt_username=username,
-                               mqtt_password=broker_password, mqtt_namespace=namespace)
+            if reuse_saved_mqtt:
+                mqtt_fields = dict(reuse_saved_mqtt=True)
+            else:
+                if backend.get("mqtt_uri") != PRODUCTION_MQTT_URI:
+                    raise BootstrapError("the fixed production MQTT broker is required")
+                username = _text(backend["mqtt_username"], 1, 64)
+                broker_password = _text(backend["mqtt_password"], 1, 96)
+                namespace = _text(backend["mqtt_namespace"], 1, 15)
+                if (any(ord(c) < 33 or ord(c) > 126 for c in username + broker_password)
+                        or not re.fullmatch(r"[a-z0-9_-]{1,15}", namespace)):
+                    raise BootstrapError("invalid private MQTT settings")
+                mqtt_fields = dict(mqtt_uri=PRODUCTION_MQTT_URI, mqtt_username=username,
+                                   mqtt_password=broker_password, mqtt_namespace=namespace)
         elif allow_public_test:
             validate_public_origin(origin)
             if (backend.get("tls") != "public_ca_bundle"
@@ -210,14 +222,17 @@ def validate_inputs(backend, wifi, *, allow_public_test=False, allow_production=
             ca_fields["server_ca_pem"] = validate_ca(backend["server_ca_pem"])
         if not allow_production and transport != "https":
             raise BootstrapError("nonproduction diagnostics require explicit HTTPS transport")
-        token = _text(backend["device_bearer"], 32, 192)
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", token):
-            raise BootstrapError("invalid device bearer")
+        credential_fields = {"reuse_saved_credential": True} if reuse_saved_credential else {}
+        if not reuse_saved_credential:
+            token = _text(backend["device_bearer"], 32, 192)
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", token):
+                raise BootstrapError("invalid device bearer")
+            credential_fields["device_token"] = token
         try:
             wifi_fields = validate_wifi(wifi, save_startup=save_startup)
         except WifiValidationError as error:
             raise BootstrapError(str(error)) from None
-        return dict(node_id=node, origin=origin, device_token=token,
+        return dict(node_id=node, origin=origin, **credential_fields,
                     uplink_transport=transport, **wifi_fields, **ca_fields, **mqtt_fields)
     except (KeyError, TypeError, ValueError):
         raise BootstrapError("invalid private bootstrap configuration") from None
@@ -227,8 +242,11 @@ def validate_hello(hello, node_id, request_id, *, allow_safe_restart=False):
     if type(allow_safe_restart) is not bool:
         raise BootstrapError("safe restart permission must be explicit")
     required={"node_id", "boot_id", "request_id", "mono_ms"}
-    if type(hello) is not dict or set(hello)-{"restart_required"} != required:
+    if type(hello) is not dict or set(hello)-{"restart_required", "credential_state", "mqtt_state"} != required:
         raise BootstrapError("invalid HELLO identity")
+    for key in ("credential_state", "mqtt_state"):
+        if key in hello and hello[key] not in ("ready", "missing", "unavailable"):
+            raise BootstrapError("invalid HELLO credential state")
     if "restart_required" in hello and type(hello["restart_required"]) is not bool:
         raise BootstrapError("invalid HELLO restart state")
     if hello["request_id"] != request_id or not NONCE_RE.fullmatch(request_id):
@@ -285,10 +303,14 @@ def encode_frame(payload):
 
 def build_frame(backend, wifi, hello, request_id, sent_wall_ms, sent_mono_ms,
                 received_wall_ms, received_mono_ms, *, windows=1, allow_public_test=False, allow_production=False,
-                save_startup=False, startup_reconfigure=False, clock_key=None):
+                save_startup=False, startup_reconfigure=False, clock_key=None,
+                reuse_saved_credential=False, reuse_saved_mqtt=False):
     """Pure schema/time/frame operation; no file, serial or network IO."""
-    payload = validate_inputs(backend, wifi, allow_public_test=allow_public_test, allow_production=allow_production, save_startup=save_startup)
+    payload = validate_inputs(backend, wifi, allow_public_test=allow_public_test, allow_production=allow_production, save_startup=save_startup, reuse_saved_credential=reuse_saved_credential, reuse_saved_mqtt=reuse_saved_mqtt)
     validate_hello(hello, payload["node_id"], request_id)
+    for requested, state in ((reuse_saved_credential, "credential_state"), (reuse_saved_mqtt, "mqtt_state")):
+        if requested and hello.get(state) != "ready":
+            raise BootstrapError("device saved credentials are not ready")
     payload.update(startup_fields(clock_key,save_startup=save_startup,startup_reconfigure=startup_reconfigure,allow_production=allow_production))
     for value in (sent_wall_ms, received_wall_ms):
         _integer(value, 1704067200000, 4102444799000)
@@ -362,9 +384,10 @@ def run_bootstrap(backend, wifi, port_name, *, serial_factory, clock=None,
                   nonce_factory=lambda: uuid.uuid4().hex, windows=1,
                   hello_attempts=3, hello_timeout_ms=2000, accept_timeout_ms=5000,
                   allow_public_test=False, allow_production=False, save_startup=False,
-                  startup_reconfigure=False, clock_key=None, startup_saved_timeout_ms=300000,safe_restart=False):
+                  startup_reconfigure=False, clock_key=None, startup_saved_timeout_ms=300000,safe_restart=False,
+                  reuse_saved_credential=False,reuse_saved_mqtt=False):
     """Serial only; closes even after open/write/read failures. Never logs RX."""
-    validate_inputs(backend, wifi, allow_public_test=allow_public_test, allow_production=allow_production, save_startup=save_startup)  # Fail closed before opening a device.
+    validate_inputs(backend, wifi, allow_public_test=allow_public_test, allow_production=allow_production, save_startup=save_startup,reuse_saved_credential=reuse_saved_credential,reuse_saved_mqtt=reuse_saved_mqtt)  # Fail closed before opening a device.
     startup_fields(clock_key,save_startup=save_startup,startup_reconfigure=startup_reconfigure,allow_production=allow_production)
     _integer(windows, 0 if save_startup else 1, 3)
     _integer(startup_saved_timeout_ms, 1, 600000)
@@ -429,7 +452,8 @@ def run_bootstrap(backend, wifi, port_name, *, serial_factory, clock=None,
         frame = build_frame(backend, wifi, hello, request_id, sent_wall, sent_mono,
                             received_wall, received_mono, windows=windows,
                             allow_public_test=allow_public_test, allow_production=allow_production,
-                            save_startup=save_startup,startup_reconfigure=startup_reconfigure,clock_key=clock_key)
+                            save_startup=save_startup,startup_reconfigure=startup_reconfigure,clock_key=clock_key,
+                            reuse_saved_credential=reuse_saved_credential,reuse_saved_mqtt=reuse_saved_mqtt)
         current_wall, current_mono = clock.wall_ms(), clock.mono_ms()
         age = current_mono - received_mono
         if not 0 <= age <= 2000 or abs(current_wall - received_wall - age) > 20:
@@ -488,6 +512,8 @@ def main(argv=None):
     parser.add_argument("--startup-reconfigure",action="store_true",help="explicit trusted-USB recovery, requires --save-startup")
     parser.add_argument("--startup-key-file","--clock-key-file",dest="clock_key_file",type=Path,help="owned mode-0600 JSON metadata downloaded from the canonical HTTPS clock/key endpoint")
     parser.add_argument("--safe-restart",action="store_true",help="permit exactly one RESTART only after fresh node/nonce-verified safe restart_required HELLO")
+    parser.add_argument("--reuse-saved-credential", action="store_true", help="reuse a ready same-node device token on the board; omit device_bearer")
+    parser.add_argument("--reuse-saved-mqtt", action="store_true", help="reuse ready on-device MQTT settings; omit all four MQTT fields")
     args = parser.parse_args(argv)
     if args.send and not args.port:
         parser.error("--send requires --port")
@@ -496,16 +522,19 @@ def main(argv=None):
         backend = read_private_json(args.private_dir / "backend-bootstrap-tenergy.json")
         wifi = read_private_json(args.wifi_file)
         clock_key = read_private_json(args.clock_key_file) if args.clock_key_file else None
-        validate_inputs(backend, wifi, allow_public_test=args.allow_public_test, allow_production=args.allow_production, save_startup=args.save_startup)
+        validate_inputs(backend, wifi, allow_public_test=args.allow_public_test, allow_production=args.allow_production, save_startup=args.save_startup,reuse_saved_credential=args.reuse_saved_credential,reuse_saved_mqtt=args.reuse_saved_mqtt)
         startup_fields(clock_key,save_startup=args.save_startup,startup_reconfigure=args.startup_reconfigure,allow_production=args.allow_production)
         _integer(args.windows,0 if args.save_startup else 1,3)
+        if wifi.get("security") == "enterprise_peap" and validate_wifi(wifi)["eap_server_verification"] == "none":
+            print("PEAP server certificate verification is disabled; the authentication server is unverified.")
         if not args.send:
             print("Private inputs validated. No device opened. Real-device acceptance remains unverified.")
             return 0
         import serial
         run_bootstrap(backend, wifi, args.port, serial_factory=serial.Serial, windows=args.windows,
                       allow_public_test=args.allow_public_test, allow_production=args.allow_production,
-                      save_startup=args.save_startup,startup_reconfigure=args.startup_reconfigure,clock_key=clock_key,safe_restart=args.safe_restart)
+                      save_startup=args.save_startup,startup_reconfigure=args.startup_reconfigure,clock_key=clock_key,safe_restart=args.safe_restart,
+                      reuse_saved_credential=args.reuse_saved_credential,reuse_saved_mqtt=args.reuse_saved_mqtt)
         print("Startup save explicitly confirmed; untethered hardware acceptance remains unverified." if args.save_startup else "Bootstrap explicitly accepted. TLS, collection and upload remain unverified.")
         return 0
     except KeyboardInterrupt:

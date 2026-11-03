@@ -171,7 +171,12 @@ esp_err_t cp_v3_transport_stop(void) {
     }
     if (s_eap_configured) {
         esp_eap_client_clear_identity(); esp_eap_client_clear_username(); esp_eap_client_clear_password(); esp_eap_client_clear_ca_cert();
-        (void)esp_eap_client_set_domain_name(NULL);
+        esp_err_t reset = esp_eap_client_set_domain_name(NULL);
+        if (reset != ESP_OK) return reset;
+        reset = esp_eap_client_set_disable_time_check(false);
+        if (reset != ESP_OK) return reset;
+        reset = esp_eap_client_use_default_cert_bundle(false);
+        if (reset != ESP_OK) return reset;
         s_eap_configured = false;
     }
     if (s_wifi_initialized) {
@@ -210,7 +215,8 @@ esp_err_t cp_v3_transport_start(const cp_settings_t *settings, const cp_v3_trans
 #if !CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
     if (!config->server_ca_pem) return ESP_ERR_NOT_SUPPORTED;
 #endif
-    if (!cp_v3_wifi_validate(settings, config->eap_ca_pem, config->eap_domain)) return ESP_ERR_INVALID_ARG;
+    if (!cp_v3_wifi_validate_mode(settings, config->eap_ca_pem, config->eap_domain,
+        config->eap_verification)) return ESP_ERR_INVALID_ARG;
     TaskHandle_t expected = NULL, self = xTaskGetCurrentTaskHandle();
     if (!__atomic_compare_exchange_n(&s_owner, &expected, self, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return ESP_ERR_INVALID_STATE;
     __atomic_store_n(&s_cancelled, false, __ATOMIC_RELEASE);
@@ -250,9 +256,17 @@ esp_err_t cp_v3_transport_start(const cp_settings_t *settings, const cp_v3_trans
     if (settings->wifi_security == CP_WIFI_ENTERPRISE_PEAP) {
         s_eap_configured = true;
         result = esp_eap_client_use_default_cert_bundle(false);
-        if (result == ESP_OK) result = esp_eap_client_set_ca_cert((const unsigned char *)config->eap_ca_pem, strlen(config->eap_ca_pem) + 1);
-        if (result == ESP_OK) result = esp_eap_client_set_domain_name(config->eap_domain);
-        if (result == ESP_OK) result = esp_eap_client_set_disable_time_check(false);
+        if (config->eap_verification == CP_V3_EAP_VERIFY_NONE) {
+            /* No CA + no default bundle selects SDK VERIFY_NONE. This explicit
+             * PEAP choice is reported by the USB/UI flow, never as verified. */
+            esp_eap_client_clear_ca_cert();
+            if (result == ESP_OK) result = esp_eap_client_set_domain_name(NULL);
+            if (result == ESP_OK) result = esp_eap_client_set_disable_time_check(true);
+        } else {
+            if (result == ESP_OK) result = esp_eap_client_set_ca_cert((const unsigned char *)config->eap_ca_pem, strlen(config->eap_ca_pem) + 1);
+            if (result == ESP_OK) result = esp_eap_client_set_domain_name(config->eap_domain);
+            if (result == ESP_OK) result = esp_eap_client_set_disable_time_check(false);
+        }
         if (result == ESP_OK) result = esp_eap_client_set_eap_methods(ESP_EAP_TYPE_PEAP);
         if (result == ESP_OK) result = esp_eap_client_set_identity((const unsigned char *)settings->eap_identity, strlen(settings->eap_identity));
         if (result == ESP_OK) result = esp_eap_client_set_username((const unsigned char *)settings->eap_username, strlen(settings->eap_username));

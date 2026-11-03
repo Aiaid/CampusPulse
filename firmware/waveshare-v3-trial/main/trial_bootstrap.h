@@ -7,6 +7,7 @@ typedef struct {
     cp_settings_t settings;
     char origin[128];
     cp_v3_transport_mode_t transport;
+    cp_v3_eap_verification_t eap_verification;
     /* Manual USB PEAP trust only; never stored in the startup profile. */
     char eap_ca_pem[4097], eap_domain[254];
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS

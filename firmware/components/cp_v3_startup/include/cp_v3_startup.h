@@ -21,8 +21,10 @@ typedef struct {
 
 /* Portable structural/production-profile validation. expected_node may be NULL
  * for encode/save; callers restoring identity must pass the hardware node ID.
- * PEAP cannot auto-start without an independently trusted pre-network clock;
- * auto_start=true rejects it. Explicit USB may retain a false PEAP profile.
+ * This stored format does not encode PEAP verification choice/trust material,
+ * and its autonomous boot path does not implement PEAP. auto_start=true rejects
+ * it; this is not a claim that unverified EAP needs certificate-date checking.
+ * Explicit USB may retain a false PEAP profile.
  * Cryptographic public-point validation is additionally required by NVS load/save.
  * Neither settings migration nor a legacy profile is consulted. */
 bool cp_v3_startup_validate(const cp_v3_startup_profile_t *, const char *expected_node);

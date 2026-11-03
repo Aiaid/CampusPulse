@@ -148,6 +148,45 @@ static void wifi_modes(const char *ca,const char *leaf){
     a=field(mqtt,"server_ca_pem",ca);reject(a);free(a);free(mqtt);
     free(valid);free(open);
 }
+static void optional_ca_and_reuse(const char *ca){
+    trial_bootstrap_t out;
+    char *empty=peap(base,""),*no_ca=replace(empty,",\"eap_ca_pem\":\"\"","");free(empty);
+    char *no_trust=replace(no_ca,",\"eap_domain\":\"radius.example\"","");free(no_ca);
+    reject(no_trust);
+    char *none=field(no_trust,"eap_server_verification","none");
+    assert(parse(none,&out)&&out.eap_verification==CP_V3_EAP_VERIFY_NONE&&!out.eap_ca_pem[0]&&!out.eap_domain[0]);
+    char *bad=field(none,"eap_ca_pem","");reject(bad);free(bad);
+    bad=field(none,"eap_domain","");reject(bad);free(bad);
+    reject_change(none,"\"none\"","\"ca\"");reject_change(none,"\"none\"","null");
+    reject_change(none,"\"none\"","\"unknown\"");
+    bad=field(base,"eap_server_verification","none");reject(bad);free(bad);
+    char *verified=peap(base,ca);bad=field(verified,"eap_server_verification","none");reject(bad);free(bad);
+    bad=field(verified,"eap_server_verification","ca");assert(parse(bad,&out)&&out.eap_verification==CP_V3_EAP_VERIFY_CA);free(bad);
+    free(verified);free(none);free(no_trust);
+    const char *reuse="{\"node_id\":\"cp_001122334455\",\"boot_id\":\"boot-test\",\"origin\":\"" CP_API_ORIGIN "\",\"uplink_transport\":\"mqtt_tls\",\"reuse_saved_credential\":true,\"reuse_saved_mqtt\":true,\"ssid\":\"fresh-wifi\",\"password\":\"fresh-pass\",\"utc_ms\":1800000000000,\"uncertainty_ms\":10,\"max_windows\":1,\"security\":\"personal\",\"anchor_mono_ms\":1000}";
+    assert(parse(base,&out));cp_settings_t saved=out.settings;
+    strcpy(saved.mqtt_uri,CP_MQTT_PRODUCTION_URI);strcpy(saved.mqtt_username,"saved-user");strcpy(saved.mqtt_password,"saved-mqtt-password");strcpy(saved.mqtt_namespace,"saved_namespace");
+    assert(trial_bootstrap_parse_with_credentials(reuse,saved.node_id,"boot-test",1100,&saved,&out));
+    assert(!strcmp(out.settings.device_token,saved.device_token)&&!strcmp(out.settings.mqtt_password,saved.mqtt_password));
+    assert(!strcmp(out.settings.ssid,"fresh-wifi")&&!strcmp(out.settings.password,"fresh-pass"));
+    reject(reuse);
+    const char *fields[]={"device_token","mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace"};
+    for(unsigned i=0;i<5;i++){bad=field(reuse,fields[i],"");assert(!trial_bootstrap_parse_with_credentials(bad,saved.node_id,"boot-test",1100,&saved,&out)&&zero(&out,sizeof out));free(bad);}
+    const char *old[]={"true","mqtt_tls",CP_API_ORIGIN,"boot-test","1000"};
+    const char *replacement[]={"false","https","https://isolated.example","other-boot","1101"};
+    for(unsigned i=0;i<5;i++){bad=replace(reuse,old[i],replacement[i]);assert(!trial_bootstrap_parse_with_credentials(bad,saved.node_id,"boot-test",1100,&saved,&out)&&zero(&out,sizeof out));free(bad);}
+    /* Each credential source is independent; supplied and stored fields never mix within a source. */
+    bad=replace(reuse,"\"reuse_saved_credential\":true","\"device_token\":\"manual-token-at-least-thirty-two-bytes\"");
+    assert(trial_bootstrap_parse_with_credentials(bad,saved.node_id,"boot-test",1100,&saved,&out));
+    assert(!strcmp(out.settings.device_token,"manual-token-at-least-thirty-two-bytes")&&!strcmp(out.settings.mqtt_password,saved.mqtt_password));free(bad);
+    bad=replace(reuse,"\"reuse_saved_mqtt\":true","\"mqtt_uri\":\"" CP_MQTT_PRODUCTION_URI "\",\"mqtt_username\":\"manual-user\",\"mqtt_password\":\"manual-password\",\"mqtt_namespace\":\"manual_ns\"");
+    cp_settings_t token_only=saved;memset(token_only.mqtt_uri,0,sizeof token_only.mqtt_uri);memset(token_only.mqtt_username,0,sizeof token_only.mqtt_username);memset(token_only.mqtt_password,0,sizeof token_only.mqtt_password);memset(token_only.mqtt_namespace,0,sizeof token_only.mqtt_namespace);
+    assert(trial_bootstrap_parse_with_credentials(bad,token_only.node_id,"boot-test",1100,&token_only,&out));
+    assert(!strcmp(out.settings.device_token,token_only.device_token)&&!strcmp(out.settings.mqtt_password,"manual-password"));free(bad);cp_settings_clear_sensitive(&token_only);
+    strcpy(saved.node_id,"cp_112233445566");assert(!trial_bootstrap_parse_with_credentials(reuse,"cp_001122334455","boot-test",1100,&saved,&out));
+    strcpy(saved.node_id,"cp_001122334455");saved.mqtt_password[0]=0;assert(!trial_bootstrap_parse_with_credentials(reuse,saved.node_id,"boot-test",1100,&saved,&out));
+    cp_settings_clear_sensitive(&saved);trial_bootstrap_clear(&out);
+}
 static void malformed_json(void) {
     const char *bad[] = {"", " ", "null", "[]", "{}", "{", "{\"", "{\"n\\", "{\"n\\u", "{\"n\\u0", "{\"n\\u00", "{\"n\\u000", "{\"n\\u0000\":1}", "{\"node_id\":{}}", "{\"node_id\":[1]}", "{\"node_id\":true}", "{\"node_id\":null}", "{\"unknown\":\"test-pass\"}"};
     for (size_t i = 0; i < sizeof bad/sizeof *bad; ++i) reject(bad[i]);
@@ -251,7 +290,7 @@ int main(int argc, char **argv) {
     valid = replace(base,"node_id","n\\u006fde_id"); assert(parse(valid,&out)); free(valid);
     malformed_json();
     char *ca = read_file(argv[1]), *leaf = read_file(argv[2]);
-    startup_profiles(ca);wifi_modes(ca,leaf);
+    startup_profiles(ca);wifi_modes(ca,leaf);optional_ca_and_reuse(ca);
     char *json = with_ca(ca); assert(parse(json,&out)); assert(!strcmp(out.server_ca_pem,ca));
     reject_change(json,"https://trial.invalid",CP_API_ORIGIN);
     valid = replace(json,"\\n","\\u000A"); assert(parse(valid,&out)); assert(!strcmp(out.server_ca_pem,ca)); free(valid);

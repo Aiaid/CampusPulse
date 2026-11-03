@@ -34,6 +34,9 @@ bool cp_settings_validate(const cp_settings_t *settings);
 bool cp_settings_mqtt_ready(const cp_settings_t *settings);
 /* Missing enrollment returns ESP_ERR_NOT_FOUND. Output is cleared on errors. */
 esp_err_t cp_settings_load(cp_settings_t *out);
+/* Read-only credential-reuse view. NOT_FOUND means namespace or all owned
+ * selector/slots absent; orphan slots or a missing selected blob are errors. */
+esp_err_t cp_settings_load_for_reuse(cp_settings_t *out);
 /* Call only after the candidate's network/cloud validation succeeds. Writes an
  * inactive slot, commits it, then atomically commits the active-slot selector.
  * A rejected or interrupted candidate never overwrites the last active slot. */

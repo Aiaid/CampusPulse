@@ -4,8 +4,9 @@
 #include "esp_err.h"
 
 /* Only at boot, with no other Wi-Fi/SNTP owner or active collector. NVS must
- * already be initialized without erasure. Personal/open Wi-Fi only: PEAP needs
- * trusted time before network authentication and is explicitly rejected.
+ * already be initialized without erasure. This boot path supports personal/open
+ * Wi-Fi only; its profile has no PEAP verification choice or trust configuration.
+ * PEAP is rejected here even though manual unverified PEAP has no EAP date check.
  * One association, one tentative SNTP hint, up to three fresh nonce probes.
  * All TLS verification stays enabled. No device/MQTT credentials enter HTTP.
  * On success Wi-Fi is stopped and out is trusted; on failure out is zero.

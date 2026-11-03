@@ -225,10 +225,68 @@ class BootstrapTests(unittest.TestCase):
         for wifi in invalid:
             with self.assertRaises(host.BootstrapError):
                 host.run_bootstrap(self.production_backend, wifi, "fake", serial_factory=factory, allow_production=True)
-        with self.assertRaisesRegex(host.BootstrapError, "manual-only"):
+        with self.assertRaisesRegex(host.BootstrapError, "not stored"):
             host.run_bootstrap(self.production_backend, good, "fake", serial_factory=factory,
                                allow_production=True, save_startup=True, clock_key=startup_key())
         factory.assert_not_called()
+
+    def test_optional_ca_is_explicit_without_downgrade(self):
+        none = self.enterprise(); none.pop("eap_ca_pem"); none.pop("eap_domain")
+        body = json.loads(self.frame(wifi=none)[8:])
+        self.assertEqual(body["eap_server_verification"], "none")
+        self.assertNotIn("eap_ca_pem", body); self.assertNotIn("eap_domain", body)
+        self.assertEqual(json.loads(self.frame(wifi=self.enterprise())[8:])["eap_server_verification"], "ca")
+        for bad in (none | {"eap_server_verification": "ca"}, none | {"eap_domain": " "},
+                    self.enterprise() | {"eap_server_verification": "none"},
+                    self.enterprise() | {"eap_ca_pem": "invalid"}, none | {"eap_server_verification": None}):
+            with self.assertRaises(host.BootstrapError): self.frame(wifi=bad)
+
+    def test_empty_eap_trust_is_omitted_without_downgrading_invalid_input(self):
+        none = self.enterprise(); none.pop("eap_ca_pem"); none.pop("eap_domain")
+        for fields in ({}, {"eap_ca_pem": ""}, {"eap_domain": ""}, {"eap_ca_pem": "", "eap_domain": ""}):
+            for explicit in ({}, {"eap_server_verification": "none"}):
+                wifi = none | fields | explicit
+                original = wifi.copy()
+                body = json.loads(self.frame(wifi=wifi)[8:])
+                self.assertEqual(body["eap_server_verification"], "none")
+                self.assertNotIn("eap_ca_pem", body); self.assertNotIn("eap_domain", body)
+                self.assertEqual(wifi, original)
+        for field in ("eap_ca_pem", "eap_domain"):
+            for value in (None, False, 0, [], " ", "\t", "\n", "invalid"):
+                for explicit in ({}, {"eap_server_verification": "none"}):
+                    with self.assertRaises(host.BootstrapError):
+                        self.frame(wifi=none | {"eap_ca_pem": "", "eap_domain": "", field: value} | explicit)
+        with self.assertRaises(host.BootstrapError):
+            self.frame(wifi=none | dict(eap_ca_pem="",eap_domain="",eap_server_verification="ca"))
+
+    def test_saved_reuse_uses_readiness_and_never_sends_secret_values(self):
+        backend = self.production_backend.copy(); backend.pop("device_bearer")
+        for key in ("mqtt_uri", "mqtt_username", "mqtt_password", "mqtt_namespace"): backend.pop(key)
+        identity = hello() | dict(credential_state="ready", mqtt_state="ready")
+        flags = dict(allow_production=True, reuse_saved_credential=True, reuse_saved_mqtt=True)
+        body = json.loads(self.frame(backend=backend, hello=identity, **flags)[8:])
+        self.assertTrue(body["reuse_saved_credential"] and body["reuse_saved_mqtt"])
+        for key in ("device_token", "mqtt_uri", "mqtt_username", "mqtt_password", "mqtt_namespace"):
+            self.assertNotIn(key, body)
+        for state in ("missing", "unavailable", None):
+            for key in ("credential_state", "mqtt_state"):
+                bad = identity.copy()
+                if state is None: bad.pop(key)
+                else: bad[key] = state
+                with self.assertRaises(host.BootstrapError): self.frame(backend=backend, hello=bad, **flags)
+        for key in ("device_bearer", "mqtt_uri", "mqtt_username", "mqtt_password", "mqtt_namespace"):
+            with self.assertRaises(host.BootstrapError): self.frame(backend=backend | {key: ""}, hello=identity, **flags)
+        with self.assertRaises(host.BootstrapError): self.frame(backend=backend, hello=identity, reuse_saved_credential=True, reuse_saved_mqtt=True)
+        with self.assertRaises(host.BootstrapError): self.frame(backend=backend, hello=identity, allow_production=True)
+        token_only = self.production_backend.copy(); token_only.pop("device_bearer")
+        token_frame = json.loads(self.frame(backend=token_only, hello=identity | dict(mqtt_state="missing"), allow_production=True, reuse_saved_credential=True)[8:])
+        self.assertTrue(token_frame["reuse_saved_credential"]); self.assertNotIn("device_token", token_frame)
+        self.assertEqual(token_frame["mqtt_password"], self.production_backend["mqtt_password"])
+        mqtt_only = backend | {"device_bearer": SECRET}
+        mqtt_frame = json.loads(self.frame(backend=mqtt_only, hello=identity, allow_production=True, reuse_saved_mqtt=True)[8:])
+        self.assertTrue(mqtt_frame["reuse_saved_mqtt"]); self.assertEqual(mqtt_frame["device_token"], SECRET)
+        for state in ("invalid", False, 1):
+            with self.assertRaises(host.BootstrapError): host.validate_hello(identity | {"credential_state": state}, NODE, NONCE)
 
     def test_wrong_identity_boot_nonce_and_types(self):
         bad = [dict(node_id="cp_ffeeddccbbaa"), dict(boot_id="01234567-89ab-1cde-8123-456789abcdef"),
