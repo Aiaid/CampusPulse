@@ -1,7 +1,6 @@
 #include "trial_bootstrap.h"
 #include "cp_v3_transport.h"
 #include "cp_v3_startup.h"
-#include "mbedtls/x509_crt.h"
 #ifndef TRIAL_BOOTSTRAP_HOST_TEST
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -86,14 +85,6 @@ static bool public_key_decode(const char *text,uint8_t out[91]) {
     }
     return used==91&&bits==4&&(acc&15u)==0;
 }
-static int base64_digit(unsigned char c) {
-    if (c >= 'A' && c <= 'Z') return c-'A';
-    if (c >= 'a' && c <= 'z') return c-'a'+26;
-    if (c >= '0' && c <= '9') return c-'0'+52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
-    return -1;
-}
 /* Compare the exact decimal value, without floating-point rounding. Keep JSON
  * integer-valued forms such as 1.0e0 and 10e-1 compatible with earlier hosts. */
 static bool integer(const char **p, uint64_t min, uint64_t max, uint64_t *out) {
@@ -149,47 +140,6 @@ static bool integer(const char **p, uint64_t min, uint64_t max, uint64_t *out) {
     if (value < min || value > max) return false;
     *p = scan; *out = value; return true;
 }
-static bool pem_ca(const char *pem) {
-    size_t n = strlen(pem);
-    static const char begin[] = "-----BEGIN CERTIFICATE-----";
-    static const char end[] = "-----END CERTIFICATE-----";
-    if (!n || n > TRIAL_BOOTSTRAP_CA_MAX || strncmp(pem,begin,sizeof begin-1)) return false;
-    const char *p = pem + sizeof begin-1;
-    if (*p == '\r') ++p;
-    if (*p++ != '\n') return false;
-    bool body = false, final_line = false;
-    size_t encoded = 0, padding = 0;
-    while (strncmp(p,end,sizeof end-1)) {
-        if (final_line) return false;
-        size_t width = 0, pads = 0;
-        int last = 0;
-        while (*p && *p != '\r' && *p != '\n') {
-            unsigned char c = (unsigned char)*p++;
-            if (++width > 64) return false;
-            if (c == '=') { if (++pads > 2) return false; }
-            else { last = base64_digit(c); if (pads || last < 0) return false; }
-        }
-        if (!width || width % 4) return false;
-        if ((pads == 2 && (last & 15)) || (pads == 1 && (last & 3))) return false;
-        encoded += width; padding += pads;
-        body = true; final_line = width < 64 || pads;
-        if (*p == '\r') ++p;
-        if (*p++ != '\n') return false;
-    }
-    p += sizeof end-1;
-    if (*p == '\r') { ++p; if (*p != '\n') return false; }
-    if (*p == '\n') ++p;
-    if (!body || *p) return false;
-    /* mbedTLS PEM parsing alone is permissive about surrounding text and
-     * partial chains. The exact envelope above forbids both. */
-    mbedtls_x509_crt cert;
-    mbedtls_x509_crt_init(&cert);
-    bool ok = mbedtls_x509_crt_parse(&cert,(const unsigned char *)pem,n+1) == 0 &&
-              cert.MBEDTLS_PRIVATE(ca_istrue) != 0 && !cert.next &&
-              cert.raw.len == encoded/4u*3u-padding;
-    mbedtls_x509_crt_free(&cert);
-    return ok;
-}
 
 bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
                           uint64_t mono, trial_bootstrap_t *out) {
@@ -202,10 +152,12 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
     /* Physical USB records are printable ASCII. Escaped JSON newlines are
      * decoded only within strings; encoded record size is bounded separately. */
     for (size_t i = 0; i < length; ++i) if ((unsigned char)json[i] < 32 || (unsigned char)json[i] > 126) return false;
-    bool ok = false, seen[21] = {0};
+    bool ok = false, seen[26] = {0};
     static const char *keys[] = {"node_id","boot_id","origin","device_token","ssid","password","utc_ms","uncertainty_ms","max_windows","security","anchor_mono_ms","server_ca_pem",
         "uplink_transport","mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace",
-        "save_startup","startup_reconfigure","clock_key_id","clock_public_spki"};
+        "save_startup","startup_reconfigure","clock_key_id","clock_public_spki",
+        "eap_username","eap_identity","eap_password","eap_ca_pem","eap_domain"};
+    const unsigned key_count=sizeof keys/sizeof keys[0];
     char key[32] = {0}, given_boot[37] = {0}, security[16] = {0},transport[16]={0};
     char public_key[123]={0};
     uint64_t utc = 0, uncertainty = 0, windows = 0, anchor = 0;
@@ -214,8 +166,8 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
     for (;;) {
         space(&p);
         if (!string(&p,key,sizeof key)) goto done;
-        unsigned k; for (k = 0; k < 21 && strcmp(key,keys[k]); ++k) {}
-        if (k == 21 || seen[k]) goto done;
+        unsigned k; for (k = 0; k < key_count && strcmp(key,keys[k]); ++k) {}
+        if (k == key_count || seen[k]) goto done;
         seen[k] = true;
         space(&p); if (*p != ':') goto done; ++p; space(&p);
         char *target = NULL; size_t cap = 0;
@@ -241,8 +193,13 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
             case 18: if(!boolean(&p,&out->startup_reconfigure))goto done;break;
             case 19: target=out->clock_key_id;cap=sizeof out->clock_key_id;break;
             case 20: target=public_key;cap=sizeof public_key;break;
+            case 21: target=out->settings.eap_username;cap=sizeof out->settings.eap_username;break;
+            case 22: target=out->settings.eap_identity;cap=sizeof out->settings.eap_identity;break;
+            case 23: target=out->settings.eap_password;cap=sizeof out->settings.eap_password;break;
+            case 24: target=out->eap_ca_pem;cap=sizeof out->eap_ca_pem;break;
+            case 25: target=out->eap_domain;cap=sizeof out->eap_domain;break;
         }
-        if (target && (!string(&p,target,cap) || (k != 11 && !ascii_text(target,k == 5)))) goto done;
+        if (target && (!string(&p,target,cap) || (k != 11 && k != 24 && !ascii_text(target,k == 5)))) goto done;
         space(&p);
         if (*p == '}') { ++p; break; }
         if (*p != ',') goto done;
@@ -250,9 +207,14 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
     }
     space(&p); if (*p) goto done;
     for (unsigned k = 0; k < 11; ++k) if (!seen[k]) goto done;
-    if (strcmp(node,out->settings.node_id) || strcmp(boot,given_boot) || strcmp(security,"personal") ||
-        strlen(out->settings.password) < 8 || anchor > mono || mono-anchor > 30000 ||
-        (seen[11] && !pem_ca(out->server_ca_pem))) goto done;
+    if (strcmp(node,out->settings.node_id) || strcmp(boot,given_boot) ||
+        anchor > mono || mono-anchor > 30000 ||
+        (seen[11] && !cp_v3_ca_validate(out->server_ca_pem))) goto done;
+    if(!strcmp(security,"personal"))out->settings.wifi_security=CP_WIFI_PERSONAL;
+    else if(!strcmp(security,"open"))out->settings.wifi_security=CP_WIFI_OPEN;
+    else if(!strcmp(security,"enterprise_peap"))out->settings.wifi_security=CP_WIFI_ENTERPRISE_PEAP;
+    else goto done;
+    for(unsigned k=21;k<key_count;k++)if(seen[k]!=(out->settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP))goto done;
     /* Production is one canonical origin and always the SDK public bundle.
      * A CA field is forbidden even when empty. Host CLI permission is checked
      * before USB; the physical frame cannot weaken the device TLS boundary. */
@@ -270,9 +232,10 @@ bool trial_bootstrap_parse(const char *json, const char *node, const char *boot,
     uint64_t age = mono-anchor;
     utc += age; uncertainty += (age*500u+999999u)/1000000u;
     if (uncertainty > 2000) goto done;
-    out->settings.version = CP_SETTINGS_VERSION; out->settings.wifi_security = CP_WIFI_PERSONAL;
+    out->settings.version = CP_SETTINGS_VERSION;
     /* The independent transport validates the explicit origin separately. */
     snprintf(out->settings.api_origin,sizeof out->settings.api_origin,"%s",CP_API_ORIGIN);
+    if(!cp_v3_wifi_validate(&out->settings,out->eap_ca_pem,out->eap_domain))goto done;
     out->clock_seed = (cp_v3_time_t){.utc_ms=utc,.mono_ms=mono,.clock_epoch=1,.uncertainty_ms=(uint32_t)uncertainty};
     out->max_windows = (unsigned)windows;
     if(seen[17]||seen[18]||seen[19]||seen[20]){

@@ -210,10 +210,7 @@ esp_err_t cp_v3_transport_start(const cp_settings_t *settings, const cp_v3_trans
 #if !CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
     if (!config->server_ca_pem) return ESP_ERR_NOT_SUPPORTED;
 #endif
-    if (settings->wifi_security == CP_WIFI_ENTERPRISE_PEAP &&
-        (!config->eap_ca_pem || strnlen(config->eap_ca_pem, 16385) > 16384 ||
-         !strstr(config->eap_ca_pem, "-----BEGIN CERTIFICATE-----") || !config->eap_domain ||
-         !*config->eap_domain || strnlen(config->eap_domain, 254) >= 254)) return ESP_ERR_INVALID_ARG;
+    if (!cp_v3_wifi_validate(settings, config->eap_ca_pem, config->eap_domain)) return ESP_ERR_INVALID_ARG;
     TaskHandle_t expected = NULL, self = xTaskGetCurrentTaskHandle();
     if (!__atomic_compare_exchange_n(&s_owner, &expected, self, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return ESP_ERR_INVALID_STATE;
     __atomic_store_n(&s_cancelled, false, __ATOMIC_RELEASE);

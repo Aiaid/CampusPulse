@@ -1,9 +1,18 @@
 """USB host trust preflight; no serial device or network is opened."""
 import importlib.util
+import contextlib
+import datetime
+import io
+import json
+import tempfile
 from pathlib import Path
 import re
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 
 ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location('waveshare_run_small', ROOT / 'firmware/waveshare-v3/run_small.py')
@@ -35,6 +44,57 @@ class HostOrigin(unittest.TestCase):
         value=dict(endpoint=origin,tls='public_ca_bundle',uplink_transport='mqtt_tls' if origin==runner.PRODUCTION_ORIGIN else 'https')
         if value['uplink_transport']=='mqtt_tls':value.update(mqtt_uri=runner.MQTT_URI,mqtt_username='synthetic-user',mqtt_password='synthetic-password',mqtt_namespace='synthetic')
         value.update(extra);return value
+
+    def enterprise(self):
+        key = ec.generate_private_key(ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'Synthetic EAP CA')])
+        now = datetime.datetime.now(datetime.UTC)
+        ca = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+              .serial_number(1).not_valid_before(now - datetime.timedelta(days=1))
+              .not_valid_after(now + datetime.timedelta(days=1))
+              .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+              .sign(key, hashes.SHA256()).public_bytes(serialization.Encoding.PEM).decode('ascii'))
+        return dict(ssid='synthetic-eap', password='', security='enterprise_peap',
+                    eap_username='synthetic-user', eap_identity='synthetic-identity',
+                    eap_password='synthetic-eap-secret', eap_ca_pem=ca, eap_domain='radius.example')
+
+    def test_all_modes_reach_actual_host_frame_without_secret_output(self):
+        for wifi in (dict(ssid='synthetic-personal', password='synthetic-secret'),
+                     dict(ssid='synthetic-open', password='', security='open'), self.enterprise()):
+            backend = self.backend() | dict(node_id='cp_aabbccddeeff', device_bearer='synthetic-device-token')
+            identity = dict(node_id=backend['node_id'], boot_id='12345678-1234-4123-8123-123456789abc', mono_ms=1000)
+            port = MagicMock(); port.__enter__.return_value = port
+            port.readline.return_value = b'v3small: phase=SMALL TEST PASSED\n'
+            sent = []; port.write.side_effect = lambda frame: sent.append(bytes(frame))
+            output = io.StringIO()
+            with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(output), \
+                    patch.object(runner, 'read_private', side_effect=[backend, wifi]), \
+                    patch.object(runner, 'hello', return_value=(identity, 1800000000000, 1000, 1800000000100, 1100)), \
+                    patch.object(runner.serial, 'Serial', return_value=port), \
+                    patch('sys.argv', ['run_small.py', '--port', 'synthetic', '--private-dir', folder, '--allow-production']):
+                runner.main()
+            self.assertEqual(len(sent), 1)
+            body = json.loads(sent[0][8:])
+            for key, value in wifi.items():
+                self.assertEqual(body[key], value)
+            self.assertEqual(body['security'], wifi.get('security', 'personal'))
+            self.assertNotIn('server_ca_pem', body)
+            for key in ('ssid', 'password', 'eap_username', 'eap_identity', 'eap_password', 'eap_domain'):
+                if wifi.get(key):
+                    self.assertNotIn(wifi[key], output.getvalue())
+
+    def test_peap_save_and_invalid_auth_fail_before_serial_or_clock_fetch(self):
+        wifi = self.enterprise()
+        for value, save in ((wifi, True), (wifi | {'eap_ca_pem': 'invalid'}, False),
+                            (wifi | {'eap_domain': '*.example'}, False),
+                            (dict(ssid='synthetic-open', password='', security='open', eap_username=''), False)):
+            with patch.object(runner, 'read_private', side_effect=[self.backend(), value]), \
+                    patch.object(runner.os, 'chmod'), patch.object(runner.serial, 'Serial') as serial, \
+                    patch.object(runner, 'fetch_clock_key') as key, \
+                    patch('sys.argv', ['run_small.py', '--port', 'synthetic', '--private-dir', '/tmp', '--allow-production'] + (['--save-startup'] if save else [])):
+                with self.assertRaises(ValueError):
+                    runner.main()
+                serial.assert_not_called(); key.assert_not_called()
 
     def test_production_constant_matches_firmware(self):
         settings = (ROOT / 'firmware/components/cp_settings/include/cp_settings.h').read_text()

@@ -8,7 +8,7 @@
 #include <string.h>
 #include <unistd.h>
 
-static const char json[] = "{\"node_id\":\"te-test\",\"boot_id\":\"boot-test\",\"origin\":\"https://trial.invalid\",\"uplink_transport\":\"https\",\"device_token\":\"synthetic-token\",\"ssid\":\"test-net\",\"password\":\"test-pass\",\"utc_ms\":1800000000000,\"uncertainty_ms\":10,\"max_windows\":1,\"security\":\"personal\",\"anchor_mono_ms\":1000}";
+static const char json[] = "{\"node_id\":\"cp_001122334455\",\"boot_id\":\"boot-test\",\"origin\":\"https://trial.invalid\",\"uplink_transport\":\"https\",\"device_token\":\"synthetic-token-at-least-thirty-two-bytes\",\"ssid\":\"test-net\",\"password\":\"test-pass\",\"utc_ms\":1800000000000,\"uncertainty_ms\":10,\"max_windows\":1,\"security\":\"personal\",\"anchor_mono_ms\":1000}";
 static const char *input;
 static size_t offset, input_length;
 static unsigned errors, accepted, delays;
@@ -22,7 +22,7 @@ ssize_t bootstrap_test_read(int fd, void *data, size_t n) {
 }
 int bootstrap_test_puts(const char *text) {
     /* Production messages may contain neither credentials nor the CA. */
-    assert(!strstr(text,"test-pass") && !strstr(text,"synthetic-token") && !strstr(text,"CERTIFICATE"));
+    assert(!strstr(text,"test-pass") && !strstr(text,"synthetic-token-at-least-thirty-two-bytes") && !strstr(text,"CERTIFICATE"));
     if (!strcmp(text,"V3 ERR BOOTSTRAP")) ++errors;
     if (!strcmp(text,"V3 START ACCEPTED")) ++accepted;
     return 0;
@@ -39,7 +39,7 @@ static bool zero(const void *data, size_t size) {
 static void run(const char *bytes, bool ok, unsigned expected_errors) {
     input = bytes; offset = 0; input_length = strlen(bytes); errors = accepted = delays = 0;
     trial_bootstrap_t out; memset(&out,0xa5,sizeof out);
-    esp_err_t result = trial_bootstrap_wait("te-test","boot-test",&out,cancelled);
+    esp_err_t result = trial_bootstrap_wait("cp_001122334455","boot-test",&out,cancelled);
     assert(errors == expected_errors && !delays);
     if (ok) {
         assert(result == ESP_OK && accepted == 1);
@@ -75,10 +75,10 @@ int main(void) {
     snprintf(line,length,"V3START %s\n",json); run(line,true,0);
     free(line); free(boundary);
     trial_bootstrap_t out;input="";offset=input_length=0;delays=0;
-    assert(trial_bootstrap_wait_for("te-test","boot-test",&out,NULL,2)==ESP_ERR_TIMEOUT);assert(zero(&out,sizeof out));
+    assert(trial_bootstrap_wait_for("cp_001122334455","boot-test",&out,NULL,2)==ESP_ERR_TIMEOUT);assert(zero(&out,sizeof out));
     const char *setup[]={"HELLO 0123456789abcdef0123456789abcdef\n","SETUP\n"};
     for(unsigned i=0;i<2;i++){input=setup[i];offset=0;input_length=strlen(input);delays=0;
-        assert(trial_bootstrap_wait_for("te-test","boot-test",&out,after_grace,2)==ESP_ERR_INVALID_STATE&&delays>=10);assert(zero(&out,sizeof out));}
+        assert(trial_bootstrap_wait_for("cp_001122334455","boot-test",&out,after_grace,2)==ESP_ERR_INVALID_STATE&&delays>=10);assert(zero(&out,sizeof out));}
     fputs("trial bootstrap UART framing tests passed (memory IO only)\n",stdout);
     return 0;
 }

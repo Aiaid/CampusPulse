@@ -51,7 +51,6 @@ static bool s_accept;
 static _Atomic bool s_ble_synced,s_scanning,s_stop;
 static _Atomic bool s_safe_shutdown,s_display_asleep;
 static bool s_ble_initialized;
-static bool s_transport_started;
 static bool s_display_started;
 static raw_display_snapshot_t s_display;
 static uint32_t s_acked,s_uploaded_bytes,s_writes,s_failed_uploads,s_bad_acks;
@@ -258,9 +257,8 @@ static bool enqueue(cp_v3_queue_kind_t kind,const cp_v3_expected_t *expected,siz
     return true;
 }
 static bool run(void) {
-    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=15000,.server_clock_error_ms=100};
+    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.eap_ca_pem=s_bootstrap.eap_ca_pem[0]?s_bootstrap.eap_ca_pem:NULL,.eap_domain=s_bootstrap.eap_domain[0]?s_bootstrap.eap_domain:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=15000,.server_clock_error_ms=100};
     phase("V3 WIFI");if(cp_v3_transport_start(&s_bootstrap.settings,&config)!=ESP_OK)return false;
-    s_transport_started=true;
     portENTER_CRITICAL(&s_lock);s_display.wifi_enabled=s_display.wifi_connected=true;portEXIT_CRITICAL(&s_lock);
     cp_v3_time_t t;if(!now(&t))return false;
     size_t caplen=capabilities(s_body,4096,t.utc_ms);
@@ -352,9 +350,10 @@ static void trial_task(void *unused) {
     if(ok)ESP_LOGI(TAG,"queue_reopened feature_pending=%u status_pending=%u retired=%lu corrupt=%lu",cp_v3_queue_pending(s_queue,CP_V3_QUEUE_FEATURE),cp_v3_queue_pending(s_queue,CP_V3_QUEUE_STATUS),(unsigned long)s_queue->retired_slots,(unsigned long)s_queue->corrupt_slots);
     if(ok)ok=run();
     s_accept=false;if(s_ble_initialized&&ble_gap_disc_active())(void)ble_gap_disc_cancel();
-    esp_err_t stopped=cp_v3_transport_stop();trial_bootstrap_clear(&s_bootstrap);
+    esp_err_t stopped=cp_v3_transport_stop();
+    if(stopped==ESP_OK)trial_bootstrap_clear(&s_bootstrap);
     esp_err_t unmounted=raw_storage_unmount();
-    s_safe_shutdown=(!s_transport_started||stopped==ESP_OK)&&unmounted==ESP_OK;
+    s_safe_shutdown=stopped==ESP_OK&&unmounted==ESP_OK;
     ESP_LOGI(TAG,"cleanup network=%ld storage=%ld safe=%u",(long)stopped,(long)unmounted,(unsigned)s_safe_shutdown);
     phase(ok&&s_safe_shutdown?"V3 TEST PASSED":"V3 TEST FAILED");
     vTaskDelete(NULL);

@@ -18,6 +18,7 @@ UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/campuspulse-v3-uv}" uv run --no-project "$FIR
   -I "$FIRMWARE/components/cp_v3_temporal/include" "$TEST_DIR/test_small_runtime_logic.c" -o "$OUT/small-logic"
 "$OUT/small-logic"
 bash "$TEST_DIR/run_bootstrap_host_test.sh"
+UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/campuspulse-v3-uv}" uv run --no-project --with cryptography python -m unittest discover -s "$TEST_DIR" -p test_host_bootstrap.py
 bash "$TEST_DIR/run_control_runtime_real.sh"
 bash "$TEST_DIR/run_coordinator_host_test.sh"
 bash "$PROJECT/identity/tests/run.sh"

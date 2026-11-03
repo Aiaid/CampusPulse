@@ -45,11 +45,24 @@ static bool integer(cJSON *root, const char *key, double min, double max, uint64
 static bool parse(const char *json, const char *node, const char *boot, trial_bootstrap_t *out) {
     trial_bootstrap_clear(out);
     if(!json||!node||!boot||!out)return false;
-    if(strstr(json,"\\u0000")){trial_bootstrap_clear(out);return false;}
+    size_t wire_length=strlen(json);
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+    if(wire_length>8191u-8u)return false;
+#else
+    if(wire_length>4095u-8u)return false;
+#endif
+    for(size_t i=0;i<wire_length;i++)if((unsigned char)json[i]<32||(unsigned char)json[i]>126)return false;
+    /* cJSON strings do not expose decoded lengths. Reject active NUL escapes
+     * before parsing, while retaining a literal escaped backslash + u0000. */
+    for(size_t i=0;i<wire_length;i++)if(json[i]=='\\'){
+        if(++i>=wire_length)return false;
+        if(json[i]=='u'&&wire_length-i>4&&!memcmp(json+i+1,"0000",4))return false;
+    }
     const char *end = NULL;
     cJSON *root = cJSON_ParseWithOpts(json, &end, true);
-    bool ok = cJSON_IsObject(root), seen[21] = {0};
-    static const char *keys[] = {"node_id","boot_id","origin","device_token","ssid","password","utc_ms","uncertainty_ms","max_windows","security","anchor_mono_ms","uplink_transport"
+    bool ok = cJSON_IsObject(root), seen[26] = {0};
+    static const char *keys[] = {"node_id","boot_id","origin","device_token","ssid","password","utc_ms","uncertainty_ms","max_windows","security","anchor_mono_ms","uplink_transport",
+        "eap_username","eap_identity","eap_password","eap_ca_pem","eap_domain"
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
         ,"server_ca_pem","mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace",
         "save_startup","startup_reconfigure","clock_key_id","clock_public_spki"
@@ -70,8 +83,7 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
         text(root,"device_token",out->settings.device_token,sizeof out->settings.device_token,false) &&
         text(root,"ssid",out->settings.ssid,sizeof out->settings.ssid,false) &&
         text(root,"password",out->settings.password,sizeof out->settings.password,true) &&
-        text(root,"security",security,sizeof security,false) && !strcmp(security,"personal") &&
-        strlen(out->settings.password) >= 8 &&
+        text(root,"security",security,sizeof security,false) &&
         integer(root,"utc_ms",946684800000.,4102444799000.,&utc) &&
         integer(root,"uncertainty_ms",1,2000,&uncertainty) &&
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
@@ -80,16 +92,30 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
         integer(root,"max_windows",1,3,&windows) &&
 #endif
         integer(root,"anchor_mono_ms",0,9007199254740991.,&anchor);
+    if(ok){
+        if(!strcmp(security,"personal"))out->settings.wifi_security=CP_WIFI_PERSONAL;
+        else if(!strcmp(security,"open"))out->settings.wifi_security=CP_WIFI_OPEN;
+        else if(!strcmp(security,"enterprise_peap"))out->settings.wifi_security=CP_WIFI_ENTERPRISE_PEAP;
+        else ok=false;
+        for(unsigned k=12;k<17;k++)if(seen[k]!=(out->settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP))ok=false;
+    }
+    if(ok&&out->settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP){
+        cJSON *ca=cJSON_GetObjectItemCaseSensitive(root,"eap_ca_pem");
+        ok=text(root,"eap_username",out->settings.eap_username,sizeof out->settings.eap_username,false)&&
+            text(root,"eap_identity",out->settings.eap_identity,sizeof out->settings.eap_identity,false)&&
+            text(root,"eap_password",out->settings.eap_password,sizeof out->settings.eap_password,false)&&
+            text(root,"eap_domain",out->eap_domain,sizeof out->eap_domain,false)&&
+            cJSON_IsString(ca)&&ca->valuestring&&strlen(ca->valuestring)<sizeof out->eap_ca_pem;
+        if(ok)memcpy(out->eap_ca_pem,ca->valuestring,strlen(ca->valuestring)+1);
+    }
     uint64_t mono=(uint64_t)esp_timer_get_time()/1000u;
     if(ok)ok=anchor<=mono&&mono-anchor<=30000;
     if(ok){uint64_t age=mono-anchor;utc+=age;uncertainty+=(age*500u+999999u)/1000000u;ok=uncertainty<=2000;}
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
     cJSON *ca=cJSON_GetObjectItemCaseSensitive(root,"server_ca_pem");
-    if(ok&&ca&&!cJSON_IsNull(ca)){
-        ok=cJSON_IsString(ca)&&ca->valuestring&&strlen(ca->valuestring)<sizeof out->server_ca_pem&&
-            strstr(ca->valuestring,"-----BEGIN CERTIFICATE-----")&&strstr(ca->valuestring,"-----END CERTIFICATE-----");
-        if(ok){for(const char *p=ca->valuestring;*p;++p)if(((unsigned char)*p<32&&*p!='\n'&&*p!='\r')||(unsigned char)*p>126)ok=false;}
-        if(ok)snprintf(out->server_ca_pem,sizeof out->server_ca_pem,"%s",ca->valuestring);
+    if(ok&&ca){
+        ok=cJSON_IsString(ca)&&ca->valuestring&&cp_v3_ca_validate(ca->valuestring);
+        if(ok)memcpy(out->server_ca_pem,ca->valuestring,strlen(ca->valuestring)+1);
     }
 #endif
     if(ok){
@@ -115,13 +141,14 @@ static bool parse(const char *json, const char *node, const char *boot, trial_bo
     if (ok) ok = cp_v3_transport_origin_allowed(out->origin,
         cJSON_GetObjectItemCaseSensitive(root,"server_ca_pem") != NULL);
     if (ok) {
-        out->settings.version = CP_SETTINGS_VERSION; out->settings.wifi_security = CP_WIFI_PERSONAL;
+        out->settings.version = CP_SETTINGS_VERSION;
         /* Shared settings validates its legacy field. The independent V3
          * transport uses the explicit, strictly validated bootstrap origin. */
         snprintf(out->settings.api_origin,sizeof out->settings.api_origin,"%s",CP_API_ORIGIN);
         out->clock_seed = (cp_v3_time_t){.utc_ms=utc,.mono_ms=mono,.clock_epoch=1,.uncertainty_ms=(uint32_t)uncertainty};
         out->max_windows = (unsigned)windows;
     }
+    if(ok)ok=cp_v3_wifi_validate(&out->settings,out->eap_ca_pem,out->eap_domain);
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
     cJSON *save=cJSON_GetObjectItemCaseSensitive(root,"save_startup"),*recover=cJSON_GetObjectItemCaseSensitive(root,"startup_reconfigure");
     cJSON *key_id=cJSON_GetObjectItemCaseSensitive(root,"clock_key_id"),*key=cJSON_GetObjectItemCaseSensitive(root,"clock_public_spki");

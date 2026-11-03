@@ -13,11 +13,11 @@ void heap_caps_free(void *data) { free(data); }
 
 static cJSON *input(const char *origin) {
     cJSON *root = cJSON_CreateObject(); assert(root);
-    cJSON_AddStringToObject(root,"node_id","ws-synthetic");
+    cJSON_AddStringToObject(root,"node_id","cp_001122334455");
     cJSON_AddStringToObject(root,"boot_id","12345678-1234-4123-8123-123456789abc");
     cJSON_AddStringToObject(root,"origin",origin);
     cJSON_AddStringToObject(root,"uplink_transport","https");
-    cJSON_AddStringToObject(root,"device_token","synthetic-private-token");
+    cJSON_AddStringToObject(root,"device_token","synthetic-private-token-thirty-two-bytes");
     cJSON_AddStringToObject(root,"ssid","synthetic-network");
     cJSON_AddStringToObject(root,"password","synthetic-password");
     cJSON_AddStringToObject(root,"security","personal");
@@ -34,7 +34,7 @@ static bool send_named(cJSON *root,const char *expected_node) {
     if(!ok)for(size_t i=0;i<sizeof out;i++) assert(!((unsigned char *)&out)[i]);
     trial_bootstrap_clear(&out); free(json); return ok;
 }
-static bool send_input(cJSON *root){return send_named(root,"ws-synthetic");}
+static bool send_input(cJSON *root){return send_named(root,"cp_001122334455");}
 static bool check(const char *origin, const char *ca, bool ca_field) {
     cJSON *root=input(origin);
     if(ca_field) {
@@ -64,7 +64,71 @@ static cJSON *saved_input(void){
     return r;
 }
 #endif
-int main(void) {
+static char *read_pem(const char *path){
+    FILE *file=fopen(path,"rb");assert(file);char *out=calloc(4097,1);assert(out);
+    size_t size=fread(out,1,4097,file);assert(size>0&&size<4097);fclose(file);return out;
+}
+static cJSON *peap_input(cJSON *r,const char *ca){
+    cJSON_SetValuestring(cJSON_GetObjectItem(r,"security"),"enterprise_peap");
+    cJSON_SetValuestring(cJSON_GetObjectItem(r,"password"),"");
+    cJSON_AddStringToObject(r,"eap_username","synthetic-user");cJSON_AddStringToObject(r,"eap_identity","synthetic-identity");
+    cJSON_AddStringToObject(r,"eap_password","synthetic-eap-secret");cJSON_AddStringToObject(r,"eap_ca_pem",ca);
+    cJSON_AddStringToObject(r,"eap_domain","radius.example");return r;
+}
+static void reject_nul_suffix(cJSON *root,const char *key){
+    char *json=cJSON_PrintUnformatted(root);assert(json);cJSON_Delete(root);
+    char marker[64];snprintf(marker,sizeof marker,"\"%s\":\"",key);
+    char *start=strstr(json,marker);assert(start);start+=strlen(marker);
+    char *end=strchr(start,'"');assert(end);
+    size_t prefix=(size_t)(end-json);char *changed=malloc(strlen(json)+16);assert(changed);
+    memcpy(changed,json,prefix);strcpy(changed+prefix,"\\u0000junk");strcat(changed+prefix,end);
+    trial_bootstrap_t out;memset(&out,0xa5,sizeof out);
+    assert(!parse(changed,"cp_001122334455","12345678-1234-4123-8123-123456789abc",&out));
+    for(size_t j=0;j<sizeof out;j++)assert(!((unsigned char *)&out)[j]);
+    free(changed);free(json);
+}
+static void wifi_modes(const char *ca,const char *leaf){
+    cJSON *r=input("https://isolated.example");cJSON_SetValuestring(cJSON_GetObjectItem(r,"security"),"open");
+    cJSON_SetValuestring(cJSON_GetObjectItem(r,"password"),"");assert(send_input(r));
+    r=input("https://isolated.example");cJSON_SetValuestring(cJSON_GetObjectItem(r,"security"),"open");assert(!send_input(r));
+    const char *fields[]={"eap_username","eap_identity","eap_password","eap_ca_pem","eap_domain"};
+    for(unsigned i=0;i<5;i++){
+        reject_nul_suffix(peap_input(input("https://isolated.example"),ca),fields[i]);
+        r=input("https://isolated.example");cJSON_AddStringToObject(r,fields[i],"");assert(!send_input(r));
+        r=input("https://isolated.example");cJSON_SetValuestring(cJSON_GetObjectItem(r,"security"),"open");cJSON_SetValuestring(cJSON_GetObjectItem(r,"password"),"");cJSON_AddStringToObject(r,fields[i],"");assert(!send_input(r));
+        r=peap_input(input("https://isolated.example"),ca);cJSON_DeleteItemFromObject(r,fields[i]);assert(!send_input(r));
+        r=peap_input(input("https://isolated.example"),ca);cJSON_SetValuestring(cJSON_GetObjectItem(r,fields[i]),"");assert(!send_input(r));
+        r=peap_input(input("https://isolated.example"),ca);cJSON_AddStringToObject(r,fields[i],"duplicate");assert(!send_input(r));
+    }
+    reject_nul_suffix(input("https://isolated.example"),"password");
+    reject_nul_suffix(input("https://isolated.example"),"ssid");
+    r=peap_input(input("https://isolated.example"),ca);cJSON_SetValuestring(cJSON_GetObjectItem(r,"eap_username"),"literal\\u0000");assert(send_input(r));
+    r=peap_input(input("https://isolated.example"),ca);
+    char *json=cJSON_PrintUnformatted(r);assert(json);cJSON_Delete(r);trial_bootstrap_t out;
+    assert(parse(json,"cp_001122334455","12345678-1234-4123-8123-123456789abc",&out));free(json);
+    assert(out.settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP&&!out.settings.password[0]);
+    assert(!strcmp(out.settings.eap_username,"synthetic-user")&&!strcmp(out.settings.eap_identity,"synthetic-identity"));
+    assert(!strcmp(out.settings.eap_password,"synthetic-eap-secret")&&!strcmp(out.eap_ca_pem,ca)&&!strcmp(out.eap_domain,"radius.example"));
+    trial_bootstrap_clear(&out);
+    assert(!send_input(peap_input(input("https://isolated.example"),leaf)));
+    assert(!send_input(peap_input(input("https://isolated.example"),"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")));
+    const char *domains[]={"https://radius.example","192.0.2.1","127.1","1234","*.example","a..example","-a.example","a-.example","a.example.","a.example;b.example","a.example b.example"};
+    for(unsigned i=0;i<sizeof domains/sizeof *domains;i++){r=peap_input(input("https://isolated.example"),ca);cJSON_SetValuestring(cJSON_GetObjectItem(r,"eap_domain"),domains[i]);assert(!send_input(r));}
+    r=peap_input(input("https://isolated.example"),ca);cJSON_SetValuestring(cJSON_GetObjectItem(r,"eap_domain"),"radius");assert(send_input(r));
+    r=peap_input(input("https://isolated.example"),ca);cJSON_SetValuestring(cJSON_GetObjectItem(r,"password"),"synthetic-pass");assert(!send_input(r));
+    r=peap_input(input("https://isolated.example"),ca);cJSON_SetNumberValue(cJSON_GetObjectItem(r,"anchor_mono_ms"),1101);assert(!send_input(r));
+    r=peap_input(input("https://isolated.example"),ca);cJSON_SetNumberValue(cJSON_GetObjectItem(r,"uncertainty_ms"),2000);assert(!send_input(r));
+    const char *keys[]={"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","z123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"};
+    for(unsigned i=0;i<2;i++){r=input("https://isolated.example");cJSON_SetValuestring(cJSON_GetObjectItem(r,"password"),keys[i]);assert(send_input(r)==(i==0));}
+#ifdef CP_V3_BOOTSTRAP_CONTINUOUS
+    assert(send_input(peap_input(mqtt_input(),ca)));
+    r=peap_input(mqtt_input(),ca);cJSON_AddStringToObject(r,"server_ca_pem",ca);assert(!send_input(r));
+    assert(!send_named(peap_input(saved_input(),ca),"cp_aabbccddeeff"));
+    r=saved_input();cJSON_SetValuestring(cJSON_GetObjectItem(r,"security"),"open");cJSON_SetValuestring(cJSON_GetObjectItem(r,"password"),"");assert(send_named(r,"cp_aabbccddeeff"));
+#endif
+}
+int main(int argc,char **argv) {
+    assert(argc==3);char *ca=read_pem(argv[1]),*leaf=read_pem(argv[2]);wifi_modes(ca,leaf);
     assert(!check(CP_API_ORIGIN,NULL,false)); /* no production HTTPS */
     assert(check("https://192.168.1.2:8799",NULL,false));
     assert(check("https://isolated.example",NULL,false));
@@ -78,7 +142,9 @@ int main(void) {
     assert(!check(CP_API_ORIGIN,"",true));
     assert(!check(CP_API_ORIGIN,"-----BEGIN CERTIFICATE-----\nsynthetic\n-----END CERTIFICATE-----",true));
 #ifdef CP_V3_BOOTSTRAP_CONTINUOUS
-    assert(check("https://192.168.1.2:8799","-----BEGIN CERTIFICATE-----\nsynthetic\n-----END CERTIFICATE-----",true));
+    assert(!check("https://192.168.1.2:8799","-----BEGIN CERTIFICATE-----\nsynthetic\n-----END CERTIFICATE-----",true));
+    assert(check("https://192.168.1.2:8799",ca,true));
+    assert(!check("https://192.168.1.2:8799",leaf,true));
     assert(send_input(mqtt_input()));
     assert(send_named(saved_input(),"cp_aabbccddeeff"));
     cJSON *candidate=saved_input();cJSON_DeleteItemFromObject(candidate,"startup_reconfigure");cJSON_AddBoolToObject(candidate,"startup_reconfigure",true);assert(send_named(candidate,"cp_aabbccddeeff"));
@@ -99,6 +165,7 @@ int main(void) {
     for(unsigned i=0;i<6;i++){cJSON *root=mqtt_input();cJSON_SetValuestring(cJSON_GetObjectItem(root,bad_fields[i]),bad_values[i]);assert(!send_input(root));}
     cJSON *root=mqtt_input();cJSON_AddNullToObject(root,"server_ca_pem");assert(!send_input(root));
     root=input("https://isolated.example");cJSON_DeleteItemFromObject(root,"uplink_transport");assert(!send_input(root));
-    puts("Waveshare exact bootstrap origin and production bundle boundaries passed");
+    free(ca);free(leaf);
+    puts("Waveshare exact bootstrap Wi-Fi, origin and production bundle boundaries passed");
     return 0;
 }

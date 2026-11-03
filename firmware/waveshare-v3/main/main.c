@@ -698,7 +698,7 @@ static bool upload_one(cp_v3_queue_kind_t kind) {
 }
 static bool run(void) {
     if(s_stop)return false;
-    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.server_ca_pem=s_bootstrap.server_ca_pem[0]?s_bootstrap.server_ca_pem:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=edge_request_timeout_ms(s_bootstrap.origin),.server_clock_error_ms=100,.mode=s_bootstrap.transport,.active_boot=s_boot,.cancelled=cancelled};
+    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.server_ca_pem=s_bootstrap.server_ca_pem[0]?s_bootstrap.server_ca_pem:NULL,.eap_ca_pem=s_bootstrap.eap_ca_pem[0]?s_bootstrap.eap_ca_pem:NULL,.eap_domain=s_bootstrap.eap_domain[0]?s_bootstrap.eap_domain:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=edge_request_timeout_ms(s_bootstrap.origin),.server_clock_error_ms=100,.mode=s_bootstrap.transport,.active_boot=s_boot,.cancelled=cancelled};
     phase("WIFI CONNECT");if(cp_v3_transport_start(&s_bootstrap.settings,&config)!=ESP_OK)return false;s_transport_started=true;
     ui_network_snapshot();
     cp_v3_time_t t;if(!current(&t))return false;
@@ -872,7 +872,9 @@ static void main_task(void *unused) {
     if(s_capture_ready&&(cp_v3_capture_pause(s_capture,CP_V3_TEMPORAL_SCAN_GAP,5000)!=ESP_OK))okay=false;
     s_storage_stop=true;
     esp_err_t raw_stop=s_raw?local_raw_stop(s_raw,10000):ESP_OK;
-    esp_err_t network_stop=cp_v3_transport_stop();trial_bootstrap_clear(&s_bootstrap);
+    esp_err_t network_stop=cp_v3_transport_stop();
+    /* EAP retains the CA pointer until the owner confirms stop. */
+    if(network_stop==ESP_OK)trial_bootstrap_clear(&s_bootstrap);
     if(network_stop==ESP_OK){portENTER_CRITICAL(&s_lock);s_display.wifi_enabled=false;s_display.wifi_connected=false;s_display.wifi_rssi_known=false;s_display.wifi_ssid[0]=0;s_display.ip[0]=0;portEXIT_CRITICAL(&s_lock);}
     local_raw_status_t raw={.safe_to_unmount=true};if(s_raw_ready)local_raw_snapshot(s_raw,&raw);
     for(unsigned i=0;i<200&&s_storage_started&&!s_storage_done;i++)vTaskDelay(pdMS_TO_TICKS(50));

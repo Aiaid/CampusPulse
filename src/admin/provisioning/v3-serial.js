@@ -28,17 +28,36 @@ export function validateV3Hello(value,nonce,expectedNode,{allowRestartRequired=f
  if (value.restart_required!==undefined&&typeof value.restart_required!=='boolean') throw new Error('设备启动状态无效。');
  return value;
 }
-export function buildV3Start({identity,nonce,expectedNode,token,mqtt,ssid,password,windows=1,saveStartup=false,startupReconfigure=false,clockKey,sentWall,sentMono,receivedWall,receivedMono}) {
+const utf8Bytes=value=>new TextEncoder().encode(value).length;
+const printableAsciiPattern=/^[\x20-\x7e]+$/;
+/** Structural browser checks only. Firmware parses and verifies X.509 and the server chain. */
+export function validateV3Wifi({ssid,password,security='personal',eapUsername,eapIdentity,eapPassword,eapCaPem,eapDomain}) {
+ if(typeof ssid!=='string'||utf8Bytes(ssid)<1||utf8Bytes(ssid)>32||!printableAsciiPattern.test(ssid))throw new Error('当前 USB 的 SSID 仅支持 1–32 个可打印 ASCII 字符，不支持中文等非 ASCII 文本。');
+ if(!['open','personal','enterprise_peap'].includes(security))throw new Error('请选择支持的 Wi-Fi 认证方式。');
+ const eap=[eapUsername,eapIdentity,eapPassword,eapCaPem,eapDomain];
+ if(security!=='enterprise_peap'&&eap.some(value=>value!==undefined))throw new Error('开放或个人网络不能携带企业认证材料。');
+ if(security==='open'){if(password!=='')throw new Error('开放网络不使用密码。');return {ssid,password:'',security};}
+ if(security==='personal'){
+  if(typeof password!=='string'||utf8Bytes(password)<8||utf8Bytes(password)>64||!printableAsciiPattern.test(password)||utf8Bytes(password)===64&&!/^[0-9a-fA-F]{64}$/.test(password))throw new Error('当前 USB 的个人 Wi-Fi 密码仅支持 8–63 个可打印 ASCII 字符或 64 位十六进制密钥。');
+  return {ssid,password,security};
+ }
+ if(password!=='')throw new Error('PEAP 不使用个人 Wi-Fi 密码。');
+ if([eapUsername,eapIdentity,eapPassword].some(value=>typeof value!=='string'||utf8Bytes(value)<1||utf8Bytes(value)>128||!printableAsciiPattern.test(value)))throw new Error('当前 USB 的 PEAP 用户名、外层身份和密码均仅支持 1–128 个可打印 ASCII 字符。');
+ if(typeof eapDomain!=='string'||utf8Bytes(eapDomain)>253||/^[0-9.]+$/.test(eapDomain)||eapDomain.split('.').some(label=>!/^([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]{0,61}[A-Za-z0-9])$/.test(label)))throw new Error('PEAP 预期服务器域名须为单个 DNS 名称，不能使用 IP、URL、通配符或列表。');
+ if(typeof eapCaPem!=='string'||utf8Bytes(eapCaPem)>4096||!/^-----BEGIN CERTIFICATE-----\r?\n[A-Za-z0-9+/=\r\n]+\r?\n-----END CERTIFICATE-----(?:\r?\n)?$/.test(eapCaPem))throw new Error('PEAP 必须提供单个 PEM CA 证书，最多 4096 个 UTF-8 字节；固件将进一步解析并验证证书。');
+ return {ssid,password:'',security,eap_username:eapUsername,eap_identity:eapIdentity,eap_password:eapPassword,eap_ca_pem:eapCaPem,eap_domain:eapDomain};
+}
+export function buildV3Start({identity,nonce,expectedNode,token,mqtt,ssid,password,security='personal',eapUsername,eapIdentity,eapPassword,eapCaPem,eapDomain,windows=1,saveStartup=false,startupReconfigure=false,clockKey,sentWall,sentMono,receivedWall,receivedMono}) {
  validateV3Hello(identity,nonce,expectedNode);
  if (typeof token!=='string'||!/^[A-Za-z0-9_-]{32,192}$/.test(token)) throw new Error('请输入本设备有效的设备凭证。');
- const bytes=value=>new TextEncoder().encode(value).length;
- if (typeof ssid!=='string'||bytes(ssid)<1||bytes(ssid)>32||/[\x00-\x1f\x7f]/.test(ssid)||typeof password!=='string'||bytes(password)<8||bytes(password)>64||/[\x00-\x1f\x7f]/.test(password)||bytes(password)===64&&!/^[0-9a-fA-F]{64}$/.test(password)) throw new Error('V3 当前支持个人 Wi-Fi：SSID 最多 32 字节，密码 8–63 字节或 64 位十六进制密钥。');
+ const bytes=utf8Bytes,wifi=validateV3Wifi({ssid,password,security,eapUsername,eapIdentity,eapPassword,eapCaPem,eapDomain});
+ if(security==='enterprise_peap'&&saveStartup===true)throw new Error('PEAP 服务器证书的时间校验需要联网前可信时钟；目前仅支持 USB 临时运行 1–3 个窗口，不能保存或自动启动。');
  if (typeof saveStartup!=='boolean'||typeof startupReconfigure!=='boolean'||startupReconfigure&&!saveStartup||clockKey!==undefined&&!saveStartup) throw new Error('启动保存选项无效。');
  if (![1,2,3].includes(windows)&&!(saveStartup&&windows===0)) throw new Error('临时运行仅支持 1–3 个窗口；保存模式才可选择连续运行。');
  const rtt=receivedMono-sentMono;
  if (![sentWall,sentMono,receivedWall,receivedMono].every(Number.isFinite)||rtt<0||rtt>2000||Math.abs(receivedWall-sentWall-rtt)>20) throw new Error('USB 时钟交换超时或主机时间跳变，请重试。');
  const m=mqttSettings(mqtt);
- const payload={node_id:identity.node_id,boot_id:identity.boot_id,uplink_transport:'mqtt_tls',origin:V3_ORIGIN,device_token:token,ssid,password,security:'personal',
+ const payload={node_id:identity.node_id,boot_id:identity.boot_id,uplink_transport:'mqtt_tls',origin:V3_ORIGIN,device_token:token,...wifi,
   mqtt_uri:m.uri,mqtt_username:m.username,mqtt_password:m.password,mqtt_namespace:m.namespace,
   utc_ms:Math.floor((sentWall+receivedWall)/2),uncertainty_ms:Math.ceil(rtt/2)+251,anchor_mono_ms:identity.mono_ms,max_windows:windows};
  if(saveStartup){const key=validateV3ClockKey(clockKey);Object.assign(payload,{save_startup:true,startup_reconfigure:startupReconfigure,clock_key_id:key.key_id,clock_public_spki:key.public_key_spki});}
@@ -66,7 +85,7 @@ export async function openV3Serial(port) {
     const identity=validateV3Hello(value,nonce,expectedNode,{allowRestartRequired});return {identity,nonce,sentWall,sentMono,receivedWall:Date.now(),receivedMono:performance.now()};}
   }throw new Error('没有收到本次 nonce 对应的 V3 HELLO；未发送凭证。');
  };
- return {hello,async restart(expectedNode){if(typeof expectedNode!=='string'||!nodePattern.test(expectedNode))throw new Error('安全重启前必须核对设备身份。');const anchor=await hello(expectedNode,{allowRestartRequired:true});if(anchor.identity.restart_required!==true)throw new Error('设备未声明安全重启状态；未发送 RESTART。');await write('RESTART\n');return {restart_requested:true,node_id:anchor.identity.node_id};},async start(input){const anchor=await hello(input.expectedNode);if(input.bootId&&anchor.identity.boot_id!==input.bootId)throw new Error('设备已经重启，请重新连接并核对身份。');const frame=buildV3Start({...input,...anchor});lines.length=0;await write(frame);const deadline=performance.now()+5000;
+ return {hello,async restart(expectedNode){if(typeof expectedNode!=='string'||!nodePattern.test(expectedNode))throw new Error('安全重启前必须核对设备身份。');const anchor=await hello(expectedNode,{allowRestartRequired:true});if(anchor.identity.restart_required!==true)throw new Error('设备未声明安全重启状态；未发送 RESTART。');await write('RESTART\n');return {restart_requested:true,node_id:anchor.identity.node_id};},async start(input){validateV3Wifi(input);const anchor=await hello(input.expectedNode);if(input.bootId&&anchor.identity.boot_id!==input.bootId)throw new Error('设备已经重启，请重新连接并核对身份。');const frame=buildV3Start({...input,...anchor});lines.length=0;await write(frame);const deadline=performance.now()+5000;
   while(performance.now()<deadline){const text=await line(Math.max(1,deadline-performance.now()));if(text==='V3 START ACCEPTED'){startedSave=input.saveStartup===true;saved=false;return {accepted:true,node_id:anchor.identity.node_id,boot_id:anchor.identity.boot_id};}if(text==='V3 ERR BOOTSTRAP'||text?.startsWith('V3 START REJECTED'))throw new Error('固件拒绝 V3 启动材料。');}
   throw new Error('启动结果未知；不能据此认定已保存或已采集。请检查设备与云端状态。');},
   async waitStartupSaved(timeout=300000){if(!startedSave)throw new Error('本次未请求保存启动配置。');if(saved)return {saved:true};if(waitingSave)throw new Error('正在等待启动配置保存回执。');if(!Number.isFinite(timeout)||timeout<=0||timeout>600000)throw new Error('保存确认等待时限无效。');waitingSave=true;try{const deadline=performance.now()+timeout;while(performance.now()<deadline){const text=await line(Math.max(1,deadline-performance.now()));if(text==='V3 STARTUP SAVED'){saved=true;return {saved:true};}if(text==='V3 STARTUP SAVE FAILED'||text==='V3 ERR BOOTSTRAP')throw new Error('保存未确认，请检查诊断或重新配置；当前不能确认生效的启动配置。');}throw new Error('尚未收到 V3 STARTUP SAVED；保存状态未知。请完成首次策略 ACK 后继续等待。');}finally{waitingSave=false;}},

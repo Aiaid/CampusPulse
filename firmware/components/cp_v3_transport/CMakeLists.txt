@@ -1,4 +1,4 @@
-set(cp_v3_sources "transport.c" "protocol.c")
+set(cp_v3_sources "transport.c" "protocol.c" "wifi_validation.c")
 set(cp_v3_private_includes "")
 if(CONFIG_CP_V3_NATIVE_MQTT)
     list(APPEND cp_v3_sources "mqtt_native.c")

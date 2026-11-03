@@ -46,6 +46,16 @@ typedef struct {
     bool (*cancelled)(void);
 } cp_v3_transport_config_t;
 
+/* Explicit enterprise trust is independent of the fixed MQTT/public HTTPS CA.
+ * These pure checks parse one bounded CA; they do not authenticate a peer or
+ * replace SDK chain/expected-name/date verification during PEAP. */
+#define CP_V3_EAP_CA_MAX 4096u
+#define CP_V3_EAP_DOMAIN_MAX 253u
+bool cp_v3_ca_validate(const char *pem);
+bool cp_v3_eap_domain_validate(const char *domain);
+bool cp_v3_eap_validate(const char *ca, const char *domain);
+bool cp_v3_wifi_validate(const cp_settings_t *, const char *ca, const char *domain);
+
 /* Pure USB preflight: validates origin syntax and production's bundle-only rule.
  * It performs no DNS/TLS and grants no policy or collection authority. */
 bool cp_v3_transport_origin_allowed(const char *origin, bool custom_ca);

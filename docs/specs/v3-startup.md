@@ -57,9 +57,21 @@ The dedicated ordinary-NVS namespace `cpv3start` stores validated native
 production settings, explicit auto-start choice and pinned P256 SPKI/key ID.
 It never implicitly loads/migrates legacy settings or queues. UTC seeds,
 boot/batch identity, test-window limits and isolated CA/origins are not saved.
-Only personal/open profiles can auto-start; the initial USB UI supports personal
-Wi-Fi. PEAP needs trusted time before RADIUS authentication and is refused on
-this cold-start path rather than weakening its certificate checks.
+Open and personal profiles can be provisioned, saved and automatically started.
+Manual USB setup also supports enterprise PEAP, including the administrator
+page's temporary one-to-three-window run. PEAP requires fresh trusted physical-USB
+time installed before Wi-Fi authentication, an explicit authentication CA and an
+expected RADIUS server DNS hostname, with certificate validity checks enabled.
+Saving or automatically starting PEAP is separately refused: a cold boot does
+not yet have trusted time before network authentication. That restriction does
+not remove manual PEAP or relax certificate checks. See the
+[USB Wi-Fi authentication contract and evidence](../notes/v3-usb-wifi-auth-2026-11-03.md).
+
+All three modes currently share a printable-ASCII USB/CLI/firmware text contract,
+including SSID; this does not establish support for arbitrary UTF-8 SSIDs.
+EAP trust material is temporary and never replaces the fixed production MQTT
+broker's public CA bundle or the diagnostic HTTPS `server_ca_pem` field. The NVS
+profile format and legacy data are unchanged by the authentication repair.
 
 Variable-length records have version/CRC/node binding and real P256 point
 validation. An inactive blob commits/read backs before selector commit/readback.
@@ -68,7 +80,10 @@ complete validated new active; the current boot stops without claiming success.
 Explicit trusted-USB recovery repairs only this namespace's affected keys.
 Normal save/recovery preauthorize8192/16384 logical metadata bytes. Ordinary NVS
 is not encryption at rest, anti-rollback hardware or a physical wear guarantee.
-RAM secret copies are wiped; secret values never enter source or logs.
+Owned RAM secret copies are wiped after confirmed teardown; secret values never
+enter source or logs. If network stop is unconfirmed, borrowed EAP CA storage
+must remain alive until confirmed stop. This is not a claim that the SDK's entire
+heap is zeroed.
 
 ## Authenticated time
 

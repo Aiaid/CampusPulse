@@ -65,7 +65,9 @@ Production uses **native MQTT/TLS to the fixed Hangzhou EMQX broker, then the
 Cloudflare service**. The host must use `--allow-production`, logical endpoint
 `https://pulse.anend.net`, `uplink_transport="mqtt_tls"`, `tls="public_ca_bundle"`
 and flat `mqtt_uri`, `mqtt_username`, `mqtt_password`, `mqtt_namespace` fields.
-The URI must equal `CP_MQTT_PRODUCTION_URI`; no custom CA is accepted. Missing
+The URI must equal `CP_MQTT_PRODUCTION_URI`; no custom broker/HTTPS
+`server_ca_pem` is accepted. A separate manual PEAP authentication CA cannot
+replace the MQTT public CA bundle. Missing
 broker credentials fail closed. Production HTTPS and proxy fallback are rejected.
 Nonproduction HTTPS diagnostics remain available with explicit host permission.
 
@@ -76,6 +78,8 @@ PUBACK and empty SDK outbox only make the transport response complete; the
 existing strict application receipt is still mandatory before queue reclamation.
 Timeout/disconnect/unsettled outbox forces confirmed SDK stop. Unknown stop
 retains callback/client/body storage and attempts to stop this owner's radio.
+Borrowed EAP CA storage also remains alive until confirmed network stop; wiping
+owned credential buffers after teardown does not prove the SDK heap is zeroed.
 There is no auto-reconnect or hidden application retry; every application retry
 first charges its unchanged logical body against the persistent uplink budget.
 
@@ -93,11 +97,27 @@ USB accepts the optional flat fields `save_startup:true`,
 base64url `clock_public_spki` (P-256 SPKI DER, 91 bytes). All four remain absent
 in the original ephemeral flow. Startup options require the canonical production
 origin, complete native MQTT credentials and the existing public CA bundle;
-diagnostic endpoints and custom CAs cannot be persisted. `max_windows:0` is
+diagnostic endpoints and their custom HTTPS CAs cannot be persisted. `max_windows:0` is
 allowed only with explicit save. Values 1–3 can also save a profile while keeping
-this boot bounded; the saved profile never contains that test limit. Personal
-Wi-Fi is provisioned here; the shared store also permits valid open-Wi-Fi
-profiles, while autonomous PEAP is rejected before network authentication.
+this boot bounded; the saved profile never contains that test limit. Both open
+and personal Wi-Fi can be provisioned and saved. Manual USB PEAP supports the
+same one-to-three-window run but refuses saving/autostart: cold boot currently
+has no trusted clock before RADIUS authentication. This restriction does not
+remove manual PEAP or disable certificate checks.
+
+USB Wi-Fi selects `security:"open"`, `"personal"` or `"enterprise_peap"`.
+Open requires an empty `password`; personal requires an 8–63 printable-ASCII
+passphrase or exactly 64 hex digits. PEAP requires an empty personal `password`,
+`eap_username`, `eap_identity`, `eap_password`, one real CA in `eap_ca_pem` and
+one expected DNS hostname in `eap_domain`. SSID/credential text shares the
+printable-ASCII browser/CLI/firmware contract; arbitrary UTF-8 SSIDs are not
+supported by this path. Host and firmware parse the X.509 CA; browser PEM shape
+checks alone are not certificate authentication. Fresh trusted physical-USB time
+is installed before Wi-Fi starts; the transport selects PEAP only, supplies the
+CA/hostname and enables certificate time checks. EAP trust material is temporary
+and cannot change MQTT/HTTPS server trust or the existing NVS profile format.
+See [authentication contract and local verification](../../docs/notes/v3-usb-wifi-auth-2026-11-03.md).
+This repair has no new flash or real PEAP wireless-handshake acceptance.
 
 `V3 START ACCEPTED` confirms only receipt of the physical USB material. After the
 actual cloud applied-ACK receipt is committed and reclaimed, the runtime charges

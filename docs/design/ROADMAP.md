@@ -241,8 +241,10 @@ Historical context: the raw-first implementation direction was **superseded as
       Wi-Fi reconfiguration, reuse saved credentials only on the same node, and
       support direct versioned placement/capture edits with explicit desired vs
       applied state. Support explicit open Wi-Fi and PEAP/MSCHAPv2 enterprise
-      credentials without RADIUS server certificate checks, preserving strict
-      upload HTTPS validation and legacy settings. Verify failure correction
+      credentials with explicit CA, expected RADIUS server name and certificate
+      date validation, preserving strict upload TLS and legacy settings. The
+      former no-server-validation proposal is superseded by the V3 USB repair.
+      Verify failure correction
       and the real-device network path for each available authentication mode.
 
 - [ ] Verify administrator Passkey registration, login and reauthentication in
@@ -433,6 +435,20 @@ Historical context: the raw-first implementation direction was **superseded as
 - [ ] Audit documentation against the actual submitted implementation.
 
 ## Completed archive
+
+- [x] 2026-11-03: Restore V3 USB network authentication parity locally. Browser,
+      host tools and both S3 receivers expose open/personal/manual PEAP with a
+      shared printable-ASCII contract. PEAP requires a real single CA, expected
+      DNS hostname and fresh trusted USB time before Wi-Fi; certificate time
+      checks stay enabled. Keep manual PEAP while refusing save/autostart until
+      cold boot has a pre-network trusted clock. Open/personal saved startup,
+      signed-clock recovery, profile format and historical data are preserved.
+      This current security requirement supersedes the older Passport roadmap
+      proposal to skip RADIUS certificate checks. Local Chromium USB/startup,
+      parser/CLI, actual host mbedTLS negative cases and fresh S3 builds passed;
+      final integrated release checks and actual CI/CD publication remain
+      separate. No serial access, flash or real PEAP wireless acceptance.
+      See [scope, contract and verification](../notes/v3-usb-wifi-auth-2026-11-03.md).
 
 - [x] 2026-10-31: Complete V3-only source implementation and local verification.
       Remove V1/V2 device ingestion/control/provisioning and obsolete network

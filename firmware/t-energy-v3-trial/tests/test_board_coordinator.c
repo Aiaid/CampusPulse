@@ -28,7 +28,7 @@ static esp_err_t pause_result=ESP_OK,stop_result=ESP_OK;
 static unsigned pauses,cancels,stops,phase_calls,prepare_calls;
 static unsigned char collector_token;
 static const uint64_t issued=UINT64_C(1793318400000);
-static const char node[]="test-coord",boot[]="11111111-1111-4111-8111-111111111111";
+static const char node[]="cp_001122334455",boot[]="11111111-1111-4111-8111-111111111111";
 static char json[TRIAL_BOOTSTRAP_LINE_MAX+1],pem[TRIAL_BOOTSTRAP_CA_MAX+1];
 
 bool te_v3_runtime_ready(void) { return gate; }
@@ -80,7 +80,7 @@ static bool store(void *p,const void *b,size_t n) {(void)b;(void)n;return forbid
 
 static void make_json(bool ca) {
     int written=snprintf(json,sizeof json,"{\"node_id\":\"%s\",\"boot_id\":\"%s\",\"origin\":\"https://synthetic.invalid\",\"uplink_transport\":\"https\","
-        "\"device_token\":\"synthetic-secret\",\"ssid\":\"synthetic-wifi\",\"password\":\"synthetic-password\","
+        "\"device_token\":\"synthetic-secret-at-least-thirty-two-bytes\",\"ssid\":\"synthetic-wifi\",\"password\":\"synthetic-password\","
         "\"utc_ms\":%llu,\"uncertainty_ms\":10,\"max_windows\":2,\"security\":\"personal\",\"anchor_mono_ms\":60000",
         node,boot,(unsigned long long)(issued+60000));
     assert(written>0);size_t n=(size_t)written;
@@ -95,6 +95,36 @@ static void make_json(bool ca) {
         json[n++]='"';
     }
     json[n++]='}';json[n]=0;
+}
+static void make_peap_json(void) {
+    int written=snprintf(json,sizeof json,"{\"node_id\":\"%s\",\"boot_id\":\"%s\",\"origin\":\"https://synthetic.invalid\",\"uplink_transport\":\"https\","
+        "\"device_token\":\"synthetic-secret-at-least-thirty-two-bytes\",\"ssid\":\"synthetic-wifi\",\"password\":\"\","
+        "\"utc_ms\":%llu,\"uncertainty_ms\":10,\"max_windows\":2,\"security\":\"enterprise_peap\",\"anchor_mono_ms\":60000,"
+        "\"eap_username\":\"synthetic-user\",\"eap_identity\":\"synthetic-identity\",\"eap_password\":\"synthetic-eap-secret\","
+        "\"eap_domain\":\"radius.example\",\"eap_ca_pem\":\"",node,boot,(unsigned long long)(issued+60000));
+    assert(written>0);size_t n=(size_t)written;
+    for(size_t i=0;pem[i];i++) {
+        assert(n+3<sizeof json);
+        if(pem[i]=='\n'){json[n++]='\\';json[n++]='n';}
+        else if(pem[i]=='\r'){json[n++]='\\';json[n++]='r';}
+        else json[n++]=pem[i];
+    }
+    json[n++]='"';json[n++]='}';json[n]=0;
+}
+static void replace_json(const char *old,const char *value) {
+    char next[sizeof json];const char *at=strstr(json,old);assert(at);
+    size_t prefix=(size_t)(at-json);assert(prefix<sizeof next);memcpy(next,json,prefix);
+    int n=snprintf(next+prefix,sizeof next-prefix,"%s%s",value,at+strlen(old));
+    assert(n>0&&(size_t)n<sizeof next-prefix);memcpy(json,next,prefix+(size_t)n+1);
+}
+static void make_mqtt_json(void) {
+    make_peap_json();
+    replace_json("https://synthetic.invalid",CP_API_ORIGIN);
+    replace_json("\"uplink_transport\":\"https\"","\"uplink_transport\":\"mqtt_tls\"");
+    size_t n=strlen(json)-1;
+    int written=snprintf(json+n,sizeof json-n,",\"mqtt_uri\":\"%s\",\"mqtt_username\":\"synthetic-broker-user\","
+        "\"mqtt_password\":\"synthetic-broker-secret\",\"mqtt_namespace\":\"synthetic\"}",CP_MQTT_PRODUCTION_URI);
+    assert(written>0&&(size_t)written<sizeof json-n);
 }
 static void setup(void) {
     memset(&coordinator,0,sizeof coordinator);memset(&adapter,0,sizeof adapter);
@@ -166,6 +196,18 @@ int main(int argc,char **argv) {
     assert(!(coordinator.status.blockers&TE_COORD_RUNTIME_GATE));
     assert((coordinator.status.blockers&TE_COORD_RELEASE_BLOCKERS)==TE_COORD_RELEASE_BLOCKERS && !phase_calls);
 
+    setup();make_mqtt_json();assert(init());
+    assert(coordinator.transport.mode==CP_V3_TRANSPORT_MQTT_TLS);
+    assert(coordinator.transport.active_boot==coordinator.capability.boot_id);
+    assert(!strcmp(coordinator.transport.active_boot,boot)&&!coordinator.transport.server_ca_pem);
+    assert(coordinator.transport.eap_ca_pem==coordinator.bootstrap.eap_ca_pem);
+    assert(coordinator.transport.eap_domain==coordinator.bootstrap.eap_domain);
+    memset(json,0,sizeof json);
+    assert(te_v3_coordinator_step(&coordinator,60000)==TE_COORD_DENIED);
+    assert((coordinator.status.blockers&TE_COORD_RELEASE_BLOCKERS)==TE_COORD_RELEASE_BLOCKERS&&!phase_calls&&!prepare_calls);
+    setup();make_mqtt_json();replace_json(CP_MQTT_PRODUCTION_URI,"mqtts://wrong.example:8883");assert(!init());
+    assert(coordinator.status.blockers&TE_COORD_BAD_BOOTSTRAP);assert(!phase_calls&&!prepare_calls);
+
     setup();budget.latched=true;assert(init());assert(te_v3_coordinator_step(&coordinator,59999)==TE_COORD_DENIED);
     assert(coordinator.status.blockers&TE_COORD_BAD_BUDGET);assert(coordinator.status.blockers&TE_COORD_CLOCK_FAULT);
     setup();assert(init());coordinator.status.steps=limits.max_steps;
@@ -190,6 +232,19 @@ int main(int argc,char **argv) {
     stop_result=ESP_OK;assert(te_v3_coordinator_stop(&coordinator)==TE_COORD_DONE);
     assert(!coordinator.status.secrets_retained && stops==2);
     assert(te_v3_coordinator_step(&coordinator,60001)==TE_COORD_ERROR);
+
+    setup();make_peap_json();assert(init());
+    assert(coordinator.bootstrap.settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP);
+    assert(!coordinator.transport.server_ca_pem);
+    assert(coordinator.transport.eap_ca_pem==coordinator.bootstrap.eap_ca_pem);
+    assert(coordinator.transport.eap_domain==coordinator.bootstrap.eap_domain);
+    assert(!strcmp(coordinator.transport.eap_ca_pem,pem)&&!strcmp(coordinator.transport.eap_domain,"radius.example"));
+    memset(json,0,sizeof json);simulate_owned_attempt();stop_result=ESP_FAIL;
+    assert(te_v3_coordinator_stop(&coordinator)==TE_COORD_ERROR);
+    assert(coordinator.status.secrets_retained&&!strcmp(coordinator.transport.eap_ca_pem,pem));
+    assert(!strcmp(coordinator.transport.eap_domain,"radius.example"));
+    stop_result=ESP_OK;assert(te_v3_coordinator_stop(&coordinator)==TE_COORD_DONE);
+    assert(!coordinator.status.secrets_retained&&cleared(&coordinator.bootstrap,sizeof coordinator.bootstrap));
 
     setup();assert(init());simulate_owned_attempt();paused=false;
     for(unsigned i=0;i<limits.cleanup_attempts;i++)assert(te_v3_coordinator_stop(&coordinator)==TE_COORD_ERROR);

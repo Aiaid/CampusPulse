@@ -89,14 +89,64 @@ export async function runAdminV3Browser(focus='all') {
    await expect(dialog).not.toBeVisible();const p=await db.prepare('SELECT observation_kinds_json FROM placements WHERE id=?').bind('synthetic-new-placement').first();assert.equal(p.observation_kinds_json,'["activity"]');
   }
   if(['all','usb'].includes(focus)&&!useWebkit){
-   await page.getByRole('button',{name:'连接 V3 USB',exact:true}).click();const d=page.getByRole('dialog',{name:'连接并部署 V3 设备',exact:true});
-   await d.getByRole('button',{name:'选择 USB 串口并核对 V3 身份',exact:true}).click();await d.getByText('已登记',{exact:true}).waitFor();
-   assert.equal(await page.evaluate(()=>window.syntheticV3Usb.some(s=>s.startsWith('V3START '))),false);
-   await d.getByLabel('设备凭证',{exact:true}).fill(token);await d.getByLabel('Wi-Fi SSID',{exact:true}).fill('Synthetic WiFi');await d.getByLabel('个人 Wi-Fi 密码',{exact:true}).fill('synthetic-wifi-password');
-   await d.getByRole('button',{name:'读取本设备已验证 MQTT 授权',exact:true}).click();await d.getByRole('button',{name:'重新核对 MQTT 授权',exact:true}).waitFor();
-   await d.getByRole('button',{name:'发送并启动有界 V3 采集',exact:true}).click();await d.getByText(/已收到 V3 START ACCEPTED/).waitFor();
-   const safe=await page.evaluate(()=>{const starts=window.syntheticV3Usb.filter(s=>s.startsWith('V3START '));const b=JSON.parse(starts[0].slice(8));return{count:starts.length,protocol:b.uplink_transport,windows:b.max_windows,legacy:Object.hasOwn(b,'capture_config_id'),persisted:JSON.stringify({...localStorage,...sessionStorage}).includes('synthetic-browser-device-token')};});
-   assert.deepEqual(safe,{count:1,protocol:'mqtt_tls',windows:1,legacy:false,persisted:false});await d.getByRole('button',{name:'关闭对话框',exact:true}).click();
+   const caPem=readFileSync('firmware/certs/digicert-global-root-g2.crt','utf8');
+   let clockRequests=0;page.on('request',request=>{if(new URL(request.url()).pathname==='/api/v3/clock/key')clockRequests++;});
+   for(const security of ['personal','open','enterprise_peap']){
+    await page.getByRole('button',{name:'连接 V3 USB',exact:true}).click();const d=page.getByRole('dialog',{name:'连接并部署 V3 设备',exact:true});
+    await d.getByRole('button',{name:'选择 USB 串口并核对 V3 身份',exact:true}).click();await d.getByText('已登记',{exact:true}).waitFor();
+    const before=await page.evaluate(()=>window.syntheticV3Usb.filter(s=>s.startsWith('V3START ')).length);
+    await d.getByLabel('设备凭证',{exact:true}).fill(token);await d.getByLabel('Wi-Fi SSID',{exact:true}).fill('Synthetic WiFi');
+    await d.getByLabel('个人 Wi-Fi 密码',{exact:true}).fill('synthetic-wifi-password');
+    if(security==='enterprise_peap'){
+     await d.getByLabel('保存并自动启动',{exact:true}).check();await d.getByLabel('本次统计窗口数',{exact:true}).selectOption('0');
+    }
+    await d.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption(security);
+    if(security==='personal')await d.getByLabel('个人 Wi-Fi 密码',{exact:true}).fill('synthetic-wifi-password');
+    if(security==='open')await expect(d.getByLabel('个人 Wi-Fi 密码',{exact:true})).toHaveCount(0);
+    if(security==='enterprise_peap'){
+     const save=d.getByLabel('保存并自动启动',{exact:true});await expect(save).not.toBeChecked();await expect(save).toBeDisabled();
+     await expect(d.getByLabel('本次统计窗口数',{exact:true})).toHaveValue('1');await expect(d.getByLabel('本次统计窗口数',{exact:true}).locator('option[value="0"]')).toHaveCount(0);
+     await d.getByText(/PEAP 服务器证书的时间校验需要联网前可信时钟/).waitFor();
+     const fillPeap=async()=>{await d.getByLabel('PEAP 外层身份',{exact:true}).fill('synthetic_outer_identity');await d.getByLabel('PEAP 用户名',{exact:true}).fill('synthetic_eap_username');await d.getByLabel('PEAP 密码',{exact:true}).fill('synthetic_eap_password');await d.getByLabel('PEAP CA 证书 PEM',{exact:true}).fill(caPem);await d.getByLabel('PEAP 预期服务器域名',{exact:true}).fill('radius.example.test');};
+     await fillPeap();await d.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption('personal');await expect(d.getByLabel('个人 Wi-Fi 密码',{exact:true})).toHaveValue('');
+     await d.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption('enterprise_peap');for(const label of ['PEAP 外层身份','PEAP 用户名','PEAP 密码','PEAP CA 证书 PEM','PEAP 预期服务器域名'])await expect(d.getByLabel(label,{exact:true})).toHaveValue('');
+     await fillPeap();await d.getByLabel('本次统计窗口数',{exact:true}).selectOption('3');
+    }
+    await d.getByRole('button',{name:'读取本设备已验证 MQTT 授权',exact:true}).click();await d.getByRole('button',{name:'重新核对 MQTT 授权',exact:true}).waitFor();
+    const startButton=d.getByRole('button',{name:'发送并启动有界 V3 采集',exact:true});await expect(startButton).toBeEnabled();await startButton.click();await d.getByText(/已收到 V3 START ACCEPTED/).waitFor();
+    const safe=await page.evaluate(({caPem})=>{const starts=window.syntheticV3Usb.filter(s=>s.startsWith('V3START ')),b=JSON.parse(starts.at(-1).slice(8));const stored=JSON.stringify({...localStorage,...sessionStorage})+location.href;return{count:starts.length,protocol:b.uplink_transport,windows:b.max_windows,security:b.security,emptyPassword:b.password==='',eapKeys:Object.keys(b).filter(key=>key.startsWith('eap_')).sort(),eapExact:b.security!=='enterprise_peap'||b.eap_ca_pem===caPem&&b.eap_domain==='radius.example.test'&&b.eap_identity==='synthetic_outer_identity'&&b.eap_username==='synthetic_eap_username'&&b.eap_password==='synthetic_eap_password',legacy:Object.hasOwn(b,'capture_config_id'),save:Object.hasOwn(b,'save_startup'),persisted:['synthetic-browser-device-token','synthetic-wifi-password','synthetic_eap_password','synthetic_outer_identity','synthetic_eap_username','BEGIN CERTIFICATE','radius.example.test'].some(value=>stored.includes(value))};},{caPem});
+    assert.deepEqual(safe,{count:before+1,protocol:'mqtt_tls',windows:security==='enterprise_peap'?3:1,security,emptyPassword:security!=='personal',eapKeys:security==='enterprise_peap'?['eap_ca_pem','eap_domain','eap_identity','eap_password','eap_username']:[],eapExact:true,legacy:false,save:false,persisted:false});
+    await d.getByRole('button',{name:'关闭对话框',exact:true}).click();
+   }
+   for(const security of ['personal','open','enterprise_peap']){
+    await page.getByRole('button',{name:'连接 V3 USB',exact:true}).click();const invalid=page.getByRole('dialog',{name:'连接并部署 V3 设备',exact:true});
+    await invalid.getByRole('button',{name:'选择 USB 串口并核对 V3 身份',exact:true}).click();await invalid.getByText('已登记',{exact:true}).waitFor();
+    await expect(invalid.getByText(/当前 USB 的 SSID、个人密码、PEAP 用户名、外层身份和密码仅支持可打印 ASCII/)).toBeVisible();
+    await invalid.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption(security);await invalid.getByLabel('设备凭证',{exact:true}).fill(token);await invalid.getByLabel('Wi-Fi SSID',{exact:true}).fill(security==='open'?'Synthetic中文':'Synthetic WiFi');
+    if(security==='personal')await invalid.getByLabel('个人 Wi-Fi 密码',{exact:true}).fill('synthetic_中文_password');
+    if(security==='enterprise_peap'){
+     await invalid.getByLabel('PEAP 外层身份',{exact:true}).fill('synthetic_outer_identity');await invalid.getByLabel('PEAP 用户名',{exact:true}).fill('synthetic_eap_username');await invalid.getByLabel('PEAP 密码',{exact:true}).fill('synthetic_中文_password');await invalid.getByLabel('PEAP CA 证书 PEM',{exact:true}).fill(caPem);await invalid.getByLabel('PEAP 预期服务器域名',{exact:true}).fill('radius.example.test');
+    }
+    await invalid.getByRole('button',{name:'读取本设备已验证 MQTT 授权',exact:true}).click();await invalid.getByRole('button',{name:'重新核对 MQTT 授权',exact:true}).waitFor();
+    const before=await page.evaluate(()=>window.syntheticV3Usb.length);await invalid.getByRole('button',{name:'发送并启动有界 V3 采集',exact:true}).click();await expect(invalid.getByRole('alert')).toContainText('可打印 ASCII');
+    assert.equal(await page.evaluate(()=>window.syntheticV3Usb.length),before,'Non-ASCII '+security+' must fail before all serial writes');
+    await expect(invalid.getByLabel('设备凭证',{exact:true})).toHaveValue('');await expect(invalid.getByRole('button',{name:'发送并启动有界 V3 采集',exact:true})).toBeDisabled();
+    await invalid.getByRole('button',{name:'关闭对话框',exact:true}).click();
+   }
+   // A failed local check and page departure both scrub all held credentials.
+   await page.getByRole('button',{name:'连接 V3 USB',exact:true}).click();const rejected=page.getByRole('dialog',{name:'连接并部署 V3 设备',exact:true});
+   await rejected.getByRole('button',{name:'选择 USB 串口并核对 V3 身份',exact:true}).click();await rejected.getByText('已登记',{exact:true}).waitFor();
+   await rejected.getByLabel('设备凭证',{exact:true}).fill(token);await rejected.getByLabel('Wi-Fi SSID',{exact:true}).fill('Synthetic WiFi');await rejected.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption('enterprise_peap');
+   const fillRejected=async domain=>{await rejected.getByLabel('PEAP 外层身份',{exact:true}).fill('synthetic_outer_identity');await rejected.getByLabel('PEAP 用户名',{exact:true}).fill('synthetic_eap_username');await rejected.getByLabel('PEAP 密码',{exact:true}).fill('synthetic_eap_password');await rejected.getByLabel('PEAP CA 证书 PEM',{exact:true}).fill(caPem);await rejected.getByLabel('PEAP 预期服务器域名',{exact:true}).fill(domain);};
+   await fillRejected('https://invalid.example.test');await rejected.getByRole('button',{name:'读取本设备已验证 MQTT 授权',exact:true}).click();await rejected.getByRole('button',{name:'发送并启动有界 V3 采集',exact:true}).click();
+   await rejected.getByText(/PEAP 预期服务器域名须为单个 DNS 名称/).waitFor();
+   for(const label of ['设备凭证','PEAP 外层身份','PEAP 用户名','PEAP 密码','PEAP CA 证书 PEM','PEAP 预期服务器域名'])await expect(rejected.getByLabel(label,{exact:true})).toHaveValue('');
+   await expect(rejected.getByRole('button',{name:'发送并启动有界 V3 采集',exact:true})).toBeDisabled();
+   assert.equal(await page.evaluate(()=>window.syntheticV3Usb.filter(s=>s.startsWith('V3START ')).length),3,'Invalid domain cannot send credentials');
+   await rejected.getByLabel('设备凭证',{exact:true}).fill(token);await fillRejected('radius.example.test');await page.evaluate(()=>window.dispatchEvent(new Event('pagehide')));
+   for(const label of ['设备凭证','PEAP 外层身份','PEAP 用户名','PEAP 密码','PEAP CA 证书 PEM','PEAP 预期服务器域名'])await expect(rejected.getByLabel(label,{exact:true})).toHaveValue('');
+   await rejected.getByRole('button',{name:'关闭对话框',exact:true}).click();
+   assert.equal(clockRequests,0,'Manual modes must never fetch startup clock keys');
   }
   if(['all','diagnostics'].includes(focus)){
    await page.getByRole('button',{name:'全部设备',exact:true}).click();await page.getByRole('button',{name:`查看设备 ${diagnostic.node}`,exact:true}).click();

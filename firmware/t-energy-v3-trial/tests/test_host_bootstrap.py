@@ -27,16 +27,20 @@ WALL = 1793318400000
 SECRET = "synthetic-credential-do-not-print-0001"
 
 
-def certificate(ca=True):
+def certificate(ca=True, key_cert_sign=None):
     key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Synthetic host CA")])
     now = datetime.datetime.now(datetime.UTC)
-    return (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+    builder = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
             .public_key(key.public_key()).serial_number(1)
             .not_valid_before(now - datetime.timedelta(days=1))
             .not_valid_after(now + datetime.timedelta(days=1))
-            .add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True)
-            .sign(key, hashes.SHA256()).public_bytes(serialization.Encoding.PEM).decode("ascii"))
+            .add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True))
+    if key_cert_sign is not None:
+        builder = builder.add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False,
+            key_encipherment=False, data_encipherment=False, key_agreement=False, key_cert_sign=key_cert_sign,
+            crl_sign=key_cert_sign, encipher_only=None, decipher_only=None), critical=True)
+    return builder.sign(key, hashes.SHA256()).public_bytes(serialization.Encoding.PEM).decode("ascii")
 
 
 def hello(nonce=NONCE):
@@ -183,6 +187,49 @@ class BootstrapTests(unittest.TestCase):
         self.assertNotIn("server_ca_file", value)
         self.assertEqual(set(value), {"node_id", "boot_id", "origin", "device_token", "ssid", "password", "security", "utc_ms", "uncertainty_ms", "anchor_mono_ms", "max_windows", "server_ca_pem", "uplink_transport"})
 
+    def enterprise(self):
+        return dict(ssid="synthetic-eap", password="", security="enterprise_peap",
+                    eap_username="synthetic-user", eap_identity="synthetic-identity",
+                    eap_password="synthetic-eap-secret", eap_ca_pem=self.ca,
+                    eap_domain="radius.example")
+
+    def test_all_wifi_modes_preserve_exact_authentication_fields(self):
+        for wifi in (self.wifi, dict(ssid="synthetic-open", password="", security="open"), self.enterprise()):
+            body = json.loads(self.frame(wifi=wifi)[8:])
+            for key, value in wifi.items():
+                self.assertEqual(body[key], value)
+            self.assertEqual(body["security"], wifi.get("security", "personal"))
+            production = json.loads(self.frame(wifi=wifi, backend=self.production_backend, allow_production=True)[8:])
+            self.assertNotIn("server_ca_pem", production)
+        for mode in ("open", "personal"):
+            wifi = dict(ssid="synthetic", password="" if mode == "open" else "synthetic-password", security=mode)
+            body = json.loads(self.frame(wifi=wifi, backend=self.production_backend,
+                            allow_production=True, save_startup=True, clock_key=startup_key(), windows=0)[8:])
+            self.assertTrue(body["save_startup"])
+
+    def test_eap_failures_and_save_rejected_before_usb(self):
+        good = self.enterprise()
+        invalid = []
+        for key in ("eap_username", "eap_identity", "eap_password", "eap_ca_pem", "eap_domain"):
+            absent = good.copy(); absent.pop(key); invalid += [absent, good | {key: ""}, good | {key: None}]
+            invalid += [self.wifi | {key: ""}, dict(ssid="synthetic-open", password="", security="open") | {key: ""}]
+        invalid += [good | {"password": "wrong-personal-password"}, good | {"eap_ca_pem": self.leaf},
+                    good | {"eap_ca_pem": self.ca * 2}, good | {"eap_ca_pem": "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"}]
+        for domain in ("https://radius.example", "192.0.2.1", "127.1", "1234", "*.example", "a..example", "-a.example", "a-.example", "a.example.", "a.example;b.example", "a.example b.example", "a"*254):
+            invalid.append(good | {"eap_domain": domain})
+        for key in ("eap_username", "eap_identity", "eap_password"):
+            invalid.append(good | {key: "x" * 129})
+            self.frame(wifi=good | {key: "x" * 128})
+        self.frame(wifi=good | {"eap_domain": "radius"})
+        factory = mock.Mock(side_effect=AssertionError("serial must remain closed"))
+        for wifi in invalid:
+            with self.assertRaises(host.BootstrapError):
+                host.run_bootstrap(self.production_backend, wifi, "fake", serial_factory=factory, allow_production=True)
+        with self.assertRaisesRegex(host.BootstrapError, "manual-only"):
+            host.run_bootstrap(self.production_backend, good, "fake", serial_factory=factory,
+                               allow_production=True, save_startup=True, clock_key=startup_key())
+        factory.assert_not_called()
+
     def test_wrong_identity_boot_nonce_and_types(self):
         bad = [dict(node_id="cp_ffeeddccbbaa"), dict(boot_id="01234567-89ab-1cde-8123-456789abcdef"),
                dict(boot_id=7), dict(request_id="a" * 32), dict(mono_ms=True),
@@ -289,6 +336,11 @@ class BootstrapTests(unittest.TestCase):
                     self.frame(backend=backend | dict(device_bearer="a" * length), allow_public_test=public)
             for length in (32, 192):
                 self.frame(backend=backend | dict(device_bearer="a" * length), allow_public_test=public)
+
+    def test_ca_key_usage_if_present_requires_certificate_signing(self):
+        self.frame(wifi=self.enterprise() | dict(eap_ca_pem=certificate(key_cert_sign=True)))
+        with self.assertRaises(host.BootstrapError):
+            self.frame(wifi=self.enterprise() | dict(eap_ca_pem=certificate(key_cert_sign=False)))
 
     def test_invalid_and_oversized_ca(self):
         invalid = ("", self.leaf, self.ca+self.ca, "prefix"+self.ca, self.ca+"suffix",

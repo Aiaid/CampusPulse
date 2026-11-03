@@ -30,6 +30,7 @@ done
   "$PROJECT/main/board_shared_capture.c" "$PROJECT/main/board_capabilities.c" \
   "$PROJECT/main/trial_bootstrap.c" "$TEST_DIR/test_board_coordinator.c" \
   "$FIRMWARE/components/cp_v3_stats/stats.c" "$FIRMWARE/components/cp_v3_temporal/temporal.c" \
+  "$FIRMWARE/components/cp_v3_transport/wifi_validation.c" \
   "$FIRMWARE/components/cp_v3_transport/protocol.c" "$IDF_PATH/components/http_parser/http_parser.c" \
   "$FIRMWARE/components/cp_settings/settings_validate.c" \
   "$FIRMWARE/components/cp_v3_startup/profile.c" \

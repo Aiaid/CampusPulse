@@ -15,7 +15,16 @@ class BootstrapOrigin(unittest.TestCase):
         json_dir = idf / 'components/json/cJSON'
         parser = idf / 'components/http_parser'
         component = ROOT / 'firmware/components/cp_v3_transport'
+        mbedtls = Path(os.environ.get('MBEDTLS_PREFIX', '/opt/homebrew/opt/mbedtls@3'))
         with tempfile.TemporaryDirectory() as folder:
+            for kind in ('ca', 'leaf'):
+                subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec',
+                                '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes',
+                                '-keyout', str(Path(folder) / (kind + '.key')),
+                                '-out', str(Path(folder) / (kind + '.pem')), '-days', '1',
+                                '-subj', '/CN=Bootstrap-Synthetic-Host-Test',
+                                '-addext', 'basicConstraints=critical,CA:' + ('TRUE' if kind == 'ca' else 'FALSE')],
+                               check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             upstream = Path(folder) / 'cjson.o'
             subprocess.run(['cc', '-std=c11', '-Wno-deprecated-declarations',
                             '-fsanitize=address,undefined', '-c', str(json_dir / 'cJSON.c'),
@@ -33,9 +42,10 @@ class BootstrapOrigin(unittest.TestCase):
                                 str(PROJECT / 'localtests/bootstrap_origin_test.c'),
                                 str(ROOT / 'firmware/components/cp_settings/settings_validate.c'),
                                 str(ROOT / 'firmware/components/cp_v3_startup/profile.c'),
-                                str(component / 'protocol.c'), str(parser / 'http_parser.c'),
+                                str(component / 'protocol.c'), str(component / 'wifi_validation.c'), str(parser / 'http_parser.c'),
+                                '-I' + str(mbedtls / 'include'), '-L' + str(mbedtls / 'lib'), '-lmbedx509', '-lmbedcrypto',
                                 str(upstream), '-lm', '-o', str(binary)], check=True)
-                subprocess.run([str(binary)], check=True)
+                subprocess.run([str(binary), str(Path(folder) / 'ca.pem'), str(Path(folder) / 'leaf.pem')], check=True)
 
 
 if __name__ == '__main__':

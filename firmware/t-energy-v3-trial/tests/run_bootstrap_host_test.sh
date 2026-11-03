@@ -10,7 +10,7 @@ OPENSSL_BIN="${OPENSSL:-openssl}"
 : "${IDF_PATH:?Set ESP-IDF 5.5.3 path for the real transport origin parser}"
 PROTOCOL="$FIRMWARE/components/cp_v3_transport"
 PROTO_INCLUDES=(-I "$PROTOCOL/include" -I "$PROTOCOL" -I "$IDF_PATH/components/http_parser")
-PROTO_SOURCES=("$PROTOCOL/protocol.c" "$IDF_PATH/components/http_parser/http_parser.c")
+PROTO_SOURCES=("$PROTOCOL/wifi_validation.c" "$PROTOCOL/protocol.c" "$IDF_PATH/components/http_parser/http_parser.c")
 PROTO_SOURCES+=("$FIRMWARE/components/cp_settings/settings_validate.c")
 PROTO_INCLUDES+=(-I "$FIRMWARE/components/cp_v3_startup/include")
 PROTO_SOURCES+=("$FIRMWARE/components/cp_v3_startup/profile.c")

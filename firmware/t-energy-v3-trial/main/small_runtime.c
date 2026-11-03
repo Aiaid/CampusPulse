@@ -56,7 +56,7 @@ static size_t frozen_bytes;
 static cp_v3_expected_t frozen;
 static uint64_t frozen_expiry;
 static uint32_t window_seq,status_seq,control_seq,contact_seq,windows_acked,status_acked,retries,failures,ack_failures;
-static bool transport_started,retry_verified,window_frozen;
+static bool retry_verified,window_frozen;
 static _Atomic bool request_stop,manual_stop,usb_reader_owned;
 static bool autonomous,startup_saved,startup_write_uncertain,persist_unconfirmed,budget_denied,identity_denied,refresh_due;
 static bool clock_cleanup_safe=true;
@@ -483,9 +483,9 @@ void app_main(void){
 }
 static bool run(void){
     cp_v3_transport_config_t cfg={.origin=bootstrap.origin,.server_ca_pem=bootstrap.server_ca_pem[0]?bootstrap.server_ca_pem:NULL,
-        .clock_seed=bootstrap.clock_seed,.wifi_timeout_ms=10000,.request_timeout_ms=te_small_request_timeout_ms(bootstrap.origin),.server_clock_error_ms=1000,
+        .eap_ca_pem=bootstrap.eap_ca_pem[0]?bootstrap.eap_ca_pem:NULL,.eap_domain=bootstrap.eap_domain[0]?bootstrap.eap_domain:NULL,.clock_seed=bootstrap.clock_seed,.wifi_timeout_ms=10000,.request_timeout_ms=te_small_request_timeout_ms(bootstrap.origin),.server_clock_error_ms=1000,
         .flush_dns_on_network_failure=false,.mode=bootstrap.transport,.active_boot=boot,.cancelled=cancelled};
-    transport_started=true;if(cp_v3_transport_start(&bootstrap.settings,&cfg)!=ESP_OK)return false;
+    if(cp_v3_transport_start(&bootstrap.settings,&cfg)!=ESP_OK)return false;
     if(!recover())return false;
     cp_v3_time_t t;if(!current(&t))return false;
     size_t n=capabilities(t);if(!n||cp_v3_control_init(control,workspace,node,boot,reply,n,t,cp_v3_transport_sha256,NULL)!=CP_V3_CONTROL_OK)return false;
@@ -597,7 +597,8 @@ void te_small_runtime(void *unused){
             (unsigned long long)s.callback_reports,(unsigned long long)s.callback_drops,(unsigned long long)s.invalid_reports,s.window_handoffs,s.failed,(long)paused);
         if(paused!=ESP_OK||s.running)okay=false;
     }
-    esp_err_t stopped=transport_started?cp_v3_transport_stop():ESP_OK;
+    /* A failed start may still retain the owner after uncertain cleanup. */
+    esp_err_t stopped=cp_v3_transport_stop();
     bool capture_safe=true;
     if(capture){cp_v3_capture_status_t s;cp_v3_capture_status(capture,&s);capture_safe=s.quiescent&&!s.running&&!s.window_handoffs&&!s.event_handoffs;}
     bool durable_safe=!queue||!queue->opened;

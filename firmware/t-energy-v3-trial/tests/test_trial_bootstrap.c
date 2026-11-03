@@ -4,13 +4,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char base[] = "{\"node_id\":\"te-test\",\"boot_id\":\"boot-test\",\"origin\":\"https://trial.invalid\",\"uplink_transport\":\"https\",\"device_token\":\"synthetic-token\",\"ssid\":\"test-net\",\"password\":\"test-pass\",\"utc_ms\":1800000000000,\"uncertainty_ms\":10,\"max_windows\":1,\"security\":\"personal\",\"anchor_mono_ms\":1000}";
+static const char base[] = "{\"node_id\":\"cp_001122334455\",\"boot_id\":\"boot-test\",\"origin\":\"https://trial.invalid\",\"uplink_transport\":\"https\",\"device_token\":\"synthetic-token-at-least-thirty-two-bytes\",\"ssid\":\"test-net\",\"password\":\"test-pass\",\"utc_ms\":1800000000000,\"uncertainty_ms\":10,\"max_windows\":1,\"security\":\"personal\",\"anchor_mono_ms\":1000}";
 static unsigned checks;
-static void startup_profiles(void){
+static char *peap(const char *input,const char *ca);
+static void startup_profiles(const char *ca){
     const char *production="{\"node_id\":\"cp_001122334455\",\"boot_id\":\"boot-test\",\"origin\":\"" CP_API_ORIGIN "\",\"uplink_transport\":\"mqtt_tls\",\"device_token\":\"synthetic_device_credential_32_bytes\",\"ssid\":\"test-net\",\"password\":\"test-pass\",\"utc_ms\":1800000000000,\"uncertainty_ms\":10,\"max_windows\":0,\"security\":\"personal\",\"anchor_mono_ms\":1000,\"mqtt_uri\":\"" CP_MQTT_PRODUCTION_URI "\",\"mqtt_username\":\"synthetic-user\",\"mqtt_password\":\"synthetic-password\",\"mqtt_namespace\":\"synthetic-node\",\"save_startup\":true,\"startup_reconfigure\":false,\"clock_key_id\":\"synthetic-key-1\",\"clock_public_spki\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP40Li_hp_m47n60p8D54WK84zV2sxXs7LtkBoN79R9Q\"}";
     trial_bootstrap_t out;
     assert(trial_bootstrap_parse(production,"cp_001122334455","boot-test",1100,&out));
     assert(out.save_startup&&!out.startup_reconfigure&&!out.max_windows&&out.clock_public_spki[0]==0x30);
+    char *enterprise=peap(production,ca);assert(!trial_bootstrap_parse(enterprise,"cp_001122334455","boot-test",1100,&out));
+    for(size_t i=0;i<sizeof out;i++)assert(!((unsigned char *)&out)[i]);
+    free(enterprise);
     char input[4096];
     static const struct{const char *old,*replacement;} bad[]={
         {"\"save_startup\":true","\"save_startup\":false"},
@@ -44,7 +48,7 @@ static bool zero(const void *data, size_t n) {
 }
 static bool parse(const char *json, trial_bootstrap_t *out) {
     memset(out,0xa5,sizeof *out);
-    bool ok = trial_bootstrap_parse(json,"te-test","boot-test",1100,out);
+    bool ok = trial_bootstrap_parse(json,"cp_001122334455","boot-test",1100,out);
     ++checks;
     if (!ok) assert(zero(out,sizeof *out));
     return ok;
@@ -80,6 +84,70 @@ static char *replace(const char *input, const char *old, const char *new) {
 static void reject_change(const char *json, const char *old, const char *new) {
     char *changed = replace(json,old,new); reject(changed); free(changed);
 }
+static char *field(const char *input,const char *key,const char *value){
+    size_t cap=strlen(input)+strlen(key)+strlen(value)*2+16;
+    char *out=calloc(cap,1);assert(out);size_t n=strlen(input)-1;
+    memcpy(out,input,n);n+=(size_t)snprintf(out+n,cap-n,",\"%s\":\"",key);
+    for(;*value;value++){
+        if(*value=='\n'||*value=='\r'||*value=='\\'||*value=='\"'){
+            out[n++]='\\';out[n++]=*value=='\n'?'n':*value=='\r'?'r':*value;
+        }else out[n++]=*value;
+    }
+    out[n++]='\"';out[n++]='}';out[n]=0;assert(n<cap);return out;
+}
+static char *peap(const char *input,const char *ca){
+    char *a=replace(input,"\"security\":\"personal\"","\"security\":\"enterprise_peap\"");
+    char *b=replace(a,"\"password\":\"test-pass\"","\"password\":\"\"");free(a);
+    const char *keys[]={"eap_username","eap_identity","eap_password","eap_ca_pem","eap_domain"};
+    const char *values[]={"synthetic-user","synthetic-identity","synthetic-eap-secret",ca,"radius.example"};
+    for(unsigned i=0;i<5;i++){a=field(b,keys[i],values[i]);free(b);b=a;}return b;
+}
+static void wifi_modes(const char *ca,const char *leaf){
+    trial_bootstrap_t out;
+    char *a=replace(base,"personal","open"),*open=replace(a,"test-pass","");free(a);
+    assert(parse(open,&out)&&out.settings.wifi_security==CP_WIFI_OPEN&&!out.settings.password[0]);
+    reject_change(open,"\"password\":\"\"","\"password\":\"test-pass\"");
+    const char *fields[]={"eap_username","eap_identity","eap_password","eap_ca_pem","eap_domain"};
+    for(unsigned i=0;i<5;i++){
+        a=field(base,fields[i],"");reject(a);free(a);a=field(open,fields[i],"");reject(a);free(a);
+    }
+    a=replace(base,"test-pass","0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");assert(parse(a,&out));free(a);
+    a=replace(base,"test-pass","z123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");reject(a);free(a);
+    char *valid=peap(base,ca);assert(parse(valid,&out));
+    assert(out.settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP&&!out.settings.password[0]);
+    assert(!strcmp(out.settings.eap_username,"synthetic-user")&&!strcmp(out.settings.eap_identity,"synthetic-identity"));
+    assert(!strcmp(out.settings.eap_password,"synthetic-eap-secret")&&!strcmp(out.eap_ca_pem,ca)&&!strcmp(out.eap_domain,"radius.example"));
+    reject_change(valid,"\"password\":\"\"","\"password\":\"test-pass\"");
+    for(unsigned i=0;i<5;i++){
+        a=field(valid,fields[i],"");reject(a);free(a);
+        char key[64];snprintf(key,sizeof key,"\"%s\":",fields[i]);
+        const char *at=strstr(valid,key);assert(at);const char *end=at+strlen(key)+1;
+        while(*end&&(*end!='\"'||end[-1]=='\\'))end++;
+        assert(*end);end++;if(*end==',')end++;else at--;
+        size_t n=(size_t)(end-at);a=malloc(strlen(valid)+1);assert(a);memcpy(a,valid,(size_t)(at-valid));strcpy(a+(at-valid),end);assert(n);reject(a);free(a);
+    }
+    const char *domains[]={"","https://radius.example","192.0.2.1","127.1","1234","*.example","a..example","-a.example","a-.example","a.example.","a.example;b.example","a.example b.example"};
+    for(unsigned i=0;i<sizeof domains/sizeof *domains;i++)reject_change(valid,"radius.example",domains[i]);
+    a=replace(valid,"radius.example","radius");assert(parse(a,&out));free(a);
+    a=peap(base,leaf);reject(a);free(a);a=peap(base,"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n");reject(a);free(a);
+    reject_change(valid,"synthetic-user","synthetic-user\\u0000suffix");
+    reject_change(valid,"synthetic-identity","synthetic-identity\\u0000suffix");
+    reject_change(valid,"synthetic-eap-secret","synthetic-eap-secret\\u0000suffix");
+    reject_change(valid,"radius.example","radius.example\\u0000suffix");
+    reject_change(valid,"-----END CERTIFICATE-----\\n","-----END CERTIFICATE-----\\n\\u0000suffix");
+    a=replace(valid,"synthetic-user","literal\\\\u0000");assert(parse(a,&out));free(a);
+    reject_change(valid,"synthetic-user","");reject_change(valid,"synthetic-identity","");reject_change(valid,"synthetic-eap-secret","");
+    reject_change(valid,"\"anchor_mono_ms\":1000","\"anchor_mono_ms\":1101");
+    a=field(valid,"save_startup","true");reject(a);free(a);
+    char *production=replace(valid,"https://trial.invalid",CP_API_ORIGIN);
+    char *mqtt=replace(production,"\"uplink_transport\":\"https\"","\"uplink_transport\":\"mqtt_tls\"");free(production);
+    const char *mk[]={"mqtt_uri","mqtt_username","mqtt_password","mqtt_namespace"};
+    const char *mv[]={CP_MQTT_PRODUCTION_URI,"synthetic-user","synthetic-pass","synthetic"};
+    for(unsigned i=0;i<4;i++){a=field(mqtt,mk[i],mv[i]);free(mqtt);mqtt=a;}
+    assert(parse(mqtt,&out)&&out.transport==CP_V3_TRANSPORT_MQTT_TLS);
+    a=field(mqtt,"server_ca_pem",ca);reject(a);free(a);free(mqtt);
+    free(valid);free(open);
+}
 static void malformed_json(void) {
     const char *bad[] = {"", " ", "null", "[]", "{}", "{", "{\"", "{\"n\\", "{\"n\\u", "{\"n\\u0", "{\"n\\u00", "{\"n\\u000", "{\"n\\u0000\":1}", "{\"node_id\":{}}", "{\"node_id\":[1]}", "{\"node_id\":true}", "{\"node_id\":null}", "{\"unknown\":\"test-pass\"}"};
     for (size_t i = 0; i < sizeof bad/sizeof *bad; ++i) reject(bad[i]);
@@ -97,7 +165,7 @@ static void malformed_json(void) {
     reject_change(base,"test-pass","test\\fpass");
     reject_change(base,"test-pass","short");
     reject_change(base,"personal","open");
-    reject_change(base,"te-test","wrong");
+    reject_change(base,"cp_001122334455","wrong");
     reject_change(base,"boot-test","wrong");
     reject_change(base,"\"ssid\":\"test-net\",","");
     reject_change(base,"\"ssid\":\"test-net\"","\"ssid\":\"test-net\",\"ssid\":\"other\"");
@@ -138,7 +206,6 @@ static void mutate(const char *json) {
     free(changed);
 }
 int main(int argc, char **argv) {
-    startup_profiles();
     assert(argc == 3);
     trial_bootstrap_t out;
     char *production=replace(base,"https://trial.invalid",CP_API_ORIGIN);
@@ -167,11 +234,11 @@ int main(int argc, char **argv) {
     assert(out.clock_seed.uncertainty_ms == 11 && out.clock_seed.mono_ms == 1100);
     assert(out.settings.wifi_security == CP_WIFI_PERSONAL && out.max_windows == 1);
     trial_bootstrap_clear(&out); assert(zero(&out,sizeof out)); trial_bootstrap_clear(NULL);
-    assert(!trial_bootstrap_parse(base,"te-test","boot-test",1100,NULL));
+    assert(!trial_bootstrap_parse(base,"cp_001122334455","boot-test",1100,NULL));
     assert(!parse(NULL,&out));
     memset(&out,0xa5,sizeof out); assert(!trial_bootstrap_parse(base,NULL,"boot-test",1100,&out)); assert(zero(&out,sizeof out));
-    memset(&out,0xa5,sizeof out); assert(!trial_bootstrap_parse(base,"te-test",NULL,1100,&out)); assert(zero(&out,sizeof out));
-    memset(&out,0xa5,sizeof out); assert(!trial_bootstrap_parse(base,"te-test","boot-test",31001,&out)); assert(zero(&out,sizeof out));
+    memset(&out,0xa5,sizeof out); assert(!trial_bootstrap_parse(base,"cp_001122334455",NULL,1100,&out)); assert(zero(&out,sizeof out));
+    memset(&out,0xa5,sizeof out); assert(!trial_bootstrap_parse(base,"cp_001122334455","boot-test",31001,&out)); assert(zero(&out,sizeof out));
     char *valid = replace(base,"test-pass","test\\\"\\/\\\\\\u002dpass");
     assert(parse(valid,&out)); assert(!strcmp(out.settings.password,"test\"/\\-pass")); free(valid);
     valid = replace(base,"\"max_windows\":1","\"max_windows\":1.0e+0"); assert(parse(valid,&out)); free(valid);
@@ -184,6 +251,7 @@ int main(int argc, char **argv) {
     valid = replace(base,"node_id","n\\u006fde_id"); assert(parse(valid,&out)); free(valid);
     malformed_json();
     char *ca = read_file(argv[1]), *leaf = read_file(argv[2]);
+    startup_profiles(ca);wifi_modes(ca,leaf);
     char *json = with_ca(ca); assert(parse(json,&out)); assert(!strcmp(out.server_ca_pem,ca));
     reject_change(json,"https://trial.invalid",CP_API_ORIGIN);
     valid = replace(json,"\\n","\\u000A"); assert(parse(valid,&out)); assert(!strcmp(out.server_ca_pem,ca)); free(valid);

@@ -4,7 +4,7 @@ This separate ESP-IDF5.5.3 application targets the verified Waveshare
 ESP32-S3-ePaper-1.54 V2 through the existing board/power/display adapters.
 Version0.4.0 supports explicitly saved autonomous startup. First USB setup uses
 fresh nonce-bound identity/time; optional saving occurs only after a real matched
-applied ACK. START ACCEPTED alone is not save confirmation. A saved personal
+applied ACK. START ACCEPTED alone is not save confirmation. A saved open/personal
 Wi-Fi profile recovers signed time, connects native MQTT/TLS and obtains an
 administrator-approved fresh policy before capture. Without a saved profile,
 the app waits for USB. See [persistent startup](../../docs/specs/v3-startup.md).
@@ -15,13 +15,33 @@ local proxy or direct production HTTPS fallback is used. The USB frame selects
 `uplink_transport:"mqtt_tls"` and supplies `mqtt_uri`, `mqtt_username`,
 `mqtt_password`, `mqtt_namespace`; the broker must equal the shared
 `CP_MQTT_PRODUCTION_URI`. Missing/partial credentials, namespace injection,
-custom CA fields and production HTTPS mode are rejected before networking.
+custom broker/HTTPS `server_ca_pem` and production HTTPS mode are rejected before
+networking. A separate PEAP authentication CA is allowed only for manual USB
+Wi-Fi authentication; it cannot replace the MQTT public CA bundle.
 The host defaults to MQTT and requires `--allow-production`, canonical
 `CP_API_ORIGIN` and `tls:"public_ca_bundle"` in its private backend bundle.
-RAM copies are wiped after the run. Explicitly saved production settings use
+Owned RAM copies are wiped after confirmed teardown; an unconfirmed stop retains
+borrowed EAP CA storage until the network owner confirms stop. This does not
+claim that all SDK heap copies are zeroed. Explicitly saved production settings use
 the dedicated ordinary-NVS `cpv3start` store; this is not encryption at rest.
 Legacy settings and queues remain untouched. Test limits/CA/origins are not saved,
 and secret values are never logged or committed.
+
+USB Wi-Fi explicitly selects `security:"open"`, `"personal"` or
+`"enterprise_peap"`. Open requires an empty `password`; personal requires an
+8–63 printable-ASCII passphrase or exactly 64 hex digits. PEAP requires an empty
+personal `password`, `eap_username`, `eap_identity`, `eap_password`, one real CA
+certificate in `eap_ca_pem`, and one expected DNS hostname in `eap_domain`.
+SSID and credential text currently use printable ASCII; arbitrary UTF-8 SSIDs
+are not admitted by this contract. Host and firmware validate the real X.509 CA;
+browser PEM shape checks alone are not certificate authentication. The transport
+selects PEAP only, pins its CA/hostname, enables certificate time checks and seeds
+fresh trusted physical-USB time before Wi-Fi starts. Manual USB PEAP remains
+available; save/autostart rejects it until a cold boot can obtain trusted time
+before network authentication. Open/personal saved startup and signed-clock
+recovery remain supported, with no profile-format or legacy-data migration.
+See [authentication contract and local verification](../../docs/notes/v3-usb-wifi-auth-2026-11-03.md);
+this repair has no new flash or real PEAP wireless-handshake acceptance.
 
 Nonproduction diagnostics may explicitly select `uplink_transport:"https"`
 without MQTT fields. RFC1918 LAN tests retain the reviewed optional test CA;

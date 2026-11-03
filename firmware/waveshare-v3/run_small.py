@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["cryptography>=43", "pyserial>=3.5"]
+# ///
 """Physical USB bootstrap; native MQTT/TLS production, explicit isolated HTTPS."""
 import argparse
 import base64
@@ -8,10 +12,14 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
 import time
 import uuid
 import urllib.request
 import serial
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+from v3_wifi import validate_wifi, validate_ca
 
 # Matches CP_API_ORIGIN in cp_settings.h; the host regression checks the binding.
 PRODUCTION_ORIGIN = 'https://pulse.anend.net'
@@ -160,6 +168,7 @@ def main():
     wifi = read_private(directory / 'wifi.json')
     validate_backend(backend, allow_public_test=args.allow_public_test,
                      allow_production=args.allow_production)
+    wifi_fields = validate_wifi(wifi, save_startup=args.save_startup)
     if args.startup_reconfigure and not args.save_startup:
         raise ValueError('startup recovery requires explicit save')
     clock_key = None
@@ -210,7 +219,7 @@ def main():
         bootstrap = dict(node_id=identity['node_id'], boot_id=identity['boot_id'],
                          uplink_transport=backend.get('uplink_transport', 'mqtt_tls'),
                          origin=backend['endpoint'], device_token=backend['device_bearer'],
-                         ssid=wifi['ssid'], password=wifi['password'], security='personal',
+                         **wifi_fields,
                          utc_ms=(sent_wall + received_wall) // 2,
                          uncertainty_ms=(rtt + 1) // 2 + 251,
                          anchor_mono_ms=identity['mono_ms'],
@@ -222,11 +231,9 @@ def main():
                              clock_key_id=clock_key['key_id'], clock_public_spki=clock_key['public_key_spki'])
         ca = backend.get('server_ca_pem')
         if ca is not None:
-            if not isinstance(ca, str) or len(ca.encode('ascii')) > 4096 or 'PRIVATE KEY' in ca or '-----BEGIN CERTIFICATE-----' not in ca or '-----END CERTIFICATE-----' not in ca:
-                raise ValueError('invalid explicit test CA')
-            bootstrap['server_ca_pem'] = ca
+            bootstrap['server_ca_pem'] = validate_ca(ca)
         frame = bytearray(('V3START ' + json.dumps(bootstrap, separators=(',', ':')) + '\n').encode('ascii'))
-        if len(frame) >= 8192:
+        if len(frame) > 8192:
             raise ValueError('bootstrap byte bound exceeded')
         port.write(frame)
         port.flush()

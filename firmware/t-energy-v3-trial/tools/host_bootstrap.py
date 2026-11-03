@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["cryptography>=43", "pyserial>=3.5"]
+# ///
 """Prepare a private USB bootstrap for the isolated T-Energy V3 trial.
 
 Default: validate inputs only. --send explicitly enables USB IO; this never
@@ -7,7 +11,7 @@ requires separate real-device acceptance; the legacy experimental gate stays clo
 An accepted bootstrap does not establish TLS, collection, upload or test success.
 
 Inputs: private-dir/backend-bootstrap-tenergy.json and an explicitly selected
-private Wi-Fi JSON file (ssid/password, optional security='personal'). Backend
+private Wi-Fi JSON file (open/personal/enterprise_peap; default personal). Backend
 metadata is permitted. The default requires a LAN IPv4 origin and a single CA.
 --allow-public-test explicitly permits a strict HTTPS DNS/public IPv4 origin
 only with tls='public_ca_bundle' and no server_ca_* fields. The resulting frame
@@ -36,6 +40,9 @@ import stat
 import sys
 import time
 import uuid
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+from v3_wifi import WifiValidationError, validate_ca as _validate_ca, validate_wifi
 
 MAX_LINE = 8191  # Prefix included; terminating LF excluded, as on the board.
 MAX_INPUT = 32768
@@ -126,34 +133,10 @@ def _integer(value, minimum, maximum):
 
 
 def validate_ca(pem):
-    """Match the board's single canonical PEM envelope and real X.509 CA check."""
-    if type(pem) is not str or not 1 <= len(pem) <= 4096 or not pem.isascii():
-        raise BootstrapError("invalid single CA certificate")
-    lines = pem.replace("\r\n", "\n").split("\n")
-    if lines[-1] == "":
-        lines.pop()
-    if len(lines) < 3 or lines[0] != "-----BEGIN CERTIFICATE-----" or lines[-1] != "-----END CERTIFICATE-----":
-        raise BootstrapError("invalid single CA certificate")
-    body = lines[1:-1]
-    if any(not re.fullmatch(r"[A-Za-z0-9+/]{1,64}={0,2}", s) or len(s) > 64 or len(s) % 4 for s in body):
-        raise BootstrapError("invalid single CA certificate")
-    if any(len(s) != 64 or "=" in s for s in body[:-1]):
-        raise BootstrapError("invalid single CA certificate")
     try:
-        encoded = "".join(body)
-        der = base64.b64decode(encoded, validate=True)
-        if base64.b64encode(der).decode("ascii") != encoded:
-            raise ValueError()
-        from cryptography import x509
-        from cryptography.hazmat.primitives.serialization import Encoding
-        cert = x509.load_der_x509_certificate(der)
-        if cert.public_bytes(Encoding.DER) != der or not cert.extensions.get_extension_for_class(x509.BasicConstraints).value.ca:
-            raise ValueError()
-    except ImportError:
-        raise BootstrapError("cryptography dependency unavailable") from None
-    except Exception:
-        raise BootstrapError("invalid single CA certificate") from None
-    return pem
+        return _validate_ca(pem)
+    except WifiValidationError as error:
+        raise BootstrapError(str(error)) from None
 
 
 def validate_public_origin(origin):
@@ -183,7 +166,7 @@ def validate_public_origin(origin):
     return origin
 
 
-def validate_inputs(backend, wifi, *, allow_public_test=False, allow_production=False):
+def validate_inputs(backend, wifi, *, allow_public_test=False, allow_production=False, save_startup=False):
     try:
         if type(allow_public_test) is not bool or type(allow_production) is not bool or (allow_public_test and allow_production):
             raise BootstrapError("endpoint permission must be explicit and unambiguous")
@@ -230,15 +213,12 @@ def validate_inputs(backend, wifi, *, allow_public_test=False, allow_production=
         token = _text(backend["device_bearer"], 32, 192)
         if not re.fullmatch(r"[A-Za-z0-9_-]+", token):
             raise BootstrapError("invalid device bearer")
-        ssid = _text(wifi["ssid"], 1, 32)
-        password = _text(wifi["password"], 8, 64)
-        if len(password) == 64 and not re.fullmatch(r"[0-9A-Fa-f]{64}", password):
-            raise BootstrapError("64-character Wi-Fi key must be hexadecimal")
-        if wifi.get("security", "personal") != "personal":
-            raise BootstrapError("only personal Wi-Fi is supported")
+        try:
+            wifi_fields = validate_wifi(wifi, save_startup=save_startup)
+        except WifiValidationError as error:
+            raise BootstrapError(str(error)) from None
         return dict(node_id=node, origin=origin, device_token=token,
-                    ssid=ssid, password=password, security="personal", uplink_transport=transport,
-                    **ca_fields, **mqtt_fields)
+                    uplink_transport=transport, **wifi_fields, **ca_fields, **mqtt_fields)
     except (KeyError, TypeError, ValueError):
         raise BootstrapError("invalid private bootstrap configuration") from None
 
@@ -307,7 +287,7 @@ def build_frame(backend, wifi, hello, request_id, sent_wall_ms, sent_mono_ms,
                 received_wall_ms, received_mono_ms, *, windows=1, allow_public_test=False, allow_production=False,
                 save_startup=False, startup_reconfigure=False, clock_key=None):
     """Pure schema/time/frame operation; no file, serial or network IO."""
-    payload = validate_inputs(backend, wifi, allow_public_test=allow_public_test, allow_production=allow_production)
+    payload = validate_inputs(backend, wifi, allow_public_test=allow_public_test, allow_production=allow_production, save_startup=save_startup)
     validate_hello(hello, payload["node_id"], request_id)
     payload.update(startup_fields(clock_key,save_startup=save_startup,startup_reconfigure=startup_reconfigure,allow_production=allow_production))
     for value in (sent_wall_ms, received_wall_ms):
@@ -384,7 +364,7 @@ def run_bootstrap(backend, wifi, port_name, *, serial_factory, clock=None,
                   allow_public_test=False, allow_production=False, save_startup=False,
                   startup_reconfigure=False, clock_key=None, startup_saved_timeout_ms=300000,safe_restart=False):
     """Serial only; closes even after open/write/read failures. Never logs RX."""
-    validate_inputs(backend, wifi, allow_public_test=allow_public_test, allow_production=allow_production)  # Fail closed before opening a device.
+    validate_inputs(backend, wifi, allow_public_test=allow_public_test, allow_production=allow_production, save_startup=save_startup)  # Fail closed before opening a device.
     startup_fields(clock_key,save_startup=save_startup,startup_reconfigure=startup_reconfigure,allow_production=allow_production)
     _integer(windows, 0 if save_startup else 1, 3)
     _integer(startup_saved_timeout_ms, 1, 600000)
@@ -516,7 +496,7 @@ def main(argv=None):
         backend = read_private_json(args.private_dir / "backend-bootstrap-tenergy.json")
         wifi = read_private_json(args.wifi_file)
         clock_key = read_private_json(args.clock_key_file) if args.clock_key_file else None
-        validate_inputs(backend, wifi, allow_public_test=args.allow_public_test, allow_production=args.allow_production)
+        validate_inputs(backend, wifi, allow_public_test=args.allow_public_test, allow_production=args.allow_production, save_startup=args.save_startup)
         startup_fields(clock_key,save_startup=args.save_startup,startup_reconfigure=args.startup_reconfigure,allow_production=args.allow_production)
         _integer(args.windows,0 if args.save_startup else 1,3)
         if not args.send:

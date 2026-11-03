@@ -62,6 +62,7 @@ jobs:
           uv run --no-project python firmware/components/cp_v3_queue/tests/test_queue.py
           uv run --no-project python firmware/components/cp_v3_small_results/tests/test_small_results.py
           uv run --no-project python firmware/components/cp_v3_transport/tests/test_protocol.py
+          uv run --no-project --with cryptography python firmware/components/cp_v3_transport/tests/test_wifi_validation.py
           uv run --no-project python firmware/components/cp_v3_transport/tests/test_mqtt_protocol.py
           uv run --no-project python firmware/components/cp_v3_startup/tests/test_startup.py
           uv run --no-project python firmware/components/cp_v3_clock/tests/run.py
@@ -70,7 +71,7 @@ jobs:
           bash firmware/components/cp_settings/tests/run-host.sh
           uv run --no-project python firmware/components/cp_v3_transport/tests/test_build_isolation.py
           bash firmware/t-energy-v3-trial/tests/run_host_tests.sh
-          uv run --no-project --with pyserial python -m unittest discover -s firmware/waveshare-v3/localtests -p 'test_*.py'
+          uv run --no-project --with pyserial --with cryptography python -m unittest discover -s firmware/waveshare-v3/localtests -p 'test_*.py'
       - name: Install browser
         run: npx playwright install --with-deps chromium webkit
       - name: Verify autonomous setup UI with synthetic serial and APIs

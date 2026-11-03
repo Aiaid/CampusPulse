@@ -96,7 +96,10 @@ bool te_v3_coordinator_init(te_v3_coordinator_t *c,te_runtime_window_adapter_t *
     c->transport=(cp_v3_transport_config_t){
         .origin=c->bootstrap.origin,
         .server_ca_pem=c->bootstrap.server_ca_pem[0]?c->bootstrap.server_ca_pem:NULL,
+        .eap_ca_pem=c->bootstrap.eap_ca_pem[0]?c->bootstrap.eap_ca_pem:NULL,
+        .eap_domain=c->bootstrap.eap_domain[0]?c->bootstrap.eap_domain:NULL,
         .clock_seed=c->bootstrap.clock_seed,.wifi_timeout_ms=10000,
+        .mode=c->bootstrap.transport,.active_boot=c->capability.boot_id,
         .request_timeout_ms=5000,.server_clock_error_ms=1000
     };
     a->settings=&c->bootstrap.settings; a->transport_config=&c->transport;
