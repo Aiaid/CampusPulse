@@ -376,7 +376,7 @@ class BootstrapTests(unittest.TestCase):
             host.encode_frame(dict(x="\\" * 4090))
 
     def test_secure_private_reader(self):
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
+        with tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as directory:
             root = Path(directory)
             file = root / "input.json"
             file.write_text(json.dumps(self.backend))
@@ -573,7 +573,7 @@ class BootstrapTests(unittest.TestCase):
         factory.assert_not_called()
 
     def test_cli_default_validates_without_usb_or_network(self):
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
+        with tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as directory:
             root = Path(directory)
             backend_file = root / "backend-bootstrap-tenergy.json"
             wifi_file = root / "wifi.json"
@@ -596,7 +596,7 @@ class BootstrapTests(unittest.TestCase):
             self.assertNotIn(SECRET, output.getvalue())
 
     def test_public_cli_opt_in_does_not_enable_serial_and_send_uses_fake_serial(self):
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
+        with tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as directory:
             root = Path(directory)
             backend_file = root / "backend-bootstrap-tenergy.json"
             wifi_file = root / "wifi.json"
