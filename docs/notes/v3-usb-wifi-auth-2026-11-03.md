@@ -1,10 +1,11 @@
 # V3 USB Wi-Fi authentication repair — 2026-11-03
 
-Status: local implementation and scoped software verification. Publication needs
-the actual release CI/CD result. No serial port was opened, no hardware was
-flashed, and no real PEAP wireless handshake or new hardware acceptance was
-performed for this repair. Earlier physical results retain their original
-firmware, network and time scope.
+Status: software repair published at `14114d7`; [release CI/CD
+41583972805](https://github.com/Aiaid/CampusPulse/actions/runs/41583972805)
+passed. The subsequent Waveshare app-only upgrade and direct USB HELLO passed;
+Chrome HELLO, actual credential reuse through START and real PEAP wireless
+acceptance are tracked in the [physical test record](v3-usb-physical-2026-11-03.md).
+Earlier physical results retain their original firmware, network and time scope.
 
 Current-policy correction: the user's subsequent clarification supersedes this
 note's earlier mandatory-CA PEAP requirement. No CA means an explicitly

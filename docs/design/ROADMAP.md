@@ -25,6 +25,35 @@ publication/deployment is checked against the actual main workflow run.
 
 ## P0 — Deliver the core MVP
 
+- [ ] Repair administrator V3 policy preparation after the real 2026-11-03
+      Waveshare failure: recognize its fixed TF queue geometry and generate
+      window/status/control reserves of 4/2/2 slots (8192/4096/4096 bytes),
+      reject incompatible manual reserves before publication, retain the
+      T-Energy three-slot profile, and retest a fresh boot/immutable generation.
+      Preserve generation 6 and its durable `unsupported_config` ACK. Capability
+      schema support for explicit reservation profiles remains a follow-up.
+      Software repair and scoped regression checks passed; publication and
+      actual corrected-policy application remain pending.
+
+- [ ] Physically retest the published USB changes (2026-11-03 user
+      authorization; subsequently narrowed to Waveshare only): coordinate the
+      existing board sessions, verify exact board/port/image identities,
+      back up current Flash/configuration/queues, and flash application only.
+      Confirm real HELLO readiness and local credential reuse, optional PEAP
+      verification and default outer identity, then reconcile real MQTT/cloud
+      receipts where network inputs are available. Keep each port single-owner;
+      preserve NVS/TF/legacy queues, no automatic credential rotation, and keep
+      build, flash and actual network/collection outcomes separate. Waveshare
+      app-only upgrade, full readback/preservation checks and direct HELLO passed;
+      the Codex browser also passed real Web Serial HELLO using the production
+      helper (one request, same-node nonce validated, port closed). Earlier
+      Chrome selection/handshake failures remain unexplained; no timeout or
+      signal change has been justified. START reuse and fresh PEAP/native-MQTT
+      capability registration passed; generation 6 failed fixed-queue admission.
+      Corrected-policy applied ACK and statistics receipts remain pending.
+      T-Energy is deferred while disconnected. See the
+      [current physical test record](../notes/v3-usb-physical-2026-11-03.md).
+
 
 - [ ] Finish autonomous V3 startup (2026-11-02 user request): save an explicitly
       validated first USB configuration in a dedicated V3 store; restart without
@@ -307,6 +336,14 @@ Historical context: the raw-first implementation direction was **superseded as
       duplicate uploads, stale data, and a controlled network interruption.
 
 ## P1 — Add interaction and display after collection/upload acceptance
+
+- [ ] Advertise explicit supported queue reservation profiles and bounded uplink
+      budgets in capabilities, then negotiate them without producer-specific
+      adapters. The 2026-11-03 Waveshare test exposed fixed 4/2/2 TF reservations;
+      static review also found that generic prepare's 8 MiB/day uplink budget
+      exceeds the T-Energy runtime's 128 KiB/day ceiling. T-Energy queue behavior
+      is preserved by the narrow Wave repair; its full generated-profile and
+      physical acceptance remain outstanding.
 
 - [ ] Diagnose real collection loss, post-reboot backlog handling and sustained
       upload capacity observed in the [device debug acceptance](../notes/device-debug-ui.md).

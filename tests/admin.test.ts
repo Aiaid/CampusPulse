@@ -4,15 +4,111 @@ import {seedMqtt} from './helpers/mqtt';
 import {DEVICE_TOKEN} from './helpers/ingestion';
 import {handleDeviceV3Control} from '../worker/device-v3-control';
 import {v3Registration,v3Ack} from './helpers/device-v3-fixtures';
-import {statisticsCapabilities} from './helpers/v3-statistics-policy-fixtures';
+import {statisticsCapabilities,statisticsPolicy} from './helpers/v3-statistics-policy-fixtures';
 import {DEVICE_SELECT} from '../worker/admin-device-query';
+import {freezeDeviceConfigV3,negotiateDeviceConfigV3,type DeviceCapabilitiesV3,type DeviceConfigV3} from '../worker/device-v3-config';
 let state:Awaited<ReturnType<typeof authState>>,client:Client;
 beforeEach(async()=>{state=await authState();await seedMqtt(state,4);client=new Client(state);await client.initialize();Object.assign(state.env,{DEVICE_V3_CONTROL_ENABLED:'true',DEVICE_V3_STATISTICS_ENABLED:'true',DEVICE_V3_PRODUCER_VERSIONS:'["synthetic-statistics/1"]'});});
 afterEach(()=>{vi.restoreAllMocks();state.db.close();});
 const requestDevice=(path:string,body:unknown)=>handleDeviceV3Control(new Request('https://admin.example.test/api/v3/device/'+path,{method:'POST',headers:{Authorization:`Bearer ${DEVICE_TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify(body)}),state.env);
 async function register(capacity=512){const caps=statisticsCapabilities(state.config.node_id);caps.uplink!.transports=['mqtt_tls'];caps.summary!.max_addresses=capacity;expect((await requestDevice('capabilities',v3Registration(caps)))?.status).toBe(200);return caps;}
 const prepare=()=>client.call('/device-v3/prepare','POST',{node_id:state.config.node_id,placement_id:state.config.placement_id});
+// Synthetic identities with the exact declarations emitted by the board firmware.
+async function registerBoard(board:'waveshare'|'tenergy',change?:(caps:DeviceCapabilitiesV3)=>void){
+ const caps=statisticsCapabilities(state.config.node_id),wave=board==='waveshare';
+ caps.producer_version='cp-v3-small/1';
+ caps.temporal!.slice_ms=[2000];caps.temporal!.report_modes=wave?['off','terminal_only']:['off'];
+ caps.uplink!.transports=['mqtt_tls'];caps.uplink!.max_body_bytes=wave?2048:1024;
+ caps.uplink!.streams=wave?['window_statistics','node_status','candidate_events']:['window_statistics','node_status'];
+ caps.queue={media:[{medium:wave?'tf_journal':'flash_journal',usable_bytes:wave?24576:3072,max_items:wave?12:3,power_loss_recovery:true}]};
+ caps.resources={max_working_bytes:4194304,max_storage_write_bytes_per_day:wave?67108864:1048576,tf_usable_bytes:wave?34627584:null};
+ if(!wave)caps.local_raw=null;
+ change?.(caps);Object.assign(state.env,{DEVICE_V3_PRODUCER_VERSIONS:'["cp-v3-small/1"]'});
+ expect((await requestDevice('capabilities',v3Registration(caps)))?.status).toBe(200);return caps;
+}
+const validatePolicy=(policy:DeviceConfigV3)=>client.call('/device-v3/validate','POST',{policy,expected_generation:0});
 describe('V3 administrator management',()=>{
+ it.each(['waveshare','tenergy'] as const)('prepares and negotiates the actual %s queue geometry without fabricating an applied ACK',async board=>{
+  const caps=await registerBoard(board),wave=board==='waveshare';
+  const result=await json(await prepare()),p=result.policy as DeviceConfigV3;
+  expect(result).toMatchObject({valid:true,issues:[],applied:false,requires_device_ack:true});
+  expect(p.local_queue).toMatchObject({medium:wave?'tf_journal':'flash_journal',max_bytes:wave?24576:3072,max_items:wave?12:3,
+   control_reserve_bytes:wave?4096:1024,control_reserve_items:wave?2:1,
+   stream_reserves:[{stream:'window_statistics',bytes:wave?8192:1024,items:wave?4:1},{stream:'node_status',bytes:wave?4096:1024,items:wave?2:1}]});
+  expect(p.uplink).toMatchObject({max_body_bytes:wave?2048:1024,streams:['window_statistics','node_status']});
+  expect(await negotiateDeviceConfigV3(await freezeDeviceConfigV3(p),caps,{node_id:caps.node_id,boot_id:caps.boot_id,now:new Date().toISOString(),
+   last_assignment_generation:0,closed_window_seq:0,closed_segment_seq:0,window_open:false,segment_open:false})).toMatchObject({state:'compatible',issues:[],applied:false});
+  expect(await json(await validatePolicy(p))).toMatchObject({valid:true,issues:[]});
+  expect(state.db.prepare('SELECT COUNT(*) n FROM device_assignments_v3').get()?.n).toBe(0);
+  expect(state.db.prepare('SELECT COUNT(*) n FROM device_acknowledgements_v3').get()?.n).toBe(0);
+ });
+ it('rejects the old Waveshare generation-6 reserves and each changed fixed reservation',async()=>{
+  await registerBoard('waveshare');const {policy}=await json(await prepare());
+  const old=structuredClone(policy) as DeviceConfigV3;
+  if(old.local_queue.mode==='disabled')throw new Error('queue missing');
+  old.local_queue.control_reserve_bytes=2048;old.local_queue.control_reserve_items=1;
+  old.local_queue.stream_reserves.forEach(r=>{r.bytes=2048;r.items=1;});
+  const rejected=await json(await validatePolicy(old));expect(rejected.valid).toBe(false);expect(rejected.issues).toHaveLength(6);
+  expect((await client.call('/device-v3/assignments','POST',{policy:old,expected_generation:0})).status).toBe(422);
+  const changes:[string,(p:DeviceConfigV3)=>void][]=[
+   ['local_queue.max_bytes',p=>{if(p.local_queue.mode!=='disabled')p.local_queue.max_bytes=20000;}],
+   ['local_queue.max_items',p=>{if(p.local_queue.mode!=='disabled')p.local_queue.max_items=10;}],
+   ['local_queue.control_reserve_bytes',p=>{if(p.local_queue.mode!=='disabled')p.local_queue.control_reserve_bytes=2048;}],
+   ['local_queue.control_reserve_items',p=>{if(p.local_queue.mode!=='disabled')p.local_queue.control_reserve_items=1;}],
+   ['local_queue.stream_reserves.window_statistics.bytes',p=>{if(p.local_queue.mode!=='disabled')p.local_queue.stream_reserves[0].bytes=4096;}],
+   ['local_queue.stream_reserves.window_statistics.items',p=>{if(p.local_queue.mode!=='disabled')p.local_queue.stream_reserves[0].items=2;}],
+   ['local_queue.stream_reserves.node_status.bytes',p=>{if(p.local_queue.mode!=='disabled')p.local_queue.stream_reserves[1].bytes=2048;}],
+   ['local_queue.stream_reserves.node_status.items',p=>{if(p.local_queue.mode!=='disabled')p.local_queue.stream_reserves[1].items=1;}],
+   ['uplink.max_body_bytes',p=>{if(p.uplink.enabled)p.uplink.max_body_bytes=1024;}],
+  ];
+  for(const [path,change] of changes){const p=structuredClone(policy);change(p);expect(await json(await validatePolicy(p))).toMatchObject({valid:false,issues:expect.arrayContaining([{code:'unsupported_capability',path}])});}
+  expect(state.db.prepare('SELECT COUNT(*) n FROM device_assignments_v3').get()?.n).toBe(0);
+ });
+ it('preserves exact replay of a retained unsupported Waveshare assignment and failed ACK',async()=>{
+  await registerBoard('waveshare');const {policy}=await json(await prepare()),p=policy as DeviceConfigV3;
+  if(p.local_queue.mode==='disabled')throw new Error('queue missing');
+  p.local_queue.control_reserve_bytes=2048;p.local_queue.control_reserve_items=1;
+  p.local_queue.stream_reserves.forEach(r=>{r.bytes=2048;r.items=1;});
+  // Seed an immutable assignment from before this compatibility repair.
+  const frozen=await freezeDeviceConfigV3(p),stamp=new Date().toISOString();
+  state.db.prepare('INSERT INTO device_assignments_v3(node_id,generation,policy_id,revision,boot_id,capability_sha256,policy_sha256,envelope_json,placement_id,not_before_ms,expires_at_ms,assigned_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+   .run(p.node_id,p.assignment_generation,p.policy_id,p.revision,p.control.activation.boot_id,p.control.capability_sha256,frozen.policy_sha256,JSON.stringify(frozen),p.custody.placement_id,Date.parse(p.control.activation.not_before),Date.parse(p.control.activation.expires_at),stamp);
+  state.db.prepare('UPDATE device_control_v3 SET desired_generation=? WHERE node_id=?').run(p.assignment_generation,p.node_id);
+  expect((await requestDevice('config/ack',{...await v3Ack(p),state:'failed',error_code:'unsupported_config'}))?.status).toBe(200);
+  const assignments=state.db.prepare('SELECT * FROM device_assignments_v3').all(),acks=state.db.prepare('SELECT * FROM device_acknowledgements_v3').all();
+  const receipt=await json(await client.call('/device-v3/assignments','POST',{policy:p,expected_generation:0}));
+  expect(receipt).toMatchObject({assignment_generation:1,policy_sha256:frozen.policy_sha256,state:'assigned',applied:false});
+  expect(state.db.prepare('SELECT * FROM device_assignments_v3').all()).toEqual(assignments);
+  expect(state.db.prepare('SELECT * FROM device_acknowledgements_v3').all()).toEqual(acks);
+ });
+ it('requires the exact Waveshare event reservation when candidate events are enabled',async()=>{
+  await registerBoard('waveshare');const {policy}=await json(await prepare()),p=policy as DeviceConfigV3;
+  if(!p.uplink.enabled||p.local_queue.mode==='disabled'||p.temporal?.mode!=='rolling')throw new Error('profile missing');
+  p.uplink.streams.push('candidate_events');p.temporal.report_mode='terminal_only';
+  p.local_queue.stream_reserves.push({stream:'candidate_events',bytes:8192,items:4});
+  expect(await json(await validatePolicy(p))).toMatchObject({valid:true,issues:[]});
+  const event=p.local_queue.stream_reserves[2];event.bytes=2048;event.items=1;
+  expect(await json(await validatePolicy(p))).toMatchObject({valid:false,issues:[
+   {code:'unsupported_capability',path:'local_queue.stream_reserves.candidate_events.bytes'},
+   {code:'unsupported_capability',path:'local_queue.stream_reserves.candidate_events.items'}]});
+ });
+ it.each(['bytes','items','body'] as const)('fails closed for unsupported small-producer TF %s declarations',async field=>{
+  await registerBoard('waveshare',c=>{
+   if(field==='bytes')c.queue!.media[0].usable_bytes=32768;if(field==='items')c.queue!.media[0].max_items=16;if(field==='body')c.uplink!.max_body_bytes=4096;});
+  expect((await prepare()).status).toBe(422);
+  expect(state.db.prepare('SELECT COUNT(*) n FROM device_assignments_v3').get()?.n).toBe(0);
+ });
+ it('keeps unrelated producer TF policies compatible with manual validation and assignment',async()=>{
+  const caps=statisticsCapabilities(state.config.node_id);caps.uplink!.transports=['mqtt_tls'];
+  caps.queue={media:[{medium:'tf_journal',usable_bytes:32768,max_items:16,power_loss_recovery:true}]};
+  expect((await requestDevice('capabilities',v3Registration(caps)))?.status).toBe(200);
+  expect(await json(await prepare())).toMatchObject({valid:true,issues:[]});
+  const p=await statisticsPolicy(caps,state.config.placement_id);
+  if(!p.uplink.enabled||p.local_queue.mode==='disabled')throw new Error('profile missing');
+  p.uplink.transport='mqtt_tls';p.local_queue.medium='tf_journal';
+  expect(await json(await validatePolicy(p))).toMatchObject({valid:true,issues:[]});
+  expect(await json(await client.call('/device-v3/assignments','POST',{policy:p,expected_generation:0}))).toMatchObject({state:'assigned',applied:false});
+ });
  it('retires old configuration and diagnostics routes while preserving historical records',async()=>{
   const old=state.db.prepare('SELECT * FROM capture_configs').all();
   for(const path of ['/configs','/configs/old/publish',`/devices/${state.config.node_id}/batches`])expect((await client.call(path,path.includes('publish')?'POST':'GET',path.includes('publish')?{}:undefined)).status).toBe(404);

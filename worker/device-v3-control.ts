@@ -10,6 +10,7 @@ import { assertV3IngestPolicy, supportsV3IngestPolicy, v3IngestEnabled, type V3I
 import { assertV3StatisticsPolicy, supportsV3StatisticsPolicy, v3StatisticsEnabled,
   type DeviceV3StatisticsEnv, type V3StatisticsPolicy } from './device-v3-statistics-policy';
 import { readAdminDeviceV3Evidence } from './device-v3-admin-evidence';
+import { fixedV3QueueProfileIssues } from './device-v3-queue-profile';
 
 export type DeviceV3ControlEnv = DeviceV3StatisticsEnv & { DEVICE_V3_STARTUP_ENABLED?: string };
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -300,6 +301,9 @@ async function assign(request: Request, env: DeviceV3ControlEnv, authorization: 
   const old = await current(env, node);
   if (!old || (old.desired_generation ?? 0) !== expected) conflict('v3_generation_conflict');
   const caps = await trustedCapabilities(env, node, old.capability_sha256);
+  // Only new manual assignments are checked; exact retained retries above keep
+  // their original receipt even if a firmware compatibility rule has changed.
+  if (fixedV3QueueProfileIssues(p, caps).length) bad('v3_policy_incompatible');
   if (p.uplink.enabled) {
     assertControlUplink(p, env, caps.producer_version);
     if (Math.min(Date.parse(p.control.activation.expires_at), Date.parse(caps.expires_at)) -
