@@ -4,6 +4,9 @@
 .admin-root .cp-admin-help-panel{position:fixed;inset:auto;margin:0;padding:0;border:1px solid #bdcfc3;border-radius:12px;background:#fff;color:#20352f;box-shadow:0 12px 40px #18352929;overflow:auto;overscroll-behavior:contain;z-index:1000;font:400 14px/1.8 Inter,-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;text-align:left;white-space:normal;overflow-wrap:anywhere;letter-spacing:normal;text-transform:none;scrollbar-width:thin}
 .admin-root .cp-admin-help-panel:not(.is-open){display:none}
 .admin-root .cp-admin-help-panel.is-open{display:block}
+.admin-root .cp-admin-help-panel{pointer-events:none}
+.admin-root .cp-admin-help-panel.is-pinned{pointer-events:auto}
+.admin-root .cp-admin-help-panel:not(.is-pinned) .cp-admin-help-close{visibility:hidden}
 .admin-root .cp-admin-help-panel::backdrop{background:transparent;pointer-events:none}
 .admin-root .cp-admin-help-head{display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;padding:13px 16px;border-bottom:1px solid #e2eae4;background:#f5f8f4;z-index:1}
 .admin-root .cp-admin-help-head>strong{font-size:15px;font-weight:650;line-height:1.6}

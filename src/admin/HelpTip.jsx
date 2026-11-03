@@ -13,6 +13,7 @@ export default function HelpTip({ topic, help, label }) {
   const restoringFocus = useRef(false);
   const transitioning = useRef(false);
   const [open, setOpen] = useState(false);
+  const [isPinned, setIsPinned] = useState(false);
   const [position, setPosition] = useState({ left: 12, top: 12, width: 360, maxHeight: 440 });
   const clearTimer = () => { clearTimeout(closeTimer.current); closeTimer.current = null; };
   const place = () => {
@@ -35,7 +36,7 @@ export default function HelpTip({ topic, help, label }) {
   const close = () => {
     if (transitioning.current) return;
     transitioning.current = true;
-    clearTimer(); pinned.current = false;
+    clearTimer(); pinned.current = false; setIsPinned(false);
     try {
       if (panel.current?.hidePopover && panel.current.matches(':popover-open')) panel.current.hidePopover();
       setOpen(false);
@@ -81,7 +82,7 @@ export default function HelpTip({ topic, help, label }) {
       place();
     };
     const nativeToggle = event => {
-      if (event.newState === 'closed') { pinned.current = false; setOpen(false); }
+      if (event.newState === 'closed') { pinned.current = false; setIsPinned(false); setOpen(false); }
     };
     document.addEventListener('pointerdown', outside);
     document.addEventListener('cp-admin-help-open', anotherHelp);
@@ -108,16 +109,17 @@ export default function HelpTip({ topic, help, label }) {
   return <span className="cp-admin-help" ref={root}
     onPointerEnter={event => { if (event.pointerType === 'mouse') { hovered.current = true; show(); } }}
     onPointerLeave={event => { if (event.pointerType === 'mouse') { hovered.current = false; scheduleClose(); } }}
-    onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) { pinned.current = false; scheduleClose(); } }}
+    onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) { pinned.current = false; setIsPinned(false); scheduleClose(); } }}
     onKeyDown={event => { if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); close(); restoreFocus(); } }}>
     <button type="button" ref={trigger} className="cp-admin-help-trigger"
       aria-label={`查看「${name}」的说明`} aria-haspopup="dialog" aria-expanded={open} aria-controls={id}
       onFocus={show}
       onClick={event => { event.preventDefault(); event.stopPropagation();
-        if (pinned.current) close(); else { show(); pinned.current = true; }
+        if (pinned.current) close(); else { show(); pinned.current = true; setIsPinned(true); }
       }}><Question size={17} aria-hidden="true" /></button>
     <span ref={panel} id={id} role="dialog" aria-modal="false" aria-labelledby={`${id}-title`}
-      popover="auto" className={`cp-admin-help-panel${open ? ' is-open' : ''}`}
+      popover="auto" className={`cp-admin-help-panel${open ? ' is-open' : ''}${isPinned ? ' is-pinned' : ''}`}
+      onFocus={() => { clearTimer(); pinned.current = true; setIsPinned(true); }}
       style={{ left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight }}>
       {open && <><span className="cp-admin-help-head"><strong id={`${id}-title`}>{entry.title}</strong>
         <button type="button" className="cp-admin-help-close" aria-label={`关闭「${name}」的说明`}
