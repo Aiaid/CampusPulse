@@ -6,11 +6,14 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "dev:api": "wrangler dev --ip 0.0.0.0 --port 8787",
+    "dev:simulator": "node scripts/v3-simulator.mjs",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "db:migrate": "wrangler d1 migrations apply campuspulse --local",
     "deploy": "npm run build && wrangler deploy",
     "test:browser": "node scripts/browser-smoke.mjs",
+    "test:simulator": "node scripts/v3-simulator-browser-smoke.mjs",
+    "test:replay": "node scripts/v3-replay-acceptance.mjs",
     "test:lighting": "node scripts/library-lighting-smoke.mjs"
   },
   "dependencies": {

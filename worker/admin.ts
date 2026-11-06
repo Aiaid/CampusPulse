@@ -6,6 +6,7 @@ import { json, readBytes, sha256 } from './http';
 import { adminOrigin, adminSecret, requireAdminSession, requireFreshSession, sessionAssertion, AuthRateLimitError } from './admin-auth';
 import { handleAdminIdentity } from './admin-account';
 import { handleAdminMqtt } from './admin-mqtt';
+import { handleAdminReplays } from './admin-replays';
 import { reportAdminFailure } from './admin-errors';
 import { DEVICE_SELECT, DEVICE_PLACEMENTS_SELECT } from './admin-device-query';
 import { assignMqtt, decryptMqtt, mqttReadyAssertion, readyMqtt } from './mqtt-credentials';
@@ -135,6 +136,8 @@ export async function handleAdmin(request: Request, env: Env): Promise<Response 
       atomic(env, writes, action, target, detail, [sessionAssertion(session), ...assertions]);
     const mqttAdmin = await handleAdminMqtt(request, env, route, session, transact);
     if (mqttAdmin) return mqttAdmin;
+    const replays = await handleAdminReplays(request, env, route, session, transact);
+    if (replays) return replays;
     if (route === '/overview' && request.method === 'GET') {
       const settings = await readRuntimeSettings(env);
       const since = new Date(Date.now() - settings.stale_after_seconds * 1000).toISOString();

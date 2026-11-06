@@ -1,5 +1,45 @@
 # Prior work and reuse
 
+## 2026-11-06 — Local V3 simulated device
+
+The online complete-source viewer adds a repository-original authenticated
+aggregate snapshot API, additive private D1 table, source-aware main-map cards
+and timeline, importer/client and verification tools. These call the existing
+strict JSON/V3 validation, administrator session/transaction and React/Phosphor
+APIs; they do not import another application or classifier. Existing public-field
+validators and production device producer allowlists remain unchanged. The
+main layout/CSS are reused within this repository; no new visual assets are
+copied. See [online release and evidence boundaries](online-cpraw-replay-2026-11-06.md).
+
+Historical-data replay adds a newly authored strict streaming CPRAW importer,
+host-only adapter, finite simulator source and browser/database acceptance runner.
+The adapter compiles the existing repository-original
+`firmware/components/cp_v3_stats/stats.c` unchanged, using its actual aggregation,
+capacity, malformed-report, RSSI and coverage behavior. CPRAW layout is taken
+from this repository's existing format/decoder; no alternate classifier or
+third-party fingerprinting implementation is copied. In particular, the prior
+private Chimera experiments are not imported. Raw captures and aggregate/result
+artifacts remain ignored and local; only the reusable tools and scope/count-based
+acceptance notes belong in source. See [data replay](v3-data-replay-acceptance-2026-11-06.md).
+
+The simulator launcher, device loop, control page and acceptance checks are new
+CampusPulse code. They reuse this repository's synthetic statistics-policy and
+registration fixtures, canonical policy validators, strict statistics receipt
+checker, actual application Worker and existing CPV3 relay/DO/service binding.
+The reply-publisher substitution reuses
+`relay/emqx-cloud/test/publisher-fixture.mjs` only in this local build; production
+entries and broker publishers are unchanged. Repository-original helpers retain
+their existing ownership and notices; no new license is asserted for material
+without a repository-level license grant.
+
+The launcher calls the existing locked esbuild (MIT), Vite (MIT), React Vite
+plugin (MIT) and Miniflare (MIT) packages; browser acceptance uses the existing
+Playwright dependency (Apache-2.0). These are API/dependency uses with their
+installed notices retained, not copied library implementations. No private or
+pre-hackathon sources, firmware, captures, credentials or visual assets are
+imported. All generated observation values and registry identities are synthetic.
+See [scope and operation](v3-device-simulator.md).
+
 ## 2026-10-29 — Selected T-Energy-S3 branch integration
 
 The512-address continuation adds repository-original per-build limits,
