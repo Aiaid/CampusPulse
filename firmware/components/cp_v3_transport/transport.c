@@ -2,6 +2,7 @@
 #include "mqtt_native.h"
 #include "mqtt_protocol.h"
 #include "network_failure.h"
+#include "wifi_startup.h"
 #include "sdkconfig.h"
 #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
 #include "esp_crt_bundle.h"
@@ -31,6 +32,7 @@
 static TaskHandle_t s_owner;
 static bool s_wifi_initialized, s_wifi_started, s_enterprise, s_eap_configured;
 static bool s_cancelled, s_link;
+static uint32_t s_wifi_events,s_wifi_disconnect_seq,s_wifi_disconnect_reason;
 static esp_netif_t *s_sta;
 static esp_event_handler_instance_t s_wifi_handler, s_ip_handler;
 static cp_v3_transport_config_t s_config;
@@ -61,12 +63,37 @@ esp_err_t cp_v3_transport_begin_memory(uint32_t timeout,cp_v3_transport_memory_t
 void cp_v3_transport_end_memory(void){if(owner()&&s_config.mode==CP_V3_TRANSPORT_MQTT_TLS)cp_v3_mqtt_end_memory();}
 
 static void wifi_event(void *arg, esp_event_base_t base, int32_t event, void *data) {
-    (void)arg; (void)data;
-    if (base == IP_EVENT && event == IP_EVENT_STA_GOT_IP)
+    (void)arg;
+    uint32_t flags=0;
+    if (base == IP_EVENT && event == IP_EVENT_STA_GOT_IP){
         __atomic_store_n(&s_link, true, __ATOMIC_RELEASE);
-    else if ((base == WIFI_EVENT && event == WIFI_EVENT_STA_DISCONNECTED) ||
-             (base == IP_EVENT && event == IP_EVENT_STA_LOST_IP))
+        flags=V3_WIFI_EVENT_GOT_IP;
+    }else if(base==WIFI_EVENT&&event==WIFI_EVENT_STA_DISCONNECTED){
         __atomic_store_n(&s_link, false, __ATOMIC_RELEASE);
+        const wifi_event_sta_disconnected_t *disconnected=data;
+        __atomic_store_n(&s_wifi_disconnect_reason,disconnected?disconnected->reason:0,__ATOMIC_RELEASE);
+        __atomic_add_fetch(&s_wifi_disconnect_seq,1,__ATOMIC_RELEASE);
+        flags=V3_WIFI_EVENT_DISCONNECTED;
+    }else if(base==IP_EVENT&&event==IP_EVENT_STA_LOST_IP){
+        __atomic_store_n(&s_link,false,__ATOMIC_RELEASE);flags=V3_WIFI_EVENT_LOST_IP;
+    }else if(base==WIFI_EVENT&&event==WIFI_EVENT_STA_CONNECTED)flags=V3_WIFI_EVENT_CONNECTED;
+    else if(base==WIFI_EVENT&&event==WIFI_EVENT_STA_START)flags=V3_WIFI_EVENT_STARTED;
+    if(flags)__atomic_fetch_or(&s_wifi_events,flags,__ATOMIC_RELEASE);
+}
+static uint64_t wifi_now(void *ctx){(void)ctx;return now_ms();}
+static bool wifi_active(void *ctx){(void)ctx;return active();}
+static v3_wifi_snapshot_t wifi_snapshot(void *ctx){
+    (void)ctx;return (v3_wifi_snapshot_t){
+        __atomic_exchange_n(&s_wifi_events,0,__ATOMIC_ACQ_REL),
+        __atomic_load_n(&s_wifi_disconnect_seq,__ATOMIC_ACQUIRE),
+        __atomic_load_n(&s_wifi_disconnect_reason,__ATOMIC_ACQUIRE),
+        __atomic_load_n(&s_link,__ATOMIC_ACQUIRE)};
+}
+static int wifi_connect(void *ctx){(void)ctx;return esp_wifi_connect();}
+static void wifi_pause(void *ctx,uint32_t ms){(void)ctx;vTaskDelay(pdMS_TO_TICKS(ms)?:1);}
+static void wifi_notice(void *ctx,uint32_t event,uint32_t reason,unsigned attempt,uint64_t elapsed,bool ip){
+    (void)ctx;ESP_LOGI("v3_wifi","event=%lu disconnect_reason=%lu attempt=%u elapsed_ms=%llu ip_acquired=%u",
+        (unsigned long)event,(unsigned long)reason,attempt,(unsigned long long)elapsed,ip);
 }
 static void dns_complete(const char *name, const ip_addr_t *address, void *arg) {
     (void)name;
@@ -197,7 +224,7 @@ esp_err_t cp_v3_transport_start(const cp_settings_t *settings, const cp_v3_trans
     cp_v3_origin_t origin; cp_v3_time_t current;
     if (!settings || !config || !cp_settings_validate(settings) ||
         (config->mode!=CP_V3_TRANSPORT_HTTPS&&config->mode!=CP_V3_TRANSPORT_MQTT_TLS)||
-        config->wifi_timeout_ms < 1000 || config->wifi_timeout_ms > 60000 ||
+        !v3_wifi_startup_options_valid(config->wifi_timeout_ms,config->wifi_reconnect_max_attempts,config->wifi_reconnect_delay_ms)||
         config->request_timeout_ms < 1000 || config->request_timeout_ms > 30000 ||
         !config->server_clock_error_ms || config->server_clock_error_ms > 3000 ||
         !cp_v3_transport_anchor(&config->clock_seed, now_ms(), &current)) return ESP_ERR_INVALID_ARG;
@@ -225,6 +252,9 @@ esp_err_t cp_v3_transport_start(const cp_settings_t *settings, const cp_v3_trans
     esp_err_t result = esp_wifi_get_mode(&mode);
     if (result != ESP_ERR_WIFI_NOT_INIT) { __atomic_store_n(&s_owner, NULL, __ATOMIC_RELEASE); return ESP_ERR_INVALID_STATE; }
     s_config = *config; s_origin = origin; s_anchor = config->clock_seed;
+    __atomic_store_n(&s_wifi_events,0,__ATOMIC_RELEASE);
+    __atomic_store_n(&s_wifi_disconnect_seq,0,__ATOMIC_RELEASE);
+    __atomic_store_n(&s_wifi_disconnect_reason,0,__ATOMIC_RELEASE);
     if(!active()){result=ESP_ERR_INVALID_STATE;goto failed;}
     memcpy(s_token, settings->device_token, sizeof s_token);
     result = set_wall_clock(&s_anchor);
@@ -279,10 +309,15 @@ esp_err_t cp_v3_transport_start(const cp_settings_t *settings, const cp_v3_trans
     result = esp_wifi_start(); if (result != ESP_OK) goto failed;
     s_wifi_started = true;
     if(!active()){result=ESP_ERR_INVALID_STATE;goto failed;}
-    result = esp_wifi_connect(); if (result != ESP_OK) goto failed;
-    uint64_t deadline = now_ms() + config->wifi_timeout_ms;
-    while (before(deadline) && !__atomic_load_n(&s_link, __ATOMIC_ACQUIRE)) pause_io();
-    if (!before(deadline)) { result = cancelled_or_timeout(); goto failed; }
+    const v3_wifi_startup_io_t wifi_io={NULL,wifi_now,wifi_active,wifi_snapshot,wifi_connect,wifi_pause,wifi_notice};
+    v3_wifi_startup_outcome_t wifi_result=v3_wifi_startup_wait(&wifi_io,config->wifi_timeout_ms,
+        config->wifi_reconnect_max_attempts,config->wifi_reconnect_delay_ms);
+    if(wifi_result.result!=V3_WIFI_READY){
+        result=wifi_result.result==V3_WIFI_CANCELLED?ESP_ERR_INVALID_STATE:
+            wifi_result.result==V3_WIFI_TIMEOUT?ESP_ERR_TIMEOUT:
+            wifi_result.result==V3_WIFI_CONNECT_FAILED?wifi_result.connect_error:ESP_ERR_INVALID_STATE;
+        goto failed;
+    }
     if(config->mode==CP_V3_TRANSPORT_MQTT_TLS){
         if(!active()){result=ESP_ERR_INVALID_STATE;goto failed;}
         result=cp_v3_mqtt_configure(settings,config->active_boot,config->request_timeout_ms);

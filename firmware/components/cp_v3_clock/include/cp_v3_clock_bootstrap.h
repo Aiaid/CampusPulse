@@ -3,6 +3,12 @@
 #include "cp_settings.h"
 #include "esp_err.h"
 
+typedef struct {
+    uint32_t timeout_ms; /* 1000..180000, one absolute association deadline. */
+    uint8_t reconnect_max_attempts; /* 0..3, additional connects after disconnect. */
+    uint32_t reconnect_delay_ms; /* 1000..30000 when retries enabled; otherwise 0. */
+} cp_v3_clock_wifi_options_t;
+
 /* Only at boot, with no other Wi-Fi/SNTP owner or active collector. NVS must
  * already be initialized without erasure. This entry supports personal/open;
  * PEAP requires the separate explicit NONE entry below.
@@ -22,4 +28,16 @@ esp_err_t cp_v3_clock_bootstrap(const cp_settings_t *settings,
 esp_err_t cp_v3_clock_bootstrap_peap_none(const cp_settings_t *settings,
     const uint8_t pinned_spki[91], const char *key_id,
     bool (*cancelled)(void), cp_v3_time_t *out);
+/* Explicit board-specific association options. The old entries retain 30s,
+ * no retries. Neither configurable entry changes clock/TLS/signature bounds.
+ * Callbacks only publish disconnect/link state; this task alone reconnects.
+ * The PEAP entry still requires an explicitly validated NONE trust choice. */
+esp_err_t cp_v3_clock_bootstrap_with_wifi(const cp_settings_t *settings,
+    const uint8_t pinned_spki[91], const char *key_id,
+    bool (*cancelled)(void), cp_v3_time_t *out,
+    const cp_v3_clock_wifi_options_t *wifi_options);
+esp_err_t cp_v3_clock_bootstrap_peap_none_with_wifi(const cp_settings_t *settings,
+    const uint8_t pinned_spki[91], const char *key_id,
+    bool (*cancelled)(void), cp_v3_time_t *out,
+    const cp_v3_clock_wifi_options_t *wifi_options);
 esp_err_t cp_v3_clock_stop(void);

@@ -12,6 +12,10 @@ static bool is_cancelled, running, initialized, enterprise, has_identity, has_us
 static bool accepted, hint = true, connected = true, hint_running;
 static unsigned attempts, verifies, random_calls;
 static uint64_t now = 1000;
+static unsigned connect_calls,connect_success_attempt;
+static uint64_t connect_times[8],delayed_ip_at,cancel_after_ms;
+static uint32_t connect_duration_ms;
+static bool disconnect_each_connect,spam_disconnect,in_event;
 static TaskHandle_t task = (void *)1;
 static void (*event_cb)(void *, esp_event_base_t, int32_t, void *);
 static void (*hint_cb)(struct timeval *);
@@ -39,7 +43,18 @@ static void empty(const cp_v3_time_t *out) {
 }
 TaskHandle_t xTaskGetCurrentTaskHandle(void) { return task; }
 int64_t esp_timer_get_time(void) { return (int64_t)(now * 1000); }
-void vTaskDelay(unsigned ms) { now += ms; }
+static void event(esp_event_base_t base,int32_t id,void *data){
+    assert(!in_event);in_event=true;event_cb(NULL,base,id,data);in_event=false;
+}
+static void disconnect(void){
+    wifi_event_sta_disconnected_t details={.reason=23};event(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,&details);
+}
+void vTaskDelay(unsigned ms) {
+    now += ms;
+    if(cancel_after_ms&&now>=cancel_after_ms)is_cancelled=true;
+    if(spam_disconnect)disconnect();
+    if(delayed_ip_at&&now>=delayed_ip_at){delayed_ip_at=0;event(IP_EVENT,IP_EVENT_STA_GOT_IP,NULL);}
+}
 int gettimeofday(struct timeval *restrict out, void *restrict zone) { (void)zone; *out = wall; return 0; }
 int settimeofday(const struct timeval *tv, const struct timezone *zone) { (void)zone; if (step("wall_restore")) return -1; wall = *tv; return 0; }
 void esp_log_level_set(const char *s, int level) { (void)s; (void)level; }
@@ -60,7 +75,15 @@ esp_err_t esp_wifi_set_storage(int s) { assert(s == WIFI_STORAGE_RAM);return ESP
 esp_err_t esp_wifi_set_mode(int s) { assert(s == WIFI_MODE_STA);return ESP_OK; }
 esp_err_t esp_wifi_set_config(int interface, const wifi_config_t *c) { assert(interface==WIFI_IF_STA);assert(c->sta.pmf_cfg.capable);return step(c->sta.threshold.authmode==WIFI_AUTH_WPA2_ENTERPRISE?"wifi_peap":"wifi_non_peap"); }
 esp_err_t esp_wifi_start(void) { esp_err_t e=step("wifi_start");if(!e)running=true;return e; }
-esp_err_t esp_wifi_connect(void) { esp_err_t e=step("wifi_connect");if(!e&&connected)event_cb(NULL,IP_EVENT,IP_EVENT_STA_GOT_IP,NULL);return e; }
+esp_err_t esp_wifi_connect(void) {
+    assert(!in_event&&task==(void *)1&&connect_calls<8);connect_times[connect_calls++]=now;
+    esp_err_t e=step("wifi_connect");now+=connect_duration_ms;
+    if(!e){
+        if(connected&&connect_calls>=connect_success_attempt)event(IP_EVENT,IP_EVENT_STA_GOT_IP,NULL);
+        else if(disconnect_each_connect)disconnect();
+    }
+    return e;
+}
 esp_err_t esp_wifi_stop(void) { esp_err_t e=step("wifi_stop");if(!e)running=false;return e; }
 esp_err_t esp_wifi_deinit(void) { esp_err_t e=step("wifi_deinit");if(!e)initialized=false;return e; }
 esp_err_t esp_wifi_sta_enterprise_enable(void) { assert(has_identity&&has_username&&has_password);esp_err_t e=step("eap_enable");if(!e)enterprise=true;return e; }
@@ -122,8 +145,58 @@ static void reset(void) {
     fault=NULL;fault_skip=0;cancel_at=NULL;is_cancelled=false;assert(cp_v3_clock_stop()==ESP_OK);
     assert(!initialized&&!running&&!enterprise&&!hint_running&&!has_identity&&!has_username&&!has_password);
     calls[0]=0;accepted=true;hint=true;connected=true;attempts=verifies=random_calls=0;now=1000;wall=(struct timeval){.tv_sec=123};
+    connect_calls=0;connect_success_attempt=1;delayed_ip_at=cancel_after_ms=0;connect_duration_ms=0;
+    disconnect_each_connect=spam_disconnect=in_event=false;
 }
 static esp_err_t boot(cp_settings_t *s,cp_v3_time_t *out) { static const uint8_t key[91]={0};memset(out,0xab,sizeof *out);return cp_v3_clock_bootstrap_peap_none(s,key,"test-key",cancel,out); }
+static void association_options(void){
+    cp_settings_t s=settings();cp_v3_time_t out;static const uint8_t key[91]={0};
+    const cp_v3_clock_wifi_options_t te={.timeout_ms=180000,.reconnect_max_attempts=3,.reconnect_delay_ms=3000};
+    const cp_v3_clock_wifi_options_t invalid[]={
+        {.timeout_ms=999},{.timeout_ms=180001},{.timeout_ms=30000,.reconnect_max_attempts=4,.reconnect_delay_ms=3000},
+        {.timeout_ms=30000,.reconnect_max_attempts=1},{.timeout_ms=30000,.reconnect_max_attempts=1,.reconnect_delay_ms=999},
+        {.timeout_ms=30000,.reconnect_max_attempts=1,.reconnect_delay_ms=30001},
+        {.timeout_ms=30000,.reconnect_delay_ms=3000}
+    };
+    for(size_t i=0;i<sizeof invalid/sizeof *invalid;++i){
+        reset();assert(cp_v3_clock_bootstrap_peap_none_with_wifi(&s,key,"test-key",cancel,&out,&invalid[i])==ESP_ERR_INVALID_ARG);
+        empty(&out);assert(!*calls&&!connect_calls);
+    }
+    reset();assert(cp_v3_clock_bootstrap_peap_none_with_wifi(&s,key,"test-key",cancel,&out,NULL)==ESP_ERR_INVALID_ARG);empty(&out);
+    reset();connect_success_attempt=4;disconnect_each_connect=true;
+    assert(cp_v3_clock_bootstrap_peap_none_with_wifi(&s,key,"test-key",cancel,&out,&te)==ESP_OK);
+    assert(connect_calls==4&&verifies==1);for(unsigned i=1;i<4;++i)assert(connect_times[i]-connect_times[i-1]==3000);
+    reset();connected=false;disconnect_each_connect=spam_disconnect=true;
+    assert(cp_v3_clock_bootstrap_peap_none_with_wifi(&s,key,"test-key",cancel,&out,&te)==ESP_ERR_TIMEOUT);empty(&out);
+    assert(connect_calls==4&&now==181000&&!attempts);for(unsigned i=1;i<4;++i)assert(connect_times[i]-connect_times[i-1]==3000);
+    reset();connected=false;
+    assert(cp_v3_clock_bootstrap_peap_none_with_wifi(&s,key,"test-key",cancel,&out,&te)==ESP_ERR_TIMEOUT);empty(&out);
+    assert(connect_calls==1&&now==181000&&!attempts); /* No disconnect means no blind reconnect. */
+    reset();connected=false;disconnect_each_connect=true;
+    assert(boot(&s,&out)==ESP_ERR_TIMEOUT);empty(&out);assert(connect_calls==1&&now==31000);
+    reset();connected=false;delayed_ip_at=121000;
+    assert(cp_v3_clock_bootstrap_peap_none_with_wifi(&s,key,"test-key",cancel,&out,&te)==ESP_OK);assert(connect_calls==1&&verifies==1);
+    reset();connected=false;disconnect_each_connect=true;
+    cp_v3_clock_wifi_options_t short_wait=te;short_wait.timeout_ms=5000;
+    assert(cp_v3_clock_bootstrap_peap_none_with_wifi(&s,key,"test-key",cancel,&out,&short_wait)==ESP_ERR_TIMEOUT);empty(&out);
+    assert(connect_calls==2&&now==6000&&!attempts);
+    reset();connected=false;disconnect_each_connect=true;cancel_after_ms=2000;
+    assert(cp_v3_clock_bootstrap_peap_none_with_wifi(&s,key,"test-key",cancel,&out,&te)==ESP_ERR_TIMEOUT);empty(&out);
+    assert(connect_calls==1&&now==2000&&!attempts);
+    reset();cancel_at="wifi_start";
+    assert(cp_v3_clock_bootstrap_peap_none_with_wifi(&s,key,"test-key",cancel,&out,&te)==ESP_ERR_TIMEOUT);empty(&out);assert(!connect_calls);
+    reset();cancel_at="wifi_connect";
+    assert(cp_v3_clock_bootstrap_peap_none_with_wifi(&s,key,"test-key",cancel,&out,&te)==ESP_ERR_TIMEOUT);empty(&out);assert(connect_calls==1&&!attempts);
+    reset();connected=false;disconnect_each_connect=true;fault="wifi_connect";fault_skip=1;
+    assert(cp_v3_clock_bootstrap_peap_none_with_wifi(&s,key,"test-key",cancel,&out,&te)==ESP_FAIL);empty(&out);assert(connect_calls==2&&!attempts);
+    reset();connect_duration_ms=180000;
+    assert(cp_v3_clock_bootstrap_peap_none_with_wifi(&s,key,"test-key",cancel,&out,&te)==ESP_ERR_TIMEOUT);empty(&out);assert(connect_calls==1&&!attempts);
+    reset();assert(cp_v3_clock_bootstrap_with_wifi(&s,key,"test-key",cancel,&out,&te)==ESP_ERR_INVALID_ARG);empty(&out);assert(!connect_calls);
+    s.wifi_security=CP_WIFI_OPEN;memset(s.eap_identity,0,sizeof s.eap_identity);memset(s.eap_username,0,sizeof s.eap_username);memset(s.eap_password,0,sizeof s.eap_password);
+    assert(cp_v3_clock_bootstrap_peap_none_with_wifi(&s,key,"test-key",cancel,&out,&te)==ESP_ERR_INVALID_ARG);empty(&out);assert(!connect_calls);
+    assert(cp_v3_clock_bootstrap_with_wifi(&s,key,"test-key",cancel,&out,&te)==ESP_OK);assert(connect_calls==1&&!strstr(calls,"eap_"));
+    reset();
+}
 int main(void) {
     cp_settings_t s=settings();cp_v3_time_t out;static const uint8_t key[91]={0};
     reset();assert(cp_v3_clock_bootstrap(&s,key,"test-key",cancel,&out)==ESP_ERR_INVALID_ARG);empty(&out);assert(!*calls);
@@ -154,5 +227,6 @@ int main(void) {
         task=(void *)2;assert(cp_v3_clock_stop()==ESP_ERR_INVALID_STATE);task=(void *)1;reset();
         assert(boot(&s,&out)==ESP_OK);reset();
     }
-    puts("bootstrap SDK execution: PEAP NONE ordering, strict HTTPS, failure/cancel, cleanup ownership and retry passed");return 0;
+    association_options();
+    puts("bootstrap SDK execution: PEAP NONE, strict HTTPS, cleanup ownership, bounded owner reconnect/deadline/cancel passed");return 0;
 }

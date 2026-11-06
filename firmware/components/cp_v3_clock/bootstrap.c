@@ -29,6 +29,7 @@ static esp_netif_t *station;
 static esp_event_handler_instance_t wifi_handler,ip_handler;
 static bool wifi_initialized,wifi_started,sntp_started,link_up,hint_ready;
 static bool eap_configured,enterprise_enabled;
+static uint32_t disconnect_seq,disconnect_reason;
 static bool (*cancel_check)(void);
 static struct timeval previous_wall;
 static uint64_t previous_mono;
@@ -45,10 +46,56 @@ static bool cancelled(void){return cancel_check&&cancel_check();}
 static void wipe(void *p,size_t n){volatile uint8_t *b=p;while(n--)*b++=0;}
 static void wait_tick(void){vTaskDelay(pdMS_TO_TICKS(20));}
 static void wifi_event(void *arg,esp_event_base_t base,int32_t id,void *data){
-    (void)arg;(void)data;
+    (void)arg;
     if(base==IP_EVENT&&id==IP_EVENT_STA_GOT_IP)__atomic_store_n(&link_up,true,__ATOMIC_RELEASE);
     else if((base==WIFI_EVENT&&id==WIFI_EVENT_STA_DISCONNECTED)||
             (base==IP_EVENT&&id==IP_EVENT_STA_LOST_IP))__atomic_store_n(&link_up,false,__ATOMIC_RELEASE);
+    if(base==WIFI_EVENT&&id==WIFI_EVENT_STA_DISCONNECTED){
+        const wifi_event_sta_disconnected_t *event=data;
+        __atomic_store_n(&disconnect_reason,event?event->reason:0,__ATOMIC_RELAXED);
+        __atomic_add_fetch(&disconnect_seq,1,__ATOMIC_RELEASE);
+    }
+}
+static bool wifi_options_valid(const cp_v3_clock_wifi_options_t *options){
+    return options&&options->timeout_ms>=1000&&options->timeout_ms<=180000&&
+        options->reconnect_max_attempts<=3&&
+        (options->reconnect_max_attempts?
+            options->reconnect_delay_ms>=1000&&options->reconnect_delay_ms<=30000:
+            options->reconnect_delay_ms==0);
+}
+/* The event loop never calls connect or sleeps. A disconnect schedules one
+ * bounded retry; neither repeated events nor another connect renew the deadline. */
+static esp_err_t associate(const cp_v3_clock_wifi_options_t *options){
+    uint64_t began=mono();
+    if(began>UINT64_MAX-options->timeout_ms)return ESP_ERR_INVALID_STATE;
+    uint64_t deadline=began+options->timeout_ms,retry_at=0;
+    uint32_t seen=__atomic_load_n(&disconnect_seq,__ATOMIC_ACQUIRE);
+    unsigned attempts=0;bool pending=false;
+    for(;;){
+        if(cancelled())return ESP_ERR_TIMEOUT;
+        uint64_t now=mono();if(now<began||now>=deadline)return ESP_ERR_TIMEOUT;
+        if(attempts&&__atomic_load_n(&link_up,__ATOMIC_ACQUIRE))return ESP_OK;
+        uint32_t sequence=__atomic_load_n(&disconnect_seq,__ATOMIC_ACQUIRE);
+        if(sequence!=seen){
+            seen=sequence;
+            if(attempts&&attempts<=options->reconnect_max_attempts&&!pending){
+                pending=true;retry_at=now+options->reconnect_delay_ms;
+            }
+        }
+        if(!attempts||(pending&&now>=retry_at)){
+            pending=false;
+            if(cancelled())return ESP_ERR_TIMEOUT;
+            now=mono();if(now<began||now>=deadline)return ESP_ERR_TIMEOUT;
+            ++attempts;esp_err_t result=esp_wifi_connect();
+            if(cancelled()||mono()>=deadline)return ESP_ERR_TIMEOUT;
+            if(result!=ESP_OK)return result;
+            continue;
+        }
+        uint64_t remaining=deadline-now;
+        uint32_t pause=remaining<20?(uint32_t)remaining:20;
+        if(pending&&retry_at>now&&retry_at-now<pause)pause=(uint32_t)(retry_at-now);
+        vTaskDelay(pdMS_TO_TICKS(pause));
+    }
 }
 static void hint_received(struct timeval *tv){
     /* The SDK has only set a tentative wall clock. It grants no device trust. */
@@ -116,13 +163,15 @@ esp_err_t cp_v3_clock_stop(void){
     if(station){esp_netif_destroy_default_wifi(station);station=NULL;}
     wipe(response,sizeof response);wipe(request_body,sizeof request_body);response_bytes=0;cancel_check=NULL;
     __atomic_store_n(&link_up,false,__ATOMIC_RELEASE);__atomic_store_n(&hint_ready,false,__ATOMIC_RELEASE);
+    __atomic_store_n(&disconnect_seq,0,__ATOMIC_RELEASE);__atomic_store_n(&disconnect_reason,0,__ATOMIC_RELAXED);
     __atomic_store_n(&owner,NULL,__ATOMIC_RELEASE);return ESP_OK;
 }
 static esp_err_t bootstrap(const cp_settings_t *settings,const uint8_t spki[91],
-    const char *key_id,bool (*cancel_fn)(void),cp_v3_time_t *out,bool peap_none){
+    const char *key_id,bool (*cancel_fn)(void),cp_v3_time_t *out,bool peap_none,
+    const cp_v3_clock_wifi_options_t *wifi_options){
     if(!out)return ESP_ERR_INVALID_ARG;
     memset(out,0,sizeof *out);
-    if(!settings||!spki||!key_id||!cp_settings_validate(settings)||
+    if(!wifi_options_valid(wifi_options)||!settings||!spki||!key_id||!cp_settings_validate(settings)||
        strcmp(settings->api_origin,CP_API_ORIGIN)||
        (peap_none ? settings->wifi_security!=CP_WIFI_ENTERPRISE_PEAP : settings->wifi_security==CP_WIFI_ENTERPRISE_PEAP)||
        !*key_id||strnlen(key_id,33)>32)return ESP_ERR_INVALID_ARG;
@@ -168,10 +217,8 @@ static esp_err_t bootstrap(const cp_settings_t *settings,const uint8_t spki[91],
         enterprise_enabled=true;
     }
     result=esp_wifi_start();if(result!=ESP_OK)goto done;wifi_started=true;
-    result=esp_wifi_connect();if(result!=ESP_OK)goto done;
-    uint64_t deadline=mono()+30000;
-    while(!cancelled()&&mono()<deadline&&!__atomic_load_n(&link_up,__ATOMIC_ACQUIRE))wait_tick();
-    if(cancelled()||!__atomic_load_n(&link_up,__ATOMIC_ACQUIRE)){result=ESP_ERR_TIMEOUT;goto done;}
+    result=associate(wifi_options);if(result!=ESP_OK)goto done;
+    uint64_t deadline;
     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);esp_sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
     esp_sntp_setservername(0,"ntp.aliyun.com");
     esp_sntp_set_time_sync_notification_cb(hint_received);esp_sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
@@ -227,9 +274,19 @@ done: {
 }
 esp_err_t cp_v3_clock_bootstrap(const cp_settings_t *settings,const uint8_t spki[91],
     const char *key_id,bool (*cancel_fn)(void),cp_v3_time_t *out){
-    return bootstrap(settings,spki,key_id,cancel_fn,out,false);
+    const cp_v3_clock_wifi_options_t options={.timeout_ms=30000};
+    return bootstrap(settings,spki,key_id,cancel_fn,out,false,&options);
 }
 esp_err_t cp_v3_clock_bootstrap_peap_none(const cp_settings_t *settings,const uint8_t spki[91],
     const char *key_id,bool (*cancel_fn)(void),cp_v3_time_t *out){
-    return bootstrap(settings,spki,key_id,cancel_fn,out,true);
+    const cp_v3_clock_wifi_options_t options={.timeout_ms=30000};
+    return bootstrap(settings,spki,key_id,cancel_fn,out,true,&options);
+}
+esp_err_t cp_v3_clock_bootstrap_with_wifi(const cp_settings_t *settings,const uint8_t spki[91],
+    const char *key_id,bool (*cancel_fn)(void),cp_v3_time_t *out,const cp_v3_clock_wifi_options_t *options){
+    return bootstrap(settings,spki,key_id,cancel_fn,out,false,options);
+}
+esp_err_t cp_v3_clock_bootstrap_peap_none_with_wifi(const cp_settings_t *settings,const uint8_t spki[91],
+    const char *key_id,bool (*cancel_fn)(void),cp_v3_time_t *out,const cp_v3_clock_wifi_options_t *options){
+    return bootstrap(settings,spki,key_id,cancel_fn,out,true,options);
 }

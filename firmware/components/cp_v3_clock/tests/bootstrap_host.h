@@ -18,6 +18,7 @@ typedef void *TaskHandle_t;
 typedef void *esp_event_handler_instance_t;
 typedef const char *esp_event_base_t;
 typedef struct { int unused; } esp_netif_t;
+typedef struct { uint8_t reason; } wifi_event_sta_disconnected_t;
 typedef int wifi_mode_t;
 typedef int wifi_init_config_t;
 #define WIFI_INIT_CONFIG_DEFAULT() 0

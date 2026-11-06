@@ -147,9 +147,10 @@ static bool automatic_bootstrap(void){
             cp_v3_time_t trusted={0};clock_cleanup_safe=false;
             bool peap_none=startup_profile->settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP&&
                 startup_profile->eap_verification==CP_V3_STARTUP_EAP_NONE;
+            const cp_v3_clock_wifi_options_t wifi_options={.timeout_ms=180000,.reconnect_max_attempts=3,.reconnect_delay_ms=3000};
             esp_err_t result=peap_none?
-                cp_v3_clock_bootstrap_peap_none(&startup_profile->settings,startup_profile->time_public_spki,startup_profile->time_key_id,cancelled,&trusted):
-                cp_v3_clock_bootstrap(&startup_profile->settings,startup_profile->time_public_spki,startup_profile->time_key_id,cancelled,&trusted);
+                cp_v3_clock_bootstrap_peap_none_with_wifi(&startup_profile->settings,startup_profile->time_public_spki,startup_profile->time_key_id,cancelled,&trusted,&wifi_options):
+                cp_v3_clock_bootstrap_with_wifi(&startup_profile->settings,startup_profile->time_public_spki,startup_profile->time_key_id,cancelled,&trusted,&wifi_options);
             clock_cleanup_safe=cp_v3_clock_stop()==ESP_OK;
             if(!clock_cleanup_safe){ESP_LOGE(TAG,"clock_cleanup_unconfirmed=1 no_next_network_owner=1");return false;}
             if(manual_stop)return false;
@@ -507,7 +508,7 @@ void app_main(void){
 }
 static bool run(void){
     cp_v3_transport_config_t cfg={.origin=bootstrap.origin,.server_ca_pem=bootstrap.server_ca_pem[0]?bootstrap.server_ca_pem:NULL,
-        .eap_verification=bootstrap.eap_verification,.eap_ca_pem=bootstrap.eap_ca_pem[0]?bootstrap.eap_ca_pem:NULL,.eap_domain=bootstrap.eap_domain[0]?bootstrap.eap_domain:NULL,.clock_seed=bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=te_small_request_timeout_ms(bootstrap.origin),.server_clock_error_ms=1000,
+        .eap_verification=bootstrap.eap_verification,.eap_ca_pem=bootstrap.eap_ca_pem[0]?bootstrap.eap_ca_pem:NULL,.eap_domain=bootstrap.eap_domain[0]?bootstrap.eap_domain:NULL,.clock_seed=bootstrap.clock_seed,.wifi_timeout_ms=180000,.wifi_reconnect_max_attempts=3,.wifi_reconnect_delay_ms=3000,.request_timeout_ms=te_small_request_timeout_ms(bootstrap.origin),.server_clock_error_ms=1000,
         .flush_dns_on_network_failure=false,.mode=bootstrap.transport,.active_boot=boot,.cancelled=cancelled};
     uint64_t began=mono();phase("CONNECT WIFI");
     esp_err_t started=cp_v3_transport_start(&bootstrap.settings,&cfg);

@@ -32,7 +32,11 @@ typedef struct {
     /* Caller-trusted RTC/physical-host anchor, captured on this boot's monotonic
      * clock. Mandatory before TLS; no unauthenticated SNTP bootstrap. */
     cp_v3_time_t clock_seed;
-    uint32_t wifi_timeout_ms; /* 1000..60000 */
+    uint32_t wifi_timeout_ms; /* 1000..180000, one absolute initial-IP deadline */
+    /* Zero preserves one-connect startup. Retries occur only after a recorded
+     * disconnect, in the owning task; they never extend wifi_timeout_ms. */
+    uint8_t wifi_reconnect_max_attempts; /* 0..3 additional connects */
+    uint32_t wifi_reconnect_delay_ms; /* enabled: 1..30000; ignored when disabled */
     uint32_t request_timeout_ms; /* 1000..30000; HTTPS attempt or MQTT connect/RPC deadline. SDK calls may overrun. */
     uint32_t server_clock_error_ms; /* 1..3000; declared server-clock error bound */
     /* HTTPS diagnostics only, default false. Only an application owning ALL outbound network clients

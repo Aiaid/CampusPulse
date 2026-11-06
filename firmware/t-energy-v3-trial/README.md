@@ -1,10 +1,12 @@
 # T-Energy-S3 V3 startup and small-statistics runtime
 
-The compiled entry remains `main/small_runtime.c`, version `0.3.6-te-autostart`.
+The compiled entry remains `main/small_runtime.c`, version `0.3.7-te-autostart`.
 USB Serial/JTAG uses the installed driver before nonblocking stdin; this avoids
 the SDK's no-driver path reporting no readable bytes despite a connected host.
-Wi-Fi/DHCP admission has a 30-second deadline; startup failures report a fixed
-stage plus return code and elapsed time without network credentials.
+Wi-Fi/DHCP admission has a 180-second deadline and up to three owner-task
+reconnects after disconnect events, also during saved-boot signed-clock setup.
+Startup failures report a fixed stage plus return code and elapsed time without
+network credentials. TLS and request deadlines remain unchanged.
 The default USB flow still runs **one to three 30/60-second windows**. A separate
 explicit production save option stores a startup profile only after a real
 applied ACK, then supports authenticated-time recovery and fresh real-boot

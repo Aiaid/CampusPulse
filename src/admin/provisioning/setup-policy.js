@@ -51,7 +51,7 @@ function policySource(control,node,boot) {
 
 /** Starts only after this page submitted V3START. Every mutating request is
  * single-shot; a newer boot, manual action or CAS conflict ends this attempt. */
-export function createSetupInitialPolicy({api,node,boot,revision,previous,isActive=()=>true,onState=()=>{},pause=ms=>new Promise(resolve=>setTimeout(resolve,ms)),polls=60}) {
+export function createSetupInitialPolicy({api,node,boot,revision,previous,isActive=()=>true,onState=()=>{},pause=ms=>new Promise(resolve=>setTimeout(resolve,ms)),polls=240}) {
  let cancelled=false,started=null,assigned=false;
  const active=()=>!cancelled&&isActive(),assertActive=()=>{if(!active())throw manual('本次自动下发已取消。');};
  const base=`/device-v3/nodes/${encodeURIComponent(node)}`;

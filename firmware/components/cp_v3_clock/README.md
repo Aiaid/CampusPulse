@@ -17,6 +17,18 @@ PEAP remains manual USB only; no CA/date bootstrap exception is introduced.
 The application must retain a deliberate physical USB recovery path. Missing or
 invalid saved keys do not trigger network key discovery or trust-on-first-use.
 
+The existing entries retain one association attempt with a 30-second deadline.
+The `*_with_wifi()` entries accept explicit board-specific options: a single
+1000..180000ms association deadline, 0..3 additional connects, and a
+1000..30000ms reconnect delay when enabled (otherwise zero). T-Energy selects
+180000ms / 3 / 3000ms. Only a recorded station-disconnect event schedules a
+retry; silent association waits within the original deadline. Event callbacks
+publish atomic link/reason/generation state; only the owning bootstrap task
+calls connect, with cancellation and deadline checks before and after each
+call. Repeated disconnect events cannot extend the deadline or increase the
+retry count. These options do not change SNTP, HTTPS, probe RTT, signature or
+certificate-date limits, and the PEAP entry still requires explicit NONE trust.
+
 ## Trust boundary
 
 SNTP from `ntp.aliyun.com` supplies only a tentative TLS-date hint. It runs while
@@ -91,6 +103,9 @@ association/SNTP failures, cancellation, partial credential cleanup and retained
 ownership after cleanup failures. These host tests do not establish actual SNTP
 reachability, HTTPS, PEAP interoperability, Wi-Fi interruption recovery or
 untethered hardware acceptance.
+The same execution test uses virtual time to check finite disconnect-driven
+retries, repeated-event storms, delayed IP within the longer association window,
+an absolute deadline, cancellation before/during association and retry failures.
 
 Primary references: [Workers Web Crypto](https://developers.cloudflare.com/workers/runtime-apis/web-crypto/),
 [ESP32-S3 entropy requirements](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/api-reference/system/random.html),
