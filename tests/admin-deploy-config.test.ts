@@ -76,6 +76,7 @@ describe('small-statistics release configuration', () => {
     expect(result.config.vars).toEqual({ DEVICE_V3_CONTROL_ENABLED: 'true', DEVICE_V3_STATISTICS_ENABLED: 'true',
       DEVICE_V3_PRODUCER_VERSIONS: '["cp-v3-small/1"]', DEVICE_V3_INGEST_ENABLED: 'false', CPRAW_ARCHIVE_ENABLED: '0',
       DEVICE_V3_SIMULATOR_NODE_IDS: '[]',
+      DEVICE_V3_SIMULATOR_CONTINUOUS_NODE_IDS: '[]',
       DEVICE_V3_STARTUP_ENABLED:'true',DEVICE_V3_CLOCK_KEY_ID:'cp-clock-20261102',DEVICE_V3_CLOCK_AUDIENCE:'https://pulse.anend.net',DEVICE_V3_CLOCK_MAX_ERROR_MS:'1000' });
     expect(result.config.triggers.crons).toEqual(['*/15 * * * *']);
     expect(result.config.d1_databases[0].migrations_dir).toMatch(/migrations$/);
@@ -102,6 +103,19 @@ describe('small-statistics release configuration', () => {
     expect(result.config.vars).toMatchObject({ DEVICE_V3_SIMULATOR_NODE_IDS: '["sim-live-fixture-1","sim-live-fixture-2"]',
       DEVICE_V3_PRODUCER_VERSIONS: '["cp-v3-small/1"]', DEVICE_V3_INGEST_ENABLED: 'false', CPRAW_ARCHIVE_ENABLED: '0' });
   });
+  it('permits continuous operation only for an explicit subset of admitted virtual nodes', () => {
+    const result = generate({ DEVICE_V3_SIMULATOR_NODE_IDS: '["sim-live-fixture-1","sim-live-fixture-2"]',
+      DEVICE_V3_SIMULATOR_CONTINUOUS_NODE_IDS: '[ "sim-live-fixture-2" ]' });
+    expect(result.status).toBe(0);
+    expect(result.config.vars.DEVICE_V3_SIMULATOR_CONTINUOUS_NODE_IDS).toBe('["sim-live-fixture-2"]');
+    expect(result.config.vars.DEVICE_V3_PRODUCER_VERSIONS).toBe('["cp-v3-small/1"]');
+  });
+  it.each(['invalid', 'null', '{}', '["sim-live-fixture-2"]', '["real-node"]', '["sim-live-fixture-1","sim-live-fixture-1"]'])(
+    'rejects malformed or unadmitted continuous simulator scope: %s', nodes => {
+      const result = generate({ DEVICE_V3_SIMULATOR_NODE_IDS: '["sim-live-fixture-1"]', DEVICE_V3_SIMULATOR_CONTINUOUS_NODE_IDS: nodes });
+      expect(result.status).not.toBe(0);
+      expect(result.config).toBeNull();
+    });
   it.each(['', 'invalid', 'null', '{}', '"sim-live-fixture"', '["sim-live-fixture","sim-live-fixture"]',
     '["real-node"]', '["sim-live-"]', '["sim-live-*"]', '["sim-live-Fixture"]', '[42]',
     JSON.stringify([`sim-live-${'x'.repeat(56)}`]), JSON.stringify(Array.from({ length: 17 }, (_, i) => `sim-live-fixture-${i}`))])(

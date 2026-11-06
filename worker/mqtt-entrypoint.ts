@@ -5,6 +5,7 @@ import { json, sha256 } from './http';
 import { MQTT_ID } from './mqtt-credentials';
 import { handleAuthenticatedDeviceV3Control } from './device-v3-control';
 import { handleAuthenticatedDeviceV3Statistics } from './device-v3-statistics';
+import { renewContinuousSimulatorPolicy } from './device-v3-simulator-renewal';
 
 export interface MqttIdentity { username:string; namespace:string }
 export interface MqttV3Operation { subop:1|2|3|4|5; receiptOnly:boolean }
@@ -56,6 +57,8 @@ export class MqttDeviceApi extends WorkerEntrypoint<Env> {
     });
     response=v3.subop===5?await handleAuthenticatedDeviceV3Statistics(request,this.env,node,authorization):
       await handleAuthenticatedDeviceV3Control(request,this.env,node,authorization);
+    if(v3.subop===1&&response.status===200)
+      await renewContinuousSimulatorPolicy(this.env,node,input.boot,await sha256(input.body),authorization);
     const body=new Uint8Array(await response.arrayBuffer()),limit=v3.subop===2?8192:2048;
     if(body.length>limit)return {status:503,body:new TextEncoder().encode(JSON.stringify({error:{code:'mqtt_response_too_large',retryable:true}}))};
     return {status:response.status,body};

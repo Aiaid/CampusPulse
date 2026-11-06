@@ -492,6 +492,16 @@ Historical context: the raw-first implementation direction was **superseded as
 
 ## Completed archive
 
+- [x] 2026-11-06: Keep the two authorized online virtual clients running until
+      stopped, with native MQTT reconnection, RPC high-water continuity and
+      drained same-boot capability/policy renewal under an exact scoped grant.
+      Preserve the fixed display, physical-device controls and original queued
+      bytes. The selected snapshot passed 1559 tests and build, then deployed at
+      8452a0e2 with no changed static assets; real same-boot registration 1→2 /
+      policy 3→4, new windows and fresh live reads passed. Three pending batches received
+      exact receipts before cutover. Clients remain local processes, not a
+      permanent cloud daemon. See [continuous simulator](../notes/continuous-online-simulator-2026-11-06.md).
+
 - [x] 2026-11-06: Connect two independent virtual devices to online live over
       verified native MQTT/TLS and normal CPV3 authority/receipts, with explicit
       synthetic provenance and exact named-node admission. Add authoritative

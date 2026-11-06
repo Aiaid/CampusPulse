@@ -104,12 +104,14 @@ export async function createSimulatedV3Device(options) {
 }
 
 export class SimulatedV3Device {
-  constructor({ nodeId, deviceBearer, request, cadenceMs = 1000, scenario = 'quiet', now = Date.now, transport = 'https', replay = null, localConfiguration, onlineConfiguration, vehicleData = false, vehicleCounts }, tools, caps) {
+  constructor({ nodeId, deviceBearer, request, cadenceMs = 1000, scenario = 'quiet', now = Date.now, transport = 'https', replay = null, localConfiguration, onlineConfiguration, vehicleData = false, vehicleCounts, continuous = false }, tools, caps) {
     check(typeof request === 'function' && typeof nodeId === 'string' && typeof deviceBearer === 'string', 'A node, credential and injected request are required.');
     this.cadenceMs = cadence(cadenceMs); this.tools = tools; this.clock = now;
     this.transport = transportMode(transport);
     this.custody = simulationCustody(localConfiguration, onlineConfiguration, nodeId);
     this.onlineConfiguration = onlineConfiguration !== undefined;
+    check(typeof continuous === 'boolean' && (!continuous || this.onlineConfiguration), 'Continuous mode requires explicit online configuration.');
+    this.continuous = continuous; this.registrationSeq = 1; this.renewalRequested = null; this.awaitingCapabilityAssignment = false;
     this.vehicleProfile = simulationVehicleProfile(vehicleData, vehicleCounts);
     this.ruleset = this.vehicleProfile ? SIMULATION_VEHICLE_RULESET : 'unclassified-v1';
     check(!replay || !this.vehicleProfile, 'Historical replay cannot adopt synthetic vehicle categories.');
@@ -120,6 +122,7 @@ export class SimulatedV3Device {
     this.applied = null; this.lastGeneration = 0; this.terminalGeneration = 0;
     this.windowSeq = 0; this.sequences = { window_statistics: 0, node_status: 0 };
     this.applySeq = 0; this.contactSeq = 0; this.leaseUntil = 0; this.nextStart = null;
+    this.policyRenewAt = null;
     this.losses = [0, 0, 0, 0, 0, 0]; this.accepted = { window_statistics: 0, node_status: 0 };
     this.pendingAck = null; this.pendingLease = null; this.lastError = null; this.configReason = null; this.phase = 'stopped';
     this.replay = replay ? structuredClone(replay) : null; this.replayIndex = 0; this.replayRebasedStart = null;
@@ -130,6 +133,10 @@ export class SimulatedV3Device {
   status() {
     return { nodeId: this.nodeId, bootId: this.caps.boot_id, producer: 'synthetic-statistics/1', dataset: this.custody.dataset,
       running: this.running, registered: this.registered, scenario: this.scenario, phase: this.phase, cadenceMs: this.cadenceMs, transport: this.transport,
+      continuous: this.continuous, registrationSeq: this.registrationSeq, capabilityId: this.caps.capability_id,
+      capabilityExpiresAt: this.caps.expires_at, renewalReason: this.renewalRequested,
+      policyRenewAtMs: this.policyRenewAt,
+      awaitingCapabilityAssignment: this.awaitingCapabilityAssignment, registrationPending: !this.registered,
       queuePersistence: 'session-only', powerLossRecovery: false, pendingItems: this.pending.length,
       pendingControlItems: Number(!!this.pendingAck) + Number(!!this.pendingLease),
       pendingBytes: this.pending.reduce((n, x) => n + Buffer.byteLength(x.body), 0),
@@ -166,11 +173,31 @@ export class SimulatedV3Device {
     try { return await response.json(); } catch { throw new Error('Local device response is not JSON.'); }
   }
   async register() {
-    this.registrationBody ??= JSON.stringify(this.tools.v3Registration(this.caps));
+    this.registrationBody ??= JSON.stringify(this.tools.v3Registration(this.caps, this.registrationSeq, this.uptime()));
     const r = await this.call('/api/v3/device/capabilities', this.registrationBody);
-    check(r.protocol === 'campuspulse/3' && r.node_id === this.nodeId && r.boot_id === this.caps.boot_id && r.registration_seq === 1 &&
+    check(r.protocol === 'campuspulse/3' && r.node_id === this.nodeId && r.boot_id === this.caps.boot_id && r.registration_seq === this.registrationSeq &&
       r.capability_sha256 === await this.tools.capabilityDigestV3(this.caps) && r.applied === false, 'Capability receipt mismatch.');
     this.registered = true;
+  }
+  requestCapabilityRenewal(reason = 'operator_requested') {
+    check(this.continuous, 'Capability renewal requires explicit continuous mode.');
+    // A repeated signal must not replace an in-flight frozen registration.
+    if (!this.awaitingCapabilityAssignment) this.renewalRequested ??= reason;
+    return this.status();
+  }
+  async refreshCapabilities() {
+    if (!this.renewalRequested || this.pending.length || this.pendingAck || this.pendingLease) return false;
+    // This model freezes complete windows only. Finish the current window before
+    // changing capability identity, unless collection has already paused.
+    if (this.nextStart !== null && this.clock() < this.nextStart + this.cadenceMs && this.leaseUntil > this.clock()) return false;
+    this.nextStart = null;
+    check(this.registrationSeq < 4294967295, 'Capability registration sequence exhausted.');
+    this.caps = { ...this.caps, capability_id: `sim-statistics-${randomUUID()}`,
+      issued_at: new Date(this.clock()).toISOString(), expires_at: new Date(this.clock() + 1800000).toISOString() };
+    this.registrationSeq++; this.registrationBody = undefined; this.registered = false;
+    this.awaitingCapabilityAssignment = true; this.renewalRequested = null; this.phase = 'capability_refresh';
+    await this.register();
+    return true;
   }
   async acknowledge() {
     const pending = this.pendingAck, a = JSON.parse(pending.body), r = await this.call('/api/v3/device/config/ack', pending.body);
@@ -180,6 +207,13 @@ export class SimulatedV3Device {
     if (a.state === 'applied') {
       check(Number.isSafeInteger(r.lease_until_ms) && r.lease_until_ms > Date.parse(r.server_time), 'ACK lacks a committed lease.');
       this.applied = pending.frozen; this.lastGeneration = a.assignment_generation; this.leaseUntil = r.lease_until_ms;
+      const policyExpiresAt = Date.parse(pending.frozen.policy.control.activation.expires_at);
+      // Anchor the lead to the committed application, rather than recomputing
+      // a shrinking TTL each tick. Short policies retain at least 3/4 of their
+      // remaining lifetime before requesting a drained renewal.
+      const policyLifetime = Math.max(0, policyExpiresAt - Math.max(this.clock(), Date.parse(r.server_time)));
+      this.policyRenewAt = policyExpiresAt - Math.min(120000, policyLifetime / 4);
+      this.awaitingCapabilityAssignment = false;
       this.contactSeq = 0; this.pendingLease = null; this.cadenceMs = pending.frozen.policy.collection.summary.window_ms;
       this.nextStart = Math.max(this.clock(), Date.parse(r.server_time)) + 10;
       if (this.replay && this.replayRebasedStart === null) this.replayRebasedStart = this.nextStart;
@@ -193,12 +227,19 @@ export class SimulatedV3Device {
     check(delivered.protocol === 'campuspulse/3' && delivered.requires_device_ack === true &&
       typeof delivered.server_time === 'string' && Number.isFinite(Date.parse(delivered.server_time)), 'Configuration response mismatch.');
     this.configReason = delivered.reason ?? null;
-    if (!delivered.config) { this.phase = delivered.reason === 'unassigned' ? 'unassigned' : 'unavailable'; this.nextStart = null; return; }
+    if (!delivered.config) {
+      this.phase = delivered.reason === 'unassigned' ? 'unassigned' : 'unavailable'; this.nextStart = null;
+      if (this.continuous && ['policy_expired', 'capabilities_expired'].includes(delivered.reason)) this.requestCapabilityRenewal(delivered.reason);
+      return;
+    }
     const frozen = await this.tools.validateFrozenDeviceConfigV3(delivered.config), p = frozen.policy;
     // A new explicitly started online session cannot ACK a prior session's
     // boot-bound assignment. Wait for its separately revision-checked policy.
     if (this.onlineConfiguration && p.control.activation.boot_id !== this.caps.boot_id) {
       this.phase = 'unassigned'; this.configReason = 'awaiting_current_boot_assignment'; this.nextStart = null; return;
+    }
+    if (this.onlineConfiguration && p.control.capability_sha256 !== await this.tools.capabilityDigestV3(this.caps)) {
+      this.phase = 'unassigned'; this.configReason = 'awaiting_current_capability_assignment'; this.nextStart = null; return;
     }
     if (p.assignment_generation <= this.terminalGeneration) return;
     // Drain retained older-policy bytes before a new activation closes its span.
@@ -221,7 +262,7 @@ export class SimulatedV3Device {
     try { await this.acknowledge(); } catch (error) { this.losses[4]++; throw error; }
   }
   async renew() {
-    if (!this.applied || this.phase === 'failed' || this.phase === 'unavailable') return;
+    if (!this.pendingLease && (!this.applied || this.phase === 'failed' || this.phase === 'unavailable' || this.awaitingCapabilityAssignment)) return;
     const p = this.applied.policy, now = this.clock();
     if (!this.pendingLease && this.leaseUntil - now > p.control.lease.duration_ms / 2) return;
     this.pendingLease ??= JSON.stringify({ protocol: 'campuspulse/3', boot_id: this.caps.boot_id, policy_id: p.policy_id,
@@ -247,9 +288,11 @@ export class SimulatedV3Device {
       if (!this.pending.length && !this.pendingAck && !this.pendingLease && !['failed', 'unavailable'].includes(this.phase)) this.phase = 'replay_complete';
       return;
     }
-    if (!this.applied || this.nextStart === null || ['failed', 'unavailable'].includes(this.phase) || this.scenario === 'failed') return;
+    if (!this.applied || this.awaitingCapabilityAssignment || this.nextStart === null || ['failed', 'unavailable'].includes(this.phase) || this.scenario === 'failed') return;
     const now = this.clock(), p = this.applied.policy, duration = this.cadenceMs;
-    if (this.nextStart + duration >= this.leaseUntil) { this.phase = 'lease_expired'; this.nextStart = null; return; }
+    if (this.nextStart + duration >= Math.min(this.leaseUntil, Date.parse(p.control.activation.expires_at), Date.parse(this.caps.expires_at))) {
+      this.phase = 'lease_expired'; this.nextStart = null; return;
+    }
     if (now < this.nextStart + duration) return;
     // One window+status pair occupies the two data slots; never silently evict.
     if (this.pending.length) { this.phase = 'queue_paused'; return; }
@@ -276,7 +319,7 @@ export class SimulatedV3Device {
       r: [null, null, null, null, null], j: [1, Buffer.byteLength(stats.body), 0, 0, 0, 0], l: [...this.losses] };
     this.pending.push(this.envelope('node_status', status));
     if (this.replay) this.replayIndex++;
-    this.nextStart = Math.max(end, now); this.phase = 'collecting';
+    this.nextStart = this.renewalRequested ? null : Math.max(end, now); this.phase = 'collecting';
   }
   async flush() {
     while (this.pending.length) {
@@ -295,16 +338,34 @@ export class SimulatedV3Device {
         throw error;
       }
     }
-    if (this.phase === 'queue_paused') { this.nextStart = this.clock() + 10; this.phase = 'collecting'; }
+    if (this.phase === 'queue_paused') { this.nextStart = this.renewalRequested ? null : this.clock() + 10; this.phase = 'collecting'; }
   }
   async tick() {
     if (!this.running) return this.status();
     check(!this.inTick, 'Device ticks must be serialized.'); this.inTick = true;
     try {
+      if (this.continuous && !this.awaitingCapabilityAssignment && this.clock() >= Date.parse(this.caps.expires_at) - 120000)
+        this.requestCapabilityRenewal('capability_expiring');
+      if (this.continuous && !this.awaitingCapabilityAssignment && this.policyRenewAt !== null && this.clock() >= this.policyRenewAt)
+        this.requestCapabilityRenewal('policy_expiring');
       this.collect();
       if (this.scenario === 'offline') { this.phase = 'offline'; return this.status(); }
       if (!this.registered) await this.register();
-      await this.flush(); await this.configure(); await this.renew(); this.collect(); await this.flush();
+      await this.flush();
+      // Drain existing control bytes before registration closes authorization
+      // spans. Never create an old-policy lease once renewal has begun.
+      if (this.renewalRequested) {
+        if (this.pendingAck) await this.acknowledge();
+        if (this.pendingLease) await this.renew();
+        await this.refreshCapabilities();
+        if (this.renewalRequested) {
+          if (this.phase !== 'retry_exhausted') this.phase = 'renewal_draining';
+          return this.status();
+        }
+      }
+      await this.configure();
+      if (!this.renewalRequested) await this.renew();
+      this.collect(); await this.flush();
       if (!this.pending.length && !this.pendingAck && !this.pendingLease) this.lastError = null;
     } catch (error) { this.lastError = error.message; if (this.phase !== 'retry_exhausted') this.phase = 'retry_pending'; }
     finally { this.inTick = false; }

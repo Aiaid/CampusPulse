@@ -17,18 +17,19 @@ export function validateMqttCredentials(value) {
   return value;
 }
 
-export async function createMqttV3DeviceClient({ mqtt, nodeId, bootId, timeoutMs = 15000 }, dependencies = {}) {
+export async function createMqttV3DeviceClient({ mqtt, nodeId, bootId, timeoutMs = 15000, initialRpc = 0 }, dependencies = {}) {
   validateMqttCredentials(mqtt);
   check(typeof nodeId === 'string' && /^sim-live-[a-z0-9_-]+$/.test(nodeId) && nodeId.length <= 64 &&
     typeof bootId === 'string' && uuid.test(bootId), 'Invalid virtual device identity.');
   check(Number.isInteger(timeoutMs) && timeoutMs >= 10 && timeoutMs <= 30000, 'Invalid MQTT timeout.');
+  check(Number.isSafeInteger(initialRpc) && initialRpc >= 0 && initialRpc <= 4294967295, 'Invalid MQTT RPC high-water mark.');
   const connectFn = dependencies.connectFn ?? (await import('mqtt')).connect;
   const client = connectFn(PRODUCTION_MQTT_URI, { username: mqtt.username, password: mqtt.password,
     clientId: `cp-sim-${randomUUID()}`, protocolVersion: 4, clean: true, keepalive: 30,
     rejectUnauthorized: true, reconnectPeriod: 0, connectTimeout: timeoutMs, resubscribe: false,
     queueQoSZero: false });
   const prefix = `cp/v1/${mqtt.namespace}/${bootId}`, subscription = `${prefix}/rep/ingest/+`;
-  const pending = new Map(); let rpc = 0, closed = false, transportFailed = false;
+  const pending = new Map(); let rpc = initialRpc, closed = false, transportFailed = false;
   const counters = { requests: 0, replies: 0, timeouts: 0, rejectedReplies: 0 };
   const failPending = () => {
     transportFailed = true;
@@ -95,5 +96,5 @@ export async function createMqttV3DeviceClient({ mqtt, nodeId, bootId, timeoutMs
       });
     });
   }
-  return { request, close, status: () => ({ ...counters, connected: !closed && !transportFailed && client.connected }) };
+  return { request, close, status: () => ({ ...counters, lastRpc: rpc, connected: !closed && !transportFailed && client.connected }) };
 }
