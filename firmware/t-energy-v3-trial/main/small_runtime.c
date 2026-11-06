@@ -313,6 +313,10 @@ static bool digest(const void *bytes,size_t n,char out[65]){
     uint8_t d[32];if(!cp_v3_transport_sha256(NULL,bytes,n,d))return false;
     static const char h[]="0123456789abcdef";for(unsigned i=0;i<32;i++){out[2*i]=h[d[i]>>4];out[2*i+1]=h[d[i]&15];}out[64]=0;return true;
 }
+static bool reclaimed_ok(te_v3_small_queue_result_t result){
+    if(result==TE_SMALL_QUEUE_BUDGET)budget_denied=true;
+    return result==TE_SMALL_QUEUE_OK;
+}
 static bool age_ready(cp_v3_queue_kind_t kind,const void *bytes,size_t n,const cp_v3_expected_t *e,uint64_t expiry){
     cp_v3_time_t t;if(!current(&t))return false;
     te_local_guard_time_t time={t,expiry,UINT64_C(168)*3600000};te_local_guard_report_t report;
@@ -343,15 +347,19 @@ static bool recover(void){
         if(read!=TE_SMALL_QUEUE_OK||!n||strcmp(e.scope.node_id,node)||!strcmp(e.scope.boot_id,boot))return false;
         uint64_t expiry=queue->queue.slots[slot].source_expires_at_ms;
         cp_v3_transport_response_t r={0};bool ack=false;
+        te_v3_small_queue_result_t reclaimed=TE_SMALL_QUEUE_INVALID;
         if(kinds[k]==CP_V3_QUEUE_CONTROL){
             const char *path=!strcmp(e.stream,"config_ack")?"/api/v3/device/config/ack":!strcmp(e.stream,"lease")?"/api/v3/device/lease":NULL;
-            ack=path&&request(CP_V3_HTTP_POST,path,body,n,true,&r)&&control_match(NULL,&e,body,n,reply,r.body_bytes)&&
-                te_v3_small_queue_ack_control(queue,slot,reply,r.body_bytes,control_match,NULL)==TE_SMALL_QUEUE_OK;
+            if(path&&request(CP_V3_HTTP_POST,path,body,n,true,&r)&&control_match(NULL,&e,body,n,reply,r.body_bytes))
+                reclaimed=te_v3_small_queue_ack_control(queue,slot,reply,r.body_bytes,control_match,NULL);
         }else{
             for(unsigned wait=0;wait<120&&!age_ready(kinds[k],body,n,&e,expiry);wait++)vTaskDelay(pdMS_TO_TICKS(100));
-            ack=age_ready(kinds[k],body,n,&e,expiry)&&request(CP_V3_HTTP_POST,"/api/v3/statistics/ingest",body,n,false,&r)&&
-                cp_v3_statistics_receipt_matches(reply,r.body_bytes,&e)&&te_v3_small_queue_ack(queue,slot,reply,r.body_bytes)==TE_SMALL_QUEUE_OK;
+            if(age_ready(kinds[k],body,n,&e,expiry)&&request(CP_V3_HTTP_POST,"/api/v3/statistics/ingest",body,n,false,&r)&&
+               cp_v3_statistics_receipt_matches(reply,r.body_bytes,&e))
+                reclaimed=te_v3_small_queue_ack(queue,slot,reply,r.body_bytes);
         }
+        ack=reclaimed==TE_SMALL_QUEUE_OK;
+        if(reclaimed==TE_SMALL_QUEUE_BUDGET){budget_denied=true;ESP_LOGW(TAG,"historical_recovery_budget_denied kind=%u retained=1",(unsigned)kinds[k]);}
         if(!ack){
             ESP_LOGE(TAG,"historical_recovery_blocked kind=%u retained=1",(unsigned)kinds[k]);
             /* A missing control receipt cannot grant authority, but need not
@@ -425,7 +433,7 @@ static bool exchange(const char *stream,const char *path,const char *bytes,size_
         if(request(CP_V3_HTTP_POST,path,body,stored,false,&r)){
             cp_v3_time_t t;if(!current(&t)||!control_match(NULL,&e,body,stored,reply,r.body_bytes))return false;
             cp_v3_control_result_t accepted=lease?cp_v3_control_lease_receipt(control,reply,r.body_bytes,t):cp_v3_control_ack_receipt(control,reply,r.body_bytes,t);
-            if(accepted!=CP_V3_CONTROL_OK||te_v3_small_queue_ack_control(queue,slot,reply,r.body_bytes,control_match,NULL)!=TE_SMALL_QUEUE_OK)return false;
+            if(accepted!=CP_V3_CONTROL_OK||!reclaimed_ok(te_v3_small_queue_ack_control(queue,slot,reply,r.body_bytes,control_match,NULL)))return false;
             ESP_LOGI(TAG,"control_committed_reclaimed stream=%s seq=%u",stream,(unsigned)seq);return true;
         }
         vTaskDelay(pdMS_TO_TICKS(control->policy.retry_min_ms));
@@ -447,7 +455,7 @@ static bool send_statistics(cp_v3_queue_kind_t kind,unsigned slot,bool test_retr
                 if(!request(CP_V3_HTTP_POST,"/api/v3/statistics/ingest",body,n,false,&r)||r.body_bytes!=rn||memcmp(verify,reply,rn)||!cp_v3_statistics_receipt_matches(reply,r.body_bytes,&e))return false;
                 retry_verified=true;retries++;
             }
-            if(te_v3_small_queue_ack(queue,slot,reply,r.body_bytes)!=TE_SMALL_QUEUE_OK)return false;
+            if(!reclaimed_ok(te_v3_small_queue_ack(queue,slot,reply,r.body_bytes)))return false;
             ESP_LOGI(TAG,"statistics_committed_reclaimed kind=%u seq=%u bytes=%u exact_retry=%u",(unsigned)kind,(unsigned)e.seq_first,(unsigned)n,test_retry);return true;
         }
         vTaskDelay(pdMS_TO_TICKS(control->policy.retry_min_ms));

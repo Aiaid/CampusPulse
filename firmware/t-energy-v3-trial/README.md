@@ -1,6 +1,6 @@
 # T-Energy-S3 V3 startup and small-statistics runtime
 
-The compiled entry remains `main/small_runtime.c`, version `0.3.7-te-autostart`.
+The compiled entry remains `main/small_runtime.c`, version `0.3.8-te-budget-recovery`.
 USB Serial/JTAG uses the installed driver before nonblocking stdin; this avoids
 the SDK's no-driver path reporting no readable bytes despite a connected host.
 Wi-Fi/DHCP admission has a 180-second deadline and up to three owner-task
@@ -45,12 +45,17 @@ The original 128-entry spare floor and three-slot admission guards are not
 relaxed; real saved/reconfigured profiles can therefore be rejected under space
 pressure. Actual post-provisioning entry headroom remains a hardware acceptance
 item, rather than a capacity guarantee inferred from a successful build.
-The bounded ceiling is 1 MiB storage and 128 KiB POST-body authorization per
-UTC day; an applied policy may tighten them. This cannot sustain an all-day
-60-second profile.
-The new autonomous path does not increase these caps or reset reservations at a
-reboot. Budget denial stops automatic restart; daily capacity is still a material
-limit, so this is not an all-day or deployment-scale capacity claim.
+The ceilings are 192 MiB of logical storage authorization and 8 MiB of logical
+POST-body authorization per UTC day; an applied policy may tighten them. The
+user requested a sustainable allowance after the former 1 MiB / 128 KiB limits
+blocked historical lease reclamation. These are conservative logical charges,
+not measured flash writes or wire bytes. The sizing model covers a 60-second
+window, 40-second lease renewal and bounded restart overhead; it does not prove
+continuous device operation, physical wear or flash endurance. Previously
+reserved budget is retained when the allowance is raised.
+The autonomous path does not reset reservations at a reboot. Budget denial
+stops automatic restart; quota sufficiency and deployment-scale operation still
+require actual measurement.
 
 Reboot recovery preserves original node/boot/policy/body/UUID/sequence/TTL.
 Old control requests use receipt-only mode and cannot create a new ACK or lease.

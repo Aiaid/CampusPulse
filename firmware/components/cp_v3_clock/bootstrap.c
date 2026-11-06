@@ -177,6 +177,7 @@ static esp_err_t bootstrap(const cp_settings_t *settings,const uint8_t spki[91],
        !*key_id||strnlen(key_id,33)>32)return ESP_ERR_INVALID_ARG;
     TaskHandle_t expected=NULL;
     if(!__atomic_compare_exchange_n(&owner,&expected,xTaskGetCurrentTaskHandle(),false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))return ESP_ERR_INVALID_STATE;
+    const uint64_t began=mono();const char *stage="network_init";
     wifi_mode_t mode;esp_err_t result=esp_wifi_get_mode(&mode);
     if(result!=ESP_ERR_WIFI_NOT_INIT||esp_sntp_enabled()){
         __atomic_store_n(&owner,NULL,__ATOMIC_RELEASE);return ESP_ERR_INVALID_STATE;
@@ -217,8 +218,9 @@ static esp_err_t bootstrap(const cp_settings_t *settings,const uint8_t spki[91],
         enterprise_enabled=true;
     }
     result=esp_wifi_start();if(result!=ESP_OK)goto done;wifi_started=true;
-    result=associate(wifi_options);if(result!=ESP_OK)goto done;
+    stage="wifi_ip";result=associate(wifi_options);if(result!=ESP_OK)goto done;
     uint64_t deadline;
+    stage="sntp_hint";
     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);esp_sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
     esp_sntp_setservername(0,"ntp.aliyun.com");
     esp_sntp_set_time_sync_notification_cb(hint_received);esp_sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
@@ -226,7 +228,7 @@ static esp_err_t bootstrap(const cp_settings_t *settings,const uint8_t spki[91],
     while(!cancelled()&&mono()<deadline&&!__atomic_load_n(&hint_ready,__ATOMIC_ACQUIRE))wait_tick();
     esp_sntp_stop();esp_sntp_set_time_sync_notification_cb(NULL);sntp_started=false;
     if(cancelled()||!__atomic_load_n(&hint_ready,__ATOMIC_ACQUIRE)){result=ESP_ERR_TIMEOUT;goto done;}
-    result=ESP_ERR_INVALID_RESPONSE;
+    stage="signed_probe";result=ESP_ERR_INVALID_RESPONSE;
     for(unsigned attempt=0;attempt<3&&!cancelled();attempt++){
         uint8_t random[32];char nonce[65];esp_fill_random(random,sizeof random);
         static const char hex[]="0123456789abcdef";
@@ -266,8 +268,15 @@ static esp_err_t bootstrap(const cp_settings_t *settings,const uint8_t spki[91],
         if(attempt<2)vTaskDelay(pdMS_TO_TICKS(200));
     }
 done: {
+        /* Report only fixed phases and numeric owner state. Capture before
+         * stop clears it; never log network names, accounts, keys or responses. */
+        bool ip=__atomic_load_n(&link_up,__ATOMIC_ACQUIRE),hint=__atomic_load_n(&hint_ready,__ATOMIC_ACQUIRE);
+        uint32_t disconnects=__atomic_load_n(&disconnect_seq,__ATOMIC_ACQUIRE),reason=__atomic_load_n(&disconnect_reason,__ATOMIC_RELAXED);
         esp_err_t cleanup=cp_v3_clock_stop();
         if(cleanup!=ESP_OK)result=cleanup;
+        printf("V3 CLOCK stage=%s result=%ld cleanup=%ld elapsed_ms=%llu ip_current=%u sntp_hint=%u disconnects=%lu wifi_reason=%lu\n",
+            stage,(long)result,(long)cleanup,(unsigned long long)(mono()-began),(unsigned)ip,(unsigned)hint,
+            (unsigned long)disconnects,(unsigned long)reason);
         if(result!=ESP_OK)memset(out,0,sizeof *out);
         return result;
     }

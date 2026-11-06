@@ -7,8 +7,11 @@
 #include <string.h>
 #define TE_SMALL_BODY 1024u
 #define TE_SMALL_WORKING 4194304u
-#define TE_SMALL_STORAGE_DAY 1048576u
-#define TE_SMALL_UPLINK_DAY 131072u
+/* Logical accounting ceilings, not measured physical flash writes or network
+ * traffic. Allow one 60-second window plus a 40-second lease cadence throughout
+ * the day, including conservative NVS reservation overhead and restart room. */
+#define TE_SMALL_STORAGE_DAY (192u * 1024u * 1024u)
+#define TE_SMALL_UPLINK_DAY (8u * 1024u * 1024u)
 #define TE_SMALL_REFRESH_MS 1200000u
 /* ESP-IDF5.5.3 MQTT3.1.1 CONNACK4/5 are bad credentials/not authorized;
  * server-unavailable3 remains retryable. No client-provided status invents ACK. */

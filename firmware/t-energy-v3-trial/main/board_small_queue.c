@@ -185,13 +185,37 @@ te_v3_small_queue_result_t te_v3_small_queue_read(te_v3_small_queue_t *b,unsigne
     te_v3_small_queue_result_t r=enter(b); if(r!=TE_SMALL_QUEUE_OK) return r;
     return leave(b,result(cp_v3_queue_read(&b->queue,slot,body,cap,n,e)));
 }
+/* The shared queue conservatively quarantines a slot on any reclaim failure.
+ * A LIMIT here is different: reserve_mutation returned before invoking NVS.
+ * Restore PENDING only after independently rereading the identical valid
+ * record; any uncertain or changed storage stays quarantined. Caller holds
+ * the shared NVS lock. */
+static te_v3_small_queue_result_t reconcile_denied_reclaim(te_v3_small_queue_t *b,unsigned slot,
+    const cp_v3_queue_slot_t *before,uint32_t io_before,te_v3_small_queue_result_t r) {
+    if(r!=TE_SMALL_QUEUE_IO||slot>=CP_V3_QUEUE_SLOTS||before->state!=CP_V3_QUEUE_PENDING||
+       b->last_budget_result!=CP_V3_BUDGET_LIMIT||b->storage.uncertain||
+       b->queue.slots[slot].state!=CP_V3_QUEUE_QUARANTINED)return r;
+    size_t n=0;cp_v3_queue_tombstone_t identity;
+    int loaded=b->raw_store.load(b->raw_store.context,slot,b->queue.scratch,sizeof b->queue.scratch,&n);
+    if(loaded!=1||!cp_v3_queue_record_check(b->queue.scratch,n,slot,b->config.sha256,b->config.sha_context,&identity)||
+       memcmp(identity.record_sha256,before->record_sha256,sizeof identity.record_sha256))return r;
+    b->queue.slots[slot]=*before;
+    b->queue.io_failures=io_before;
+    return TE_SMALL_QUEUE_BUDGET;
+}
 te_v3_small_queue_result_t te_v3_small_queue_ack(te_v3_small_queue_t *b,unsigned slot,const void *receipt,size_t n) {
     te_v3_small_queue_result_t r=enter(b); if(r!=TE_SMALL_QUEUE_OK) return r;
-    return leave(b,result(cp_v3_queue_ack(&b->queue,slot,receipt,n)));
+    cp_v3_queue_slot_t before={0};if(slot<CP_V3_QUEUE_SLOTS)before=b->queue.slots[slot];
+    uint32_t io_before=b->queue.io_failures;b->last_budget_result=CP_V3_BUDGET_OK;
+    r=result(cp_v3_queue_ack(&b->queue,slot,receipt,n));
+    return leave(b,reconcile_denied_reclaim(b,slot,&before,io_before,r));
 }
 te_v3_small_queue_result_t te_v3_small_queue_ack_control(te_v3_small_queue_t *b,unsigned slot,const void *receipt,size_t n,cp_v3_queue_control_match_fn match,void *ctx) {
     te_v3_small_queue_result_t r=enter(b); if(r!=TE_SMALL_QUEUE_OK) return r;
-    return leave(b,result(cp_v3_queue_ack_control(&b->queue,slot,receipt,n,match,ctx)));
+    cp_v3_queue_slot_t before={0};if(slot<CP_V3_QUEUE_SLOTS)before=b->queue.slots[slot];
+    uint32_t io_before=b->queue.io_failures;b->last_budget_result=CP_V3_BUDGET_OK;
+    r=result(cp_v3_queue_ack_control(&b->queue,slot,receipt,n,match,ctx));
+    return leave(b,reconcile_denied_reclaim(b,slot,&before,io_before,r));
 }
 te_v3_small_queue_result_t te_v3_small_queue_expire(te_v3_small_queue_t *b) {
     te_v3_small_queue_result_t r=enter(b); if(r!=TE_SMALL_QUEUE_OK) return r;

@@ -2,6 +2,17 @@
 #include <assert.h>
 #include <stdio.h>
 int main(void){
+    /* Logical authorization envelope for a fixed 60 s profile: one window
+     * per minute, one 120 s lease renewed each 40 s, and two control/status
+     * records for each of 72 bounded cycles. Every record has a store and a
+     * reclaim; include a full 4 KiB budget-journal charge per mutation.
+     * This is a model, not a physical flash-write or endurance measurement. */
+    const uint64_t normal_records=1440u+2160u+2u*72u;
+    assert(normal_records*2u*(16384u+4096u)<TE_SMALL_STORAGE_DAY);
+    /* One maximum-size body per record, one maximum capability per cycle,
+     * plus 50% journal overhead and a lost 8 KiB credit at every cycle. */
+    const uint64_t post_bytes=normal_records*1024u+72u*4096u;
+    assert(post_bytes+post_bytes/2u+72u*8192u<TE_SMALL_UPLINK_DAY);
     assert(te_small_capture_windows(0,60000)==20&&te_small_capture_windows(0,30000)==40);
     assert(!te_small_capture_windows(0,0)&&!te_small_capture_windows(4,60000));
     assert(te_small_capture_windows(3,60000)==3);

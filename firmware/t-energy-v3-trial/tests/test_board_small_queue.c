@@ -34,6 +34,7 @@ static const char *boot_id="00000000-0000-4000-8000-000000000001";
 static const char *other_boot="00000000-0000-4000-8000-000000000099";
 static uint64_t utc_lower,utc_upper,deadline;
 static bool utc_known,deny_policy;
+static unsigned clock_reads,tamper_on_clock,tamper_slot;
 static unsigned lock_attempts,unlocks,policy_calls,control_calls;
 static cp_v3_scope_t applied_scope;
 
@@ -46,7 +47,9 @@ static void digest_real(const void *p,size_t n,char hex[65]) {
     for(unsigned i=0;i<32;i++) { hex[i*2]=digits[h[i]>>4]; hex[i*2+1]=digits[h[i]&15]; } hex[64]=0;
 }
 static bool trusted_time(void *ctx,uint64_t *lower,uint64_t *upper) {
-    (void)ctx; assert(held); *lower=utc_lower; *upper=utc_upper; return utc_known;
+    (void)ctx; assert(held);
+    if(++clock_reads==tamper_on_clock&&tamper_slot<24&&lengths[tamper_slot])values[tamper_slot][0]^=1;
+    *lower=utc_lower; *upper=utc_upper; return utc_known;
 }
 static bool lock_try(void *ctx) {
     (void)ctx; lock_attempts++; if(held) return false; held=true; return true;
@@ -83,6 +86,7 @@ static cp_v3_expected_t expected(cp_v3_queue_kind_t kind,unsigned batch,const vo
 static void fresh(void) {
     reset(); memset(&board,0,sizeof board); memset(&restarted,0,sizeof restarted);
     held=deny_policy=false; lock_attempts=unlocks=policy_calls=control_calls=0;
+    clock_reads=tamper_on_clock=tamper_slot=0;
     budget_present=budget_store_fails=false; memset(budget_record,0,sizeof budget_record);
     uint8_t budget_owner[CP_V3_BUDGET_OWNER_BYTES]={1};
     cp_v3_budget_store_t budget_store={.load=budget_load,.store=budget_save,.logical_write_bytes=4096};
@@ -372,8 +376,46 @@ static void budget_guards_mutations(void) {
     unsigned char frozen[TE_NVS_RECORD_MAX]; size_t frozen_n=lengths[0]; memcpy(frozen,values[0],frozen_n);
     char ack[2048]; size_t ack_n=receipt(&e,ack);
     assert(cp_v3_budget_configure(&budget,1000,CP_V3_BUDGET_DEFAULT_QUANTUM)==CP_V3_BUDGET_OK);
-    assert(te_v3_small_queue_ack(&board,0,ack,ack_n)==TE_SMALL_QUEUE_IO);
+    assert(te_v3_small_queue_ack(&board,0,ack,ack_n)==TE_SMALL_QUEUE_BUDGET);
     assert(board.last_budget_result==CP_V3_BUDGET_LIMIT); preserved_record(0,frozen,frozen_n);
+    assert(board.queue.slots[0].state==CP_V3_QUEUE_PENDING);
+}
+/* Reproduce the field failure with a synthetic lease and real receipt:
+ * after reboot the full daily reservation has no volatile credit. A denied
+ * reclaim must remain visible as pending, not as a corrupt/empty queue. */
+static void exhausted_budget_after_restart_preserves_lease(const char *request_path,const char *reply_path) {
+    fresh();
+    utc_lower=(utc_lower/86400000u)*86400000u+43200000u;utc_upper=utc_lower+1;deadline=utc_lower+10000;
+    char body[2048],reply[4096];size_t bn=fixture(request_path,body,sizeof body),rn=fixture(reply_path,reply,sizeof reply);
+    cp_v3_expected_t e=expected(CP_V3_QUEUE_CONTROL,2,body,bn);
+    strcpy(e.scope.node_id,"synthetic-stats-notregister");
+    assert(v3_parse(&control_workspace,body,bn));
+    assert(v3_string(&control_workspace,v3_field(&control_workspace,0,"boot_id"),e.scope.boot_id,sizeof e.scope.boot_id));
+    assert(v3_string(&control_workspace,v3_field(&control_workspace,0,"policy_id"),e.scope.policy_id,sizeof e.scope.policy_id));
+    assert(v3_string(&control_workspace,v3_field(&control_workspace,0,"policy_sha256"),e.scope.policy_sha256,sizeof e.scope.policy_sha256));
+    assert(v3_uint(&control_workspace,v3_field(&control_workspace,0,"assignment_generation"),1,V3_SAFE,&e.scope.assignment_generation));
+    strcpy(e.stream,"lease");applied_scope=e.scope;te_v3_small_queue_config_t cfg=config();
+    assert(te_v3_small_queue_open(&board,e.scope.node_id,e.scope.boot_id,&cfg)==TE_SMALL_QUEUE_OK);
+    unsigned slot=99;assert(te_v3_small_queue_push(&board,CP_V3_QUEUE_CONTROL,&e,body,bn,deadline,&slot)==TE_SMALL_QUEUE_OK);
+    unsigned char frozen[TE_NVS_RECORD_MAX];size_t frozen_n=lengths[slot];memcpy(frozen,values[slot],frozen_n);
+    cp_v3_budget_record_t full=budget.record;full.sequence=1;full.utc_day=(uint32_t)(utc_lower/86400000u);full.reserved_bytes=1048576;
+    assert(cp_v3_budget_encode(&full,budget_record));budget_present=true;
+    cp_v3_budget_store_t store={.load=budget_load,.store=budget_save,.logical_write_bytes=4096};
+    held=true;assert(cp_v3_budget_open(&budget,store,full.owner_key)==CP_V3_BUDGET_OK);held=false;
+    assert(cp_v3_budget_configure(&budget,1048576,32768)==CP_V3_BUDGET_OK);
+    reopen(e.scope.node_id,other_boot);assert(restarted.queue.slots[slot].state==CP_V3_QUEUE_PENDING);
+    uint32_t io_before=restarted.queue.io_failures;
+    for(unsigned i=0;i<2;i++){
+        assert(te_v3_small_queue_ack_control(&restarted,slot,reply,rn,strict_control,&control_workspace)==TE_SMALL_QUEUE_BUDGET);
+        assert(restarted.last_budget_result==CP_V3_BUDGET_LIMIT);
+        assert(restarted.queue.slots[slot].state==CP_V3_QUEUE_PENDING&&restarted.queue.io_failures==io_before);
+        preserved_record(slot,frozen,frozen_n);
+    }
+    /* If external state changes after receipt validation, the readback check
+     * must fail closed instead of relabelling a different record as pending. */
+    clock_reads=0;tamper_on_clock=3;tamper_slot=slot;
+    assert(te_v3_small_queue_ack_control(&restarted,slot,reply,rn,strict_control,&control_workspace)==TE_SMALL_QUEUE_IO);
+    assert(restarted.queue.slots[slot].state==CP_V3_QUEUE_QUARANTINED);
 }
 int main(int argc,char **argv) {
     assert(argc==1||argc==3);
@@ -381,5 +423,8 @@ int main(int argc,char **argv) {
     restart_receipts_and_expiry(); corrupt_and_foreign(); injected_storage_failures(); budget_guards_mutations();
     historical_control(argc==3?argv[1]:"firmware/t-energy-v3-trial/flash_queue/nvs_store/tests/fixtures/applied-ack-request.json",
         argc==3?argv[2]:"firmware/t-energy-v3-trial/flash_queue/nvs_store/tests/fixtures/applied-ack-receipt.json");
+    if(argc==3&&strstr(argv[1],"lease-request.json"))exhausted_budget_after_restart_preserves_lease(argv[1],argv[2]);
+    if(argc==1)exhausted_budget_after_restart_preserves_lease("firmware/t-energy-v3-trial/flash_queue/nvs_store/tests/fixtures/lease-request.json",
+        "firmware/t-energy-v3-trial/flash_queue/nvs_store/tests/fixtures/lease-receipt.json");
     puts("board small queue: real queue/NVS/SHA/strict receipt integration passed"); return 0;
 }

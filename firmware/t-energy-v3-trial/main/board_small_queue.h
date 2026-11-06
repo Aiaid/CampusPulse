@@ -17,7 +17,9 @@ typedef enum {
     TE_SMALL_QUEUE_CLOCK_UNKNOWN=CP_V3_QUEUE_CLOCK_UNKNOWN,
     TE_SMALL_QUEUE_BUSY,
     TE_SMALL_QUEUE_POLICY,
-    TE_SMALL_QUEUE_UNCERTAIN
+    TE_SMALL_QUEUE_UNCERTAIN,
+    /* The reservation was denied before the underlying NVS mutation. */
+    TE_SMALL_QUEUE_BUDGET
 } te_v3_small_queue_result_t;
 typedef struct {
     cp_v3_sha256_fn sha256; /* Actual SHA-256, never a checksum/test digest. */
