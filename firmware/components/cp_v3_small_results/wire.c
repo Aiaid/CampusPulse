@@ -12,6 +12,9 @@ static void emit(writer_t *w,const char *format,...) {
     if(n<0||(size_t)n>=w->cap-w->used) w->ok=false; else w->used+=(size_t)n;
 }
 static size_t length(const char *s,size_t cap) { size_t n=0; if(!s) return cap; while(n<cap&&s[n]) n++; return n; }
+static bool rules_valid(const char *rules) {
+    return rules&&length(rules,65)<65&&(!strcmp(rules,CP_V3_SMALL_RULESET)||!strcmp(rules,CP_V3_STATS_VEHICLE_RULESET));
+}
 static bool hex(const char *s,size_t n) {
     if(length(s,n+1)!=n) return false;
     for(size_t i=0;i<n;i++) if(!((s[i]>='0'&&s[i]<='9')||(s[i]>='a'&&s[i]<='f'))) return false;
@@ -91,11 +94,13 @@ cp_v3_result_t cp_v3_small_window_body(const cp_v3_scope_t *scope,const cp_v3_st
        s->received_reports<s->worker_reports||s->adv_reports+s->scan_response_reports!=s->worker_reports||s->unique_keys>s->worker_reports||
        s->callback_drops>SAFE||s->aggregation_drops>SAFE||s->address_overflow_reports>SAFE||s->scan_coverage_ms>s->duration_ms||
        s->quality_mask>63||length(s->rules_version,sizeof s->rules_version)>=sizeof s->rules_version||
-       strcmp(s->rules_version,CP_V3_SMALL_RULESET)||length(s->extractor_version,sizeof s->extractor_version)>=sizeof s->extractor_version||
+       !rules_valid(s->rules_version)||s->rules_verified||s->verified_keys||length(s->extractor_version,sizeof s->extractor_version)>=sizeof s->extractor_version||
        strcmp(s->extractor_version,CP_V3_STATS_VERSION)||!rssi_valid(s->rssi_samples,s->rssi_sum,s->rssi_min,s->rssi_max,s->worker_reports)) return CP_V3_INVALID;
     uint64_t categories=0,reports=0,rssi_n=0; int64_t rssi_sum=0;
     for(unsigned i=0;i<CP_V3_STATS_CLASS_COUNT;i++) {
-        categories+=s->counts[i]; if(i!=CP_V3_STATS_UNKNOWN&&s->counts[i]) return CP_V3_UNSUPPORTED;
+        categories+=s->counts[i];
+        if(s->counts[i]&&((!strcmp(s->rules_version,CP_V3_SMALL_RULESET)&&i!=CP_V3_STATS_UNKNOWN)||
+            i==CP_V3_STATS_PHONE_RELATED||i==CP_V3_STATS_OTHER)) return CP_V3_UNSUPPORTED;
     }
     if(categories!=s->unique_keys) return CP_V3_INVALID;
     for(unsigned i=0;i<s->bin_count;i++) {
@@ -126,12 +131,16 @@ cp_v3_result_t cp_v3_small_window_body(const cp_v3_scope_t *scope,const cp_v3_st
     emit(&w,"],\"s\":["); rssi_json(&w,s->rssi_samples,s->rssi_sum,s->rssi_min,s->rssi_max);
     emit(&w,"],\"l\":[%llu,%llu,%llu,%llu],\"f\":%u,\"v\":[\"%s\",\"%s\"]}",
         (unsigned long long)s->scan_coverage_ms,(unsigned long long)s->callback_drops,(unsigned long long)s->aggregation_drops,
-        (unsigned long long)s->address_overflow_reports,flags,CP_V3_STATS_VERSION,CP_V3_SMALL_RULESET);
+        (unsigned long long)s->address_overflow_reports,flags,CP_V3_STATS_VERSION,s->rules_version);
     return finish(&w,scope,batch,"window_statistics",seq,hash,context,used,expected);
 }
 cp_v3_result_t cp_v3_small_event_body(const cp_v3_scope_t *scope,const cp_v3_temporal_event_t *e,uint32_t slice_ms,
     const char *batch,uint32_t seq,cp_v3_sha256_fn hash,void *context,char *out,size_t cap,size_t *used,cp_v3_expected_t *expected) {
-    if(!prepare(scope,batch,seq,hash,out,cap,used,expected)||!e||!e->revision||!slice_ms||e->quality_mask>31||
+    return cp_v3_small_event_body_rules(scope,e,slice_ms,CP_V3_SMALL_RULESET,batch,seq,hash,context,out,cap,used,expected);
+}
+cp_v3_result_t cp_v3_small_event_body_rules(const cp_v3_scope_t *scope,const cp_v3_temporal_event_t *e,uint32_t slice_ms,
+    const char *rules,const char *batch,uint32_t seq,cp_v3_sha256_fn hash,void *context,char *out,size_t cap,size_t *used,cp_v3_expected_t *expected) {
+    if(!prepare(scope,batch,seq,hash,out,cap,used,expected)||!rules_valid(rules)||!e||!e->revision||!slice_ms||e->quality_mask>31||
        (unsigned)e->state>CP_V3_TEMPORAL_CENSORED||(unsigned)e->reason>CP_V3_TEMPORAL_LATE_REPORT||
        !ordered(e->start,e->last_seen)||!ordered(e->last_seen,e->observed_until)||
        (e->state!=CP_V3_TEMPORAL_OPEN&&!ordered(e->observed_until,e->end))||
@@ -161,7 +170,7 @@ cp_v3_result_t cp_v3_small_event_body(const cp_v3_scope_t *scope,const cp_v3_tem
     emit(&w,",\"r\":[%llu,%llu,%llu,%llu,",(unsigned long long)e->reports,(unsigned long long)e->present_slices,
         (unsigned long long)e->absent_slices,(unsigned long long)e->coverage_ms); rssi_json(&w,e->rssi_n,e->rssi_sum,e->rssi_min,e->rssi_max);
     emit(&w,"],\"c\":\"%s\",\"f\":%u,\"x\":[\"%s\",\"%s\"]}",reasons[e->reason],
-        e->quality_mask|(e->state==CP_V3_TEMPORAL_CENSORED?8u:0u),CP_V3_STATS_VERSION,CP_V3_SMALL_RULESET);
+        e->quality_mask|(e->state==CP_V3_TEMPORAL_CENSORED?8u:0u),CP_V3_STATS_VERSION,rules);
     return finish(&w,scope,batch,"candidate_events",seq,hash,context,used,expected);
 }
 cp_v3_result_t cp_v3_small_status_body(const cp_v3_scope_t *scope,const cp_v3_small_status_t *s,const char *batch,uint32_t seq,

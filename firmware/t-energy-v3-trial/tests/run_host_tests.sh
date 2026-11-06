@@ -6,7 +6,7 @@ FIRMWARE="$(cd -- "$PROJECT/.." && pwd)"
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/campuspulse-te-host.XXXXXX")"
 trap 'rm -rf -- "$OUT"' EXIT
 CC_BIN="${CC:-cc}"
-FLAGS=(-std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -fsanitize=address,undefined)
+FLAGS=(-I "$FIRMWARE/components/cp_vehicle/include" -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -fsanitize=address,undefined)
 bash "$TEST_DIR/run_maintenance_host_test.sh"
 bash "$TEST_DIR/run_requests_host_test.sh"
 bash "$TEST_DIR/run_policy_wait_host_test.sh"
@@ -55,7 +55,7 @@ UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/campuspulse-v3-uv}" uv run --no-project "$PRO
 "$OUT/resources"
 "$CC_BIN" "${FLAGS[@]}" -I "$PROJECT/main" -I "$FIRMWARE/components/cp_v3_stats/include" \
   -I "$FIRMWARE/components/cp_v3_temporal/include" "$PROJECT/main/board_admission.c" \
-  "$PROJECT/main/board_resources.c" "$FIRMWARE/components/cp_v3_stats/stats.c" \
+  "$PROJECT/main/board_resources.c" "$FIRMWARE/components/cp_v3_stats/stats.c" "$FIRMWARE/components/cp_vehicle/cp_vehicle.c" \
   "$FIRMWARE/components/cp_v3_temporal/temporal.c" "$TEST_DIR/test_board_resources_real.c" -o "$OUT/resources-real"
 "$OUT/resources-real"
 "$CC_BIN" "${FLAGS[@]}" -I "$TEST_DIR/esp_mock" -I "$PROJECT/main" \
@@ -65,11 +65,11 @@ UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/campuspulse-v3-uv}" uv run --no-project "$PRO
 "$OUT/report"
 "$CC_BIN" "${FLAGS[@]}" -I "$PROJECT/main" -I "$FIRMWARE/components/cp_v3_stats/include" \
   "$PROJECT/main/board_report.c" "$PROJECT/main/board_stats_worker.c" \
-  "$FIRMWARE/components/cp_v3_stats/stats.c" "$TEST_DIR/test_board_stats_worker.c" -o "$OUT/stats-worker"
+  "$FIRMWARE/components/cp_v3_stats/stats.c" "$FIRMWARE/components/cp_vehicle/cp_vehicle.c" "$TEST_DIR/test_board_stats_worker.c" -o "$OUT/stats-worker"
 "$OUT/stats-worker"
 "$CC_BIN" "${FLAGS[@]}" -I "$PROJECT/main" -I "$FIRMWARE/components/cp_v3_stats/include" \
   "$PROJECT/main/board_report.c" "$PROJECT/main/board_stats_worker.c" "$PROJECT/main/board_stats_window.c" \
-  "$FIRMWARE/components/cp_v3_stats/stats.c" "$TEST_DIR/test_board_stats_window.c" -o "$OUT/stats-window"
+  "$FIRMWARE/components/cp_v3_stats/stats.c" "$FIRMWARE/components/cp_vehicle/cp_vehicle.c" "$TEST_DIR/test_board_stats_window.c" -o "$OUT/stats-window"
 "$OUT/stats-window"
 "$CC_BIN" "${FLAGS[@]}" -I "$PROJECT/main" "$PROJECT/main/board_capture.c" \
   "$TEST_DIR/test_board_capture.c" -o "$OUT/capture"
@@ -108,7 +108,7 @@ read -r -a CRYPTO_FLAGS <<< "$(pkg-config --cflags --libs openssl)"
   -I "$FIRMWARE/components/cp_v3_stats/include" -I "$FIRMWARE/components/cp_v3_temporal/include" \
   -I "$FIRMWARE/components/cp_v3_control/include" -I "$FIRMWARE/components/cp_v3_control" \
   -I "$FIRMWARE/components/cp_v3_evidence/include" "$PROJECT/main/board_capabilities.c" \
-  "$TEST_DIR/test_board_capabilities.c" "$FIRMWARE/components/cp_v3_stats/stats.c" \
+  "$TEST_DIR/test_board_capabilities.c" "$FIRMWARE/components/cp_v3_stats/stats.c" "$FIRMWARE/components/cp_vehicle/cp_vehicle.c" \
   "$FIRMWARE/components/cp_v3_temporal/temporal.c" "$FIRMWARE/components/cp_v3_control/control.c" \
   "$FIRMWARE/components/cp_v3_control/small.c" "$FIRMWARE/components/cp_v3_control/json.c" \
   "$FIRMWARE/components/cp_v3_evidence/wire.c" "$FIRMWARE/components/cp_v3_evidence/evidence.c" \
@@ -122,7 +122,7 @@ read -r -a CRYPTO_FLAGS <<< "$(pkg-config --cflags --libs openssl)"
   "$PROJECT/flash_queue/nvs_store/nvs_store.c" "$PROJECT/flash_queue/nvs_store/tests/window_handoff.c" \
   "$PROJECT/main/board_window_freeze.c" "$PROJECT/main/board_handoff.c" \
   "$PROJECT/main/board_report.c" "$PROJECT/main/board_stats_worker.c" "$PROJECT/main/board_stats_window.c" \
-  "$FIRMWARE/components/cp_v3_stats/stats.c" "$FIRMWARE/components/cp_v3_small_results/wire.c" \
+  "$FIRMWARE/components/cp_v3_stats/stats.c" "$FIRMWARE/components/cp_vehicle/cp_vehicle.c" "$FIRMWARE/components/cp_v3_small_results/wire.c" \
   "$FIRMWARE/components/cp_v3_queue/queue.c" "$FIRMWARE/components/cp_v3_evidence/wire.c" \
   "$FIRMWARE/components/cp_v3_evidence/evidence.c" "${CRYPTO_FLAGS[@]}" -o "$OUT/window-handoff"
 "$OUT/window-handoff"

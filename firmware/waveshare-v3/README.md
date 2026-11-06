@@ -2,7 +2,10 @@
 
 This separate ESP-IDF5.5.3 application targets the verified Waveshare
 ESP32-S3-ePaper-1.54 V2 through the existing board/power/display adapters.
-Version0.4.1 adds default saved startup and explicit PEAP-NONE restoration. First USB setup uses
+Version0.5.2 adds same-boot control renewal, online scope/rules changes and
+owner-only IP-link recovery. Its existing 64KiB LVGL object pool uses PSRAM;
+SPI/DMA buffers, task stacks and MQTT memory admission floors are unchanged.
+The default saved startup and explicit PEAP-NONE restoration added in0.4.1 remain. First USB setup uses
 fresh nonce-bound identity/time; optional saving occurs only after a real matched
 applied ACK. START ACCEPTED alone is not save confirmation. A saved open/personal/PEAP-NONE
 Wi-Fi profile recovers signed time, connects native MQTT/TLS and obtains an
@@ -104,18 +107,24 @@ Persistent external transport bytes count against the policy working budget;
 PSRAM still needs512KiB free and a128KiB largest block after preparation. Phase
 logs and real-device acceptance remain necessary; a build cannot prove headroom.
 
-The first implementation applies one real small-statistics policy per boot:
+The runtime applies real small-statistics policies at closed boundaries:
 30/60-second windows, 5-second bins, capacity up to512, and only
-`cp-v3-stats/1` / `unclassified-v1`. All retained address/type keys are unknown;
-no names, addresses, raw reports, or people estimates upload. Rolling history
+`cp-v3-stats/1` with either `unclassified-v1` or the explicitly advertised
+`cp-v3-vehicle-candidates/1`. The former retains all keys as unknown; the latter
+uses conservative existing vehicle rules and preserves exclusions/unknown.
+No names, addresses, raw reports, or people estimates upload. Rolling history
 is independent of window upload: up to10minutes/2second slices,512tracks,
 64open events; terminal-only optional event uploads can outlive the history.
-This runtime does not implement hot policy reallocation or revision scheduling;
+This runtime does not implement hot resource reallocation or revision scheduling;
 unsupported policies receive a committed failed ACK, never fake application.
-Autonomous operation safely cycles through a real new boot after approximately
-20minutes, preserving original frozen records and revalidating time/authority.
-Uncertain/volatile work blocks restart. Physical stop takes priority, and daily
-budgets and administrator grant expiry remain effective across reboots.
+Normal operation renews signed time, capabilities, policies and leases without
+a scheduled reboot. Compatible placement/dataset/rules changes park storage,
+preserve old frozen bytes, rebind the collector and require a real new ACK.
+IP recovery uses the existing owner/configuration and confirmed MQTT stop;
+it does not grant observation authority. Physical stop, daily budgets and the
+administrator cutoff remain effective. Expired in-flight renewal candidates
+and cancelled pre-Ready transitions can remain paused; see the
+[delivery and acceptance boundaries](../../docs/notes/waveshare-continuous-2026-11-06.md).
 
 `cp_v3_capture` owns the nonblocking SDK callback and collector worker.
 The storage task PEEKs handoffs, assigns UUID and boot-stream sequence once,
@@ -192,7 +201,8 @@ Hold BOOT2seconds to
 stop to USB; PWR requests shutdown. Cleanup pauses and drains collection,
 freezes outstanding handoffs, stops/drains raw, stops network, checks media sync
 and unmounts before safe power release. An uncertain/unfinished writer blocks
-safe power release. A new allocation/policy requires reboot; safe USB standby
+safe power release. A resource reallocation requires maintenance; compatible
+scope/rules changes use the online path. Safe USB standby
 shows this explicitly: HELLO returns `restart_required`, V3START is rejected,
 and physical USB `RESTART` reboots only after safe unmount. PWR remains available after safe completion.
 Explicit bounded-test completion stays in USB standby; only a PWR request

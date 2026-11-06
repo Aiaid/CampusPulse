@@ -39,7 +39,8 @@ struct cp_v3_capture {
     cp_v3_temporal_t *temporal;
     cp_v3_scope_t scope,requested_scope;
     cp_v3_temporal_time_t window_start_time,last_temporal;
-    cp_v3_temporal_context_t temporal_context;
+    cp_v3_temporal_context_t temporal_context,requested_context;
+    const char *requested_rules;
     uint64_t epoch_us,window_start_us,window_end_us,window_index,deadline_ms,trial_end_us;
     uint64_t pause_us,scan_transition_us;
     uint32_t next_window_seq,requested_seq,interval_units,window_units;
@@ -48,7 +49,7 @@ struct cp_v3_capture {
     esp_err_t command_result;
     cp_v3_temporal_reason_t pause_reason;
     bool synchronized,accept,scanning,want_running,pause_requested,manual_pause;
-    bool start_requested,have_window,pending_window_valid,held_valid,scan_transition;
+    bool start_requested,rebind_requested,have_window,pending_window_valid,held_valid,scan_transition;
     uint16_t held;
 };
 static cp_v3_capture_t *instance;
@@ -56,6 +57,11 @@ static cp_v3_capture_status_t preparation;
 static bool attempted;
 
 static uint64_t now_us(void) { return (uint64_t)esp_timer_get_time(); }
+static const char *compiled_rules(const char *rules) {
+    if(rules&&!strcmp(rules,CP_V3_STATS_RULESET))return CP_V3_STATS_RULESET;
+    if(rules&&!strcmp(rules,CP_V3_STATS_VEHICLE_RULESET))return CP_V3_STATS_VEHICLE_RULESET;
+    return NULL;
+}
 static bool identifier(const char *value,size_t capacity) {
     const char *end=memchr(value,0,capacity); if(!end||end==value) return false;
     for(const char *p=value;p<end;p++) if(!((*p>='a'&&*p<='z')||(*p>='0'&&*p<='9')||
@@ -402,8 +408,81 @@ static bool idle_barrier(cp_v3_capture_t *s,uint64_t *at) {
     }
     portEXIT_CRITICAL(&s->source); return idle;
 }
+/* source and handoff locks held. Do not trust cached quiescent alone: the last
+ * status publication can precede a newly queued command or callback. */
+static bool rebind_idle_locked(cp_v3_capture_t *s) {
+    return s->status.prepared&&!s->status.failed&&s->status.paused&&!s->status.running&&
+        !s->status.bounded_complete&&s->synchronized&&!s->accept&&!s->scanning&&!s->want_running&&
+        !s->callbacks&&!s->have_window&&!s->pending_window_valid&&!s->held_valid&&
+        !uxQueueMessagesWaiting(s->ready)&&!s->start_requested&&!s->pause_requested&&!s->scan_transition&&
+        !s->window_count&&!s->event_ready&&!s->event_release_requested;
+}
+/* source lock held. The caller supplies actual scope/context; the adapter does
+ * not synthesize a new policy identity or a placement generation. */
+static bool rebind_scope_locked(cp_v3_capture_t *s,const cp_v3_scope_t *scope,
+    const cp_v3_temporal_context_t *context) {
+    bool place_changed=strcmp(s->scope.placement_id,scope->placement_id)||strcmp(s->scope.dataset,scope->dataset);
+    return s->scope.boot_id[0]&&!strcmp(s->scope.node_id,scope->node_id)&&!strcmp(s->scope.boot_id,scope->boot_id)&&
+        scope->assignment_generation>s->scope.assignment_generation&&
+        context->boot_generation==s->temporal_context.boot_generation&&
+        context->config_generation==scope->assignment_generation&&
+        context->config_generation>s->temporal_context.config_generation&&
+        (place_changed?context->placement_generation>s->temporal_context.placement_generation:
+            context->placement_generation==s->temporal_context.placement_generation);
+}
+static esp_err_t rebind_worker(cp_v3_capture_t *s) {
+    xSemaphoreTake(s->handoff,portMAX_DELAY);portENTER_CRITICAL(&s->source);
+    bool ready=rebind_idle_locked(s)&&rebind_scope_locked(s,&s->requested_scope,&s->requested_context);
+    portEXIT_CRITICAL(&s->source);xSemaphoreGive(s->handoff);
+    if(!ready||ble_gap_disc_active())return ESP_ERR_INVALID_STATE;
+    cp_v3_temporal_time_t at=mapped(s,now_us());
+    if(at.mono_ms<s->last_temporal.mono_ms||at.clock_epoch<s->last_temporal.clock_epoch)return ESP_ERR_INVALID_STATE;
+    bool place_changed=strcmp(s->scope.placement_id,s->requested_scope.placement_id)||strcmp(s->scope.dataset,s->requested_scope.dataset);
+    cp_v3_temporal_reason_t reason=place_changed?CP_V3_TEMPORAL_PLACEMENT_CHANGE:CP_V3_TEMPORAL_CONFIG_CHANGE;
+    if(s->temporal) {
+        /* Fence with the OLD context first. Even an unexpectedly open episode
+         * discovered here must reach storage under its original scope. */
+        cp_v3_temporal_reason_t fence=at.clock_epoch!=s->last_temporal.clock_epoch||
+            at.utc_known!=s->last_temporal.utc_known?CP_V3_TEMPORAL_CLOCK_CHANGE:reason;
+        cp_v3_temporal_result_t result=cp_v3_temporal_boundary(s->temporal,at,&s->temporal_context,fence);
+        if(result!=CP_V3_TEMPORAL_OK&&result!=CP_V3_TEMPORAL_BACKPRESSURE)return ESP_ERR_INVALID_STATE;
+        s->last_temporal=at;
+        cp_v3_temporal_status_t temporal;cp_v3_temporal_status(s->temporal,&temporal);
+        if(temporal.open_events||temporal.pending_terminals||temporal.terminal_events||temporal.blocked) {
+            drain_events(s);return ESP_ERR_INVALID_STATE;
+        }
+        if(cp_v3_temporal_boundary(s->temporal,at,&s->requested_context,reason)!=CP_V3_TEMPORAL_OK)
+            return ESP_ERR_INVALID_STATE;
+    }
+    xSemaphoreTake(s->handoff,portMAX_DELAY);portENTER_CRITICAL(&s->source);
+    /* A host reset/stop can arrive while the worker fences temporal state. It
+     * must not commit a new allowed scope after such an interruption. */
+    ready=rebind_idle_locked(s)&&rebind_scope_locked(s,&s->requested_scope,&s->requested_context);
+    if(ready)ready=cp_v3_stats_set_rules(s->statistics,s->requested_rules);
+    if(ready) {
+        s->scope=s->requested_scope;s->temporal_context=s->requested_context;s->config.context=s->requested_context;
+        s->config.statistics.rules_version=s->requested_rules;
+        s->last_temporal=at;
+    }
+    portEXIT_CRITICAL(&s->source);xSemaphoreGive(s->handoff);
+    if(!ready&&s->temporal) {
+        /* No reports can enter during this command. Restore only the volatile
+         * context if a host interruption raced the final check, so a later
+         * same-scope resume cannot emit old-scope events with the new context. */
+        if(cp_v3_temporal_boundary(s->temporal,at,&s->temporal_context,reason)!=CP_V3_TEMPORAL_OK)
+            fail(s,"rebind_restore",ESP_FAIL);
+    }
+    return ready?ESP_OK:ESP_ERR_INVALID_STATE;
+}
 static void step(cp_v3_capture_t *s) {
     drain_events(s);
+    if(s->rebind_requested) {
+        esp_err_t result=rebind_worker(s);
+        cp_v3_temporal_status_t temporal={0};if(s->temporal)cp_v3_temporal_status(s->temporal,&temporal);
+        portENTER_CRITICAL(&s->source);s->rebind_requested=false;s->command_result=result;
+        s->status.temporal=temporal;s->status.quiescent=result==ESP_OK;
+        s->completed_command=s->command;portEXIT_CRITICAL(&s->source);
+    }
     if(s->start_requested) {
         bool initial=s->scope.boot_id[0]==0;
         s->scope=s->requested_scope; s->next_window_seq=s->requested_seq;
@@ -511,7 +590,7 @@ static void step(cp_v3_capture_t *s) {
     portENTER_CRITICAL(&s->source); s->status.temporal=temporal;
     s->status.window_handoffs=windows;s->status.event_handoffs=events;
     s->status.quiescent=!s->status.running&&!s->want_running&&!s->have_window&&!s->pending_window_valid&&
-        !s->held_valid&&!s->callbacks&&!s->start_requested&&!s->pause_requested&&!windows&&!events&&
+        !s->held_valid&&!s->callbacks&&!s->start_requested&&!s->rebind_requested&&!s->pause_requested&&!windows&&!events&&
         !temporal.open_events&&!temporal.pending_terminals&&!temporal.terminal_events;
     s->status.collector_stack_min=(uint32_t)uxTaskGetStackHighWaterMark(NULL);
     s->status.internal_free=measured.internal_free; s->status.internal_largest=measured.internal_largest;
@@ -550,6 +629,7 @@ esp_err_t cp_v3_capture_prepare(const cp_v3_capture_config_t *config,cp_v3_captu
     if(s->status.statistics_alignment_remainder){fail(s,"statistics_alignment",ESP_ERR_INVALID_STATE);return ESP_ERR_INVALID_STATE;}
     s->statistics=cp_v3_stats_init(statistics,s->status.statistics_bytes,&config->statistics);
     if(!s->statistics) { fail(s,"statistics_config",ESP_ERR_INVALID_ARG); return ESP_ERR_INVALID_ARG; }
+    s->config.statistics.rules_version=compiled_rules(config->statistics.rules_version);
     s->status.report_bytes=(size_t)s->config.report_slots*sizeof *s->reports;
     s->reports=allocate(s,"reports",s->status.report_bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT); if(!s->reports) return ESP_ERR_NO_MEM;
     s->status.window_bytes=(size_t)s->config.window_slots*sizeof *s->windows;
@@ -608,7 +688,7 @@ esp_err_t cp_v3_capture_start(cp_v3_capture_t *s,const cp_v3_scope_t *scope,uint
        deadline>UINT64_MAX/1000) return ESP_ERR_INVALID_ARG;
     xSemaphoreTake(s->api,portMAX_DELAY);
     portENTER_CRITICAL(&s->source);
-    bool ready=!s->status.running&&!s->want_running&&!s->have_window&&!s->pending_window_valid&&!s->held_valid&&!uxQueueMessagesWaiting(s->ready)&&!s->start_requested&&
+    bool ready=!s->status.running&&!s->want_running&&!s->have_window&&!s->pending_window_valid&&!s->held_valid&&!uxQueueMessagesWaiting(s->ready)&&!s->start_requested&&!s->rebind_requested&&s->command<UINT32_MAX&&
         !s->status.bounded_complete&&(!s->scope.boot_id[0]||s->status.quiescent)&&
         s->synchronized&&deadline>now_us()/1000&&scope->assignment_generation==s->config.context.config_generation&&
         (!s->scope.boot_id[0]||(!strcmp(s->scope.boot_id,scope->boot_id)&&!strcmp(s->scope.node_id,scope->node_id)&&
@@ -623,6 +703,34 @@ esp_err_t cp_v3_capture_start(cp_v3_capture_t *s,const cp_v3_scope_t *scope,uint
     while(s->completed_command!=command&&now_us()<stop) wait_tick(s);
     esp_err_t result=s->completed_command==command?s->command_result:ESP_ERR_TIMEOUT;
     xSemaphoreGive(s->api); return result;
+}
+esp_err_t cp_v3_capture_rebind(cp_v3_capture_t *s,const cp_v3_scope_t *scope,
+    const cp_v3_temporal_context_t *context,uint32_t timeout) {
+    return cp_v3_capture_rebind_rules(s,scope,context,s?s->config.statistics.rules_version:NULL,timeout);
+}
+esp_err_t cp_v3_capture_rebind_rules(cp_v3_capture_t *s,const cp_v3_scope_t *scope,
+    const cp_v3_temporal_context_t *context,const char *rules,uint32_t timeout) {
+    rules=compiled_rules(rules);
+    if(!s||!scope_valid(scope)||!context||!context->boot_generation||!context->config_generation||
+       !context->placement_generation||!rules||!timeout||!s->status.prepared||s->status.failed)return ESP_ERR_INVALID_ARG;
+    uint64_t end=now_us()+(uint64_t)timeout*1000;
+    if(xSemaphoreTake(s->api,pdMS_TO_TICKS(timeout))!=pdTRUE)return ESP_ERR_TIMEOUT;
+    xSemaphoreTake(s->handoff,portMAX_DELAY);portENTER_CRITICAL(&s->source);
+    bool ready=rebind_idle_locked(s)&&s->status.quiescent&&!s->rebind_requested&&s->command<UINT32_MAX&&
+        !s->status.temporal.open_events&&!s->status.temporal.pending_terminals&&!s->status.temporal.terminal_events&&
+        rebind_scope_locked(s,scope,context);
+    if(!ready) {portEXIT_CRITICAL(&s->source);xSemaphoreGive(s->handoff);xSemaphoreGive(s->api);return ESP_ERR_INVALID_STATE;}
+    s->requested_scope=*scope;s->requested_context=*context;s->requested_rules=rules;s->rebind_requested=true;s->status.quiescent=false;
+    uint32_t command=++s->command;portEXIT_CRITICAL(&s->source);xSemaphoreGive(s->handoff);
+    esp_err_t result=ESP_ERR_TIMEOUT;
+    for(;;) {
+        portENTER_CRITICAL(&s->source);bool done=s->completed_command==command;
+        if(done)result=s->command_result;
+        portEXIT_CRITICAL(&s->source);
+        if(done||now_us()>=end)break;
+        wait_tick(s);
+    }
+    xSemaphoreGive(s->api);return result;
 }
 esp_err_t cp_v3_capture_deadline(cp_v3_capture_t *s,uint64_t deadline) {
     if(!s||!s->status.prepared||deadline>UINT64_MAX/1000) return ESP_ERR_INVALID_ARG;

@@ -210,15 +210,22 @@ cp_v3_control_result_t cp_v3_control_registration_receipt(cp_v3_control_t *c,con
         at<c->capability_issued_utc_ms||at>now.utc_ms+now.uncertainty_ms)return CP_V3_CONTROL_BINDING_MISMATCH;
     if(c->registered_at_utc_ms&&c->registered_at_utc_ms!=at)return CP_V3_CONTROL_BINDING_MISMATCH;
     c->registered_at_utc_ms=at;
+    if(c->capability_renewal)c->renewal_registered=true;
     c->state=CP_V3_CONTROL_REGISTERED;return CP_V3_CONTROL_OK;
 }
 cp_v3_control_result_t cp_v3_control_offer(cp_v3_control_t *c,const void *json,size_t length,cp_v3_time_t now){
     if(!c||c->state<CP_V3_CONTROL_REGISTERED||!current(c,now))return CP_V3_CONTROL_STATE;
     W *w=c->workspace;uint64_t server_time;char text[65];
-    if(!v3_parse(w,json,length)||!v3_fields(w,0,"protocol server_time data_ingestion_available requires_device_ack config reason applied_generation activation_not_before")||
+    if(!v3_parse(w,json,length)||!v3_fields_optional(w,0,"protocol server_time data_ingestion_available requires_device_ack config reason applied_generation activation_not_before","online_transition")||
         !eq(w,0,"protocol","campuspulse/3")||!yes(w,0,"data_ingestion_available")||!yes(w,0,"requires_device_ack")||
         !date(w,0,"server_time",&server_time)||server_time>now.utc_ms+now.uncertainty_ms||
         (!v3_is(w,f(w,0,"applied_generation"),V3_NULL)&&!u(w,0,"applied_generation",1,V3_SAFE,NULL)))return CP_V3_CONTROL_INVALID;
+    /* A negotiated descriptor is only a board-owned pause intent. It cannot
+     * supply policy bytes, change their hash, or satisfy any authority check.
+     * The runtime validates its complete binding/type/expiry before acting. */
+    int transition=f(w,0,"online_transition");
+    if(transition>=0&&(!c->capability_online_scope_rebind||
+        (!v3_is(w,transition,V3_NULL)&&!v3_is(w,transition,V3_OBJECT))))return CP_V3_CONTROL_INVALID;
     int envelope=f(w,0,"config");
     if(v3_is(w,envelope,V3_NULL))return v3_string(w,f(w,0,"reason"),text,sizeof text)&&v3_is(w,f(w,0,"activation_not_before"),V3_NULL)?CP_V3_CONTROL_WAIT:CP_V3_CONTROL_INVALID;
     if(!v3_is(w,f(w,0,"reason"),V3_NULL)||!v3_fields(w,envelope,"schema policy policy_sha256")||!eq(w,envelope,"schema","device-config-envelope/3"))return CP_V3_CONTROL_INVALID;

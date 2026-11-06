@@ -49,6 +49,22 @@ int main(int argc,char **argv) {
         assert(cp_v3_small_window_body(&s,&w,end,batch,1,hash,NULL,body,sizeof body,&bytes,&expected)==CP_V3_INVALID);
         w=snapshot(duration); w.counts[CP_V3_STATS_UNKNOWN]--; w.counts[CP_V3_STATS_PHONE_RELATED]++;
         assert(cp_v3_small_window_body(&s,&w,end,batch,1,hash,NULL,body,sizeof body,&bytes,&expected)==CP_V3_UNSUPPORTED);
+        w=snapshot(duration); strcpy(w.rules_version,CP_V3_STATS_VEHICLE_RULESET);
+        w.counts[CP_V3_STATS_UNKNOWN]=0; w.counts[CP_V3_STATS_E_BIKE_RELATED]=1; w.counts[CP_V3_STATS_CAR_RELATED]=1;
+        assert(cp_v3_small_window_body(&s,&w,end,batch,1,hash,NULL,body,sizeof body,&bytes,&expected)==CP_V3_OK);
+        assert(strstr(body,"\"c\":[0,1,1,0,0,0]")&&strstr(body,CP_V3_STATS_VEHICLE_RULESET));
+        emit(body,bytes,&expected,duration,false,fixtures);
+        if(!fixtures) printf("compact synthetic vehicle-candidate window%us=%zu bytes\n",duration/1000,bytes);
+        w.counts[CP_V3_STATS_CAR_RELATED]=0; w.counts[CP_V3_STATS_CONFLICTING]=1;
+        assert(cp_v3_small_window_body(&s,&w,end,batch,1,hash,NULL,body,sizeof body,&bytes,&expected)==CP_V3_OK);
+        w.counts[CP_V3_STATS_CONFLICTING]=0; w.counts[CP_V3_STATS_PHONE_RELATED]=1;
+        assert(cp_v3_small_window_body(&s,&w,end,batch,1,hash,NULL,body,sizeof body,&bytes,&expected)==CP_V3_UNSUPPORTED);
+        w=snapshot(duration); strcpy(w.rules_version,"unreviewed/1");
+        assert(cp_v3_small_window_body(&s,&w,end,batch,1,hash,NULL,body,sizeof body,&bytes,&expected)==CP_V3_INVALID);
+        w=snapshot(duration); strcpy(w.rules_version,CP_V3_STATS_VEHICLE_RULESET); w.rules_verified=true;
+        assert(cp_v3_small_window_body(&s,&w,end,batch,1,hash,NULL,body,sizeof body,&bytes,&expected)==CP_V3_INVALID);
+        w.rules_verified=false; w.verified_keys=1;
+        assert(cp_v3_small_window_body(&s,&w,end,batch,1,hash,NULL,body,sizeof body,&bytes,&expected)==CP_V3_INVALID);
         w=snapshot(duration); assert(cp_v3_small_window_body(&s,&w,end,batch,1,hash,NULL,body,128,&bytes,&expected)==CP_V3_OUTPUT_FULL&&bytes==0&&!body[0]);
     }
     cp_v3_temporal_event_t event={.revision=1,.state=CP_V3_TEMPORAL_CLOSED,.reason=CP_V3_TEMPORAL_OBSERVED_GAP,
@@ -57,6 +73,9 @@ int main(int argc,char **argv) {
     event.event_id[6]=0x40; event.event_id[8]=0x80; event.event_id[15]=3;
     assert(cp_v3_small_event_body(&s,&event,1000,batch,1,hash,NULL,body,sizeof body,&bytes,&expected)==CP_V3_OK);
     emit(body,bytes,&expected,30000,false,fixtures); if(!fixtures) printf("compact synthetic event=%zu bytes\n",bytes);
+    assert(cp_v3_small_event_body_rules(&s,&event,1000,CP_V3_STATS_VEHICLE_RULESET,batch,1,hash,NULL,body,sizeof body,&bytes,&expected)==CP_V3_OK);
+    emit(body,bytes,&expected,30000,false,fixtures);
+    assert(cp_v3_small_event_body_rules(&s,&event,1000,"unreviewed/1",batch,1,hash,NULL,body,sizeof body,&bytes,&expected)==CP_V3_INVALID);
     event.state=CP_V3_TEMPORAL_CENSORED; event.reason=CP_V3_TEMPORAL_TIMEOUT;
     assert(cp_v3_small_event_body(&s,&event,1000,batch,1,hash,NULL,body,sizeof body,&bytes,&expected)==CP_V3_OK);
     emit(body,bytes,&expected,30000,false,fixtures);

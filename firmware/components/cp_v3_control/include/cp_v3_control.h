@@ -6,6 +6,10 @@
 #define CP_V3_CONTROL_ACK_MAX 2048u
 #define CP_V3_CONTROL_TOKENS 512u
 #define CP_V3_SMALL_PRODUCER "cp-v3-small/1"
+/* Pure negotiation allowlist; this core neither classifies reports nor links
+ * a statistics implementation. A policy must select an actually claimed rule. */
+#define CP_V3_CONTROL_RULESET_UNCLASSIFIED "unclassified-v1"
+#define CP_V3_CONTROL_RULESET_VEHICLE "cp-v3-vehicle-candidates/1"
 typedef enum { CP_V3_TEMPORAL_REPORT_OFF, CP_V3_TEMPORAL_REPORT_TERMINAL,
     CP_V3_TEMPORAL_REPORT_REVISIONS } cp_v3_control_report_mode_t;
 typedef struct {
@@ -48,6 +52,7 @@ typedef struct {
     uint64_t not_before_utc_ms, expires_utc_ms, accept_until_utc_ms;
     /* Small statistics never narrows capacity through legacy evidence limits. */
     bool statistics, collection_enabled, mobile_research, candidate_events, drain_frozen, mqtt_tls;
+    char ruleset_version[65];
     uint16_t stats_max_addresses;
     uint32_t window_ms, max_body_bytes;
     uint64_t window_reserve_bytes, event_reserve_bytes;
@@ -107,6 +112,8 @@ typedef struct {
     cp_v3_sha256_fn sha256;
     void *hash_context;
     bool small_statistics, capability_events, capability_local_raw, capability_temporal, capability_mqtt_tls;
+    bool capability_online_scope_rebind, capability_online_renewal;
+    uint8_t capability_rulesets; /* internal exact allowlist membership mask */
     uint32_t capability_body_bytes, capability_raw_sync_ms;
     uint64_t capability_raw_segment_bytes;
     cp_v3_control_temporal_t temporal_cap;
@@ -114,12 +121,20 @@ typedef struct {
     char lease_json[CP_V3_CONTROL_ACK_MAX];
     size_t lease_length;
     uint32_t contact_seq, pending_contact_seq, span_seq;
+    uint32_t detached_contact_seq;
     uint64_t contact_uptime_ms, pending_uptime_ms, lease_server_utc_ms;
     uint64_t capture_span_start_utc_ms;
     bool lease_pending, lease_contiguous;
     uint64_t trusted_utc_lower_ms;
     uint64_t staged_from_generation;
     uint64_t last_applied_generation;
+    /* Capability renewal is a separate candidate type, never an exemption to
+     * ordinary staged assignment's equal-capability guard. */
+    bool capability_renewal, renewal_registered;
+    char renewal_from_capability_sha256[65], renewal_from_policy_sha256[65];
+    char renewal_capability_sha256[65];
+    uint32_t renewal_from_registration_seq, renewal_from_apply_seq;
+    cp_v3_boundary_t renewal_boundary;
 } cp_v3_control_t;
 
 cp_v3_control_result_t cp_v3_control_init(cp_v3_control_t *, cp_v3_control_workspace_t *,
@@ -142,6 +157,15 @@ cp_v3_control_permissions_t cp_v3_control_permissions(cp_v3_control_t *, cp_v3_t
 cp_v3_control_result_t cp_v3_control_lease_request(cp_v3_control_t *, uint32_t contact_seq,
     uint64_t uptime_ms, const char **bytes, size_t *length);
 cp_v3_control_result_t cp_v3_control_lease_receipt(cp_v3_control_t *, const void *, size_t, cp_v3_time_t);
+/* Must verify a durable caller-owned checkpoint of this exact original scope
+ * and body. It must not merely promise a future write. */
+typedef bool (*cp_v3_control_checkpoint_fn)(void *, const cp_v3_scope_t *, const void *, size_t);
+/* At an already stopped/censored boundary, detach an uncertain lease only
+ * after the callback verifies its durable bytes. Keeps its bytes/sequence in
+ * RAM, pauses authority, and blocks late receipt adoption and sequence reuse.
+ * Historical receipt-only recovery/reclamation remains the caller's job. */
+cp_v3_control_result_t cp_v3_control_detach_lease_at_boundary(cp_v3_control_t *,
+    cp_v3_boundary_t, cp_v3_control_checkpoint_fn, void *);
 /* Caller owns separate candidate state. Stage does not replace active policy.
  * Activation requires closed boundary and invokes real allocation while paused.
  * Frozen durable queues and boot-global stream sequences are caller-owned and
@@ -150,8 +174,35 @@ cp_v3_control_result_t cp_v3_control_stage(cp_v3_control_t *, cp_v3_control_t *c
     const void *config_response, size_t, cp_v3_time_t);
 cp_v3_control_result_t cp_v3_control_activate_staged(cp_v3_control_t *, cp_v3_control_t *candidate,
     cp_v3_time_t, cp_v3_boundary_t, uint32_t apply_seq, cp_v3_actual_apply_fn, void *);
+/* Caller has stopped/censored capture and frozen every old handoff. Initializes
+ * separate candidate from actual fresh capabilities, retaining active identity,
+ * generation/apply floors and workspace. Freezes registration_seq=active+1 and
+ * uptime=now.mono_ms exactly once. Active state/authority/bytes are not changed.
+ * A higher trusted epoch is allowed at this closed boundary; this does not
+ * install a clock or renew active authority. Pending old ACK/lease is rejected.
+ * Candidate must be cleared/EMPTY and must not alias active. */
+cp_v3_control_result_t cp_v3_control_stage_capabilities(const cp_v3_control_t *,
+    cp_v3_control_t *candidate, const void *capabilities_json, size_t,
+    cp_v3_time_t trusted_now, cp_v3_boundary_t closed_boundary);
+/* Exact frozen registration bytes, including after its receipt. Retry these
+ * bytes through registration_receipt; never generate a new uptime/sequence. */
+cp_v3_control_result_t cp_v3_control_renewal_registration(const cp_v3_control_t *candidate,
+    const char **bytes, size_t *length);
+/* Requires matching real registration receipt and a new policy offered against
+ * its new digest. Checks the original active binding and closed boundary, calls
+ * actual apply, then promotes to ACK_PENDING. Only a fresh matching committed
+ * ACK grants permission. Old durable bodies and boot-global counters remain
+ * caller-owned; never clear/rewrite them when this replaces active control. */
+cp_v3_control_result_t cp_v3_control_activate_renewal(cp_v3_control_t *,
+    cp_v3_control_t *candidate, cp_v3_time_t, cp_v3_boundary_t, uint32_t apply_seq,
+    cp_v3_actual_apply_fn, void *);
 /* Caller has stopped scanning and closed/censored observations before supplying
- * a new trusted UTC map. Strictly advancing epoch; no lease renewal. */
+ * a new trusted UTC map. Strictly advancing epoch; no lease renewal. Pending
+ * registration/offer/ACK state, exact frozen bytes and renewal-origin bindings
+ * survive success or rejection. Rejection adopts no time/deadline and only
+ * changes APPLIED to PAUSED. Success keeps the UTC deadline and cannot increase
+ * its existing monotonic bound; PAUSED/FAILED never become APPLIED. Call for
+ * each live candidate as well as active with an epoch greater than both. */
 cp_v3_control_result_t cp_v3_control_clock_boundary(cp_v3_control_t *, cp_v3_time_t, cp_v3_boundary_t);
 /* Pure historical small-control verifier. Exact body SHA and every request
  * field must match committed receipt; this never grants observation authority. */

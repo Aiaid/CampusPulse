@@ -62,13 +62,33 @@ typedef struct cp_v3_capture cp_v3_capture_t;
 esp_err_t cp_v3_capture_prepare(const cp_v3_capture_config_t *,cp_v3_capture_t **);
 /* Call only after exact committed applied/lease receipt, with the existing
  * conservative monotonic deadline. Initial generation must match prepare's
- * actual context. This first adapter permits only the same complete scope for
- * its lifetime: policy/node/boot/place changes require explicit future boundary
- * support/reboot. Resume cannot reuse a closed window sequence. Scope is copied,
- * never synthesized; board stream-sequence allocation remains boot-global. */
+ * actual context. Resume permits only the same complete scope; a changed policy
+ * first requires a successful paused rebind. Resume cannot reuse a closed window
+ * sequence. Scope is copied, never synthesized; board stream-sequence allocation
+ * remains boot-global. */
 esp_err_t cp_v3_capture_start(cp_v3_capture_t *,const cp_v3_scope_t *,
     uint32_t next_window_seq,uint32_t interval_units,uint32_t window_units,
     uint64_t capture_deadline_mono_ms);
+/* Worker-owned scope boundary only: no radio start, allocation or authorization.
+ * Caller has paused/censored capture, durably drained every old handoff, parked
+ * its storage owner and checked that all allocated/operational resources match.
+ * Node, boot and boot_generation must stay unchanged. Assignment generation must
+ * increase and equal context.config_generation. Placement generation increases
+ * for a changed placement/dataset; otherwise it stays unchanged. All sequences,
+ * counters, event identity state and finite-trial allowance survive the rebind.
+ * Busy state/old handoffs are rejected. A terminal discovered at the boundary
+ * retains its OLD scope and context; drain it and retry after INVALID_STATE.
+ * timeout_ms must be nonzero. TIMEOUT is an uncertain completion: keep capture
+ * and storage paused; it never authorizes start. ESP_OK means the worker has
+ * installed the new scope, but start still requires its real committed ACK.
+ * This does not refresh capability/clock authority or support resource changes. */
+esp_err_t cp_v3_capture_rebind(cp_v3_capture_t *,const cp_v3_scope_t *,
+    const cp_v3_temporal_context_t *,uint32_t timeout_ms);
+/* Same closed-boundary contract, with a compiled ruleset for the next window.
+ * No cadence/capacity/resource change is supported. Old snapshots keep their
+ * original ruleset. rebind() above preserves the current compiled ruleset. */
+esp_err_t cp_v3_capture_rebind_rules(cp_v3_capture_t *,const cp_v3_scope_t *,
+    const cp_v3_temporal_context_t *,const char *rules_version,uint32_t timeout_ms);
 esp_err_t cp_v3_capture_deadline(cp_v3_capture_t *,uint64_t capture_deadline_mono_ms);
 /* Pauses scanner, closes a partial window and censors observation episodes.
  * Pending snapshots stay in bounded handoff queues. timeout0 is nonblocking. */

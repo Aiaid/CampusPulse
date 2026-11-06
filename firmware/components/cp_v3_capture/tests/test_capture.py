@@ -14,12 +14,13 @@ class CaptureTests(unittest.TestCase):
             includes = []
             for item in [COMPONENT / "include", COMPONENT / "tests/stubs",
                 COMPONENT.parent / "cp_v3_stats/include", COMPONENT.parent / "cp_v3_temporal/include",
-                COMPONENT.parent / "cp_v3_evidence/include"]:
+                COMPONENT.parent / "cp_v3_evidence/include", COMPONENT.parent / "cp_vehicle/include"]:
                 includes += ["-I", str(item)]
             executable = Path(directory) / "fixture"
             subprocess.run([os.environ.get("CC", "cc"), "-std=c11", "-Wall", "-Wextra", "-Werror",
                 "-fsanitize=address,undefined", "-fno-omit-frame-pointer", *includes,
                 str(COMPONENT / "tests/fixture.c"), str(COMPONENT.parent / "cp_v3_stats/stats.c"),
+                str(COMPONENT.parent / "cp_vehicle/cp_vehicle.c"),
                 str(COMPONENT.parent / "cp_v3_temporal/temporal.c"), "-o", str(executable)], check=True)
             subprocess.run([str(executable)], check=True)
 

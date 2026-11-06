@@ -25,5 +25,10 @@ cp_v3_result_t cp_v3_small_window_body(const cp_v3_scope_t *,const cp_v3_stats_s
 cp_v3_result_t cp_v3_small_event_body(const cp_v3_scope_t *,const cp_v3_temporal_event_t *,
     uint32_t slice_ms,const char *batch_id,uint32_t seq,cp_v3_sha256_fn,void *,
     char *,size_t,size_t *,cp_v3_expected_t *);
+/* Explicit compiled rules version for new policies; the old entry point keeps
+ * its unclassified-v1 output unchanged. The event is still visibility only. */
+cp_v3_result_t cp_v3_small_event_body_rules(const cp_v3_scope_t *,const cp_v3_temporal_event_t *,
+    uint32_t slice_ms,const char *rules_version,const char *batch_id,uint32_t seq,cp_v3_sha256_fn,void *,
+    char *,size_t,size_t *,cp_v3_expected_t *);
 cp_v3_result_t cp_v3_small_status_body(const cp_v3_scope_t *,const cp_v3_small_status_t *,
     const char *batch_id,uint32_t seq,cp_v3_sha256_fn,void *,char *,size_t,size_t *,cp_v3_expected_t *);

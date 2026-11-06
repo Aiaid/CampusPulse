@@ -11,11 +11,13 @@ for (const line of readFileSync(0, 'utf8').trim().split('\n')) {
   const fixture = JSON.parse(line), bytes = JSON.stringify(fixture.body);
   if (createHash('sha256').update(bytes).digest('hex') !== fixture.sha256) throw Error('Frozen byte hash mismatch');
   const limits = statisticsFixtureLimits(fixture.window_ms);
+  if (fixture.body.k === 'window_statistics') limits.ruleset_version = fixture.body.x[0].v[1];
+  if (fixture.body.k === 'candidate_events') limits.ruleset_version = fixture.body.x[0].x[1];
   if (fixture.event_max_ms) limits.temporal.max_event_ms = fixture.event_max_ms;
   if (fixture.local_raw) limits.local_raw_mode = 'tf_cpraw';
   normalizeStatisticsV3Batch(fixture.body, limits);
   if (bytes.includes('address') || bytes.includes('payload') || bytes.includes('secret')) throw Error('Private source leaked');
   ++count;
 }
-if (count !== 10) throw Error('Incomplete synthetic coverage');
+if (count !== 13) throw Error('Incomplete synthetic coverage');
 console.log(`Actual compact server validators passed ${count} C-produced fixtures`);

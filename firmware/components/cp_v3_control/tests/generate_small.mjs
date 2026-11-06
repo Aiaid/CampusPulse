@@ -32,6 +32,11 @@ async function add(name,mutate,expected='small'){
 }
 await add('small-512');
 await add('small-mqtt',(c,p)=>{c.uplink.transports=['mqtt_tls'];p.uplink.transport='mqtt_tls';});
+await add('small-vehicle-only',(c,p)=>{c.statistics.ruleset_versions=['cp-v3-vehicle-candidates/1'];p.evidence.ruleset_version='cp-v3-vehicle-candidates/1';});
+await add('small-both-rules-vehicle',(c,p)=>{c.statistics.ruleset_versions=['unclassified-v1','cp-v3-vehicle-candidates/1'];p.evidence.ruleset_version='cp-v3-vehicle-candidates/1';});
+await add('small-both-rules-unclassified',(c)=>{c.statistics.ruleset_versions=['cp-v3-vehicle-candidates/1','unclassified-v1'];});
+await add('small-vehicle-not-claimed',(_c,p)=>{p.evidence.ruleset_version='cp-v3-vehicle-candidates/1';},'reject');
+await add('small-unclassified-not-claimed',(c)=>{c.statistics.ruleset_versions=['cp-v3-vehicle-candidates/1'];},'reject');
 await add('small-mqtt-policy-https-cap',(_c,p)=>{p.uplink.transport='mqtt_tls';},'reject');
 await add('small-https-policy-mqtt-cap',(c)=>{c.uplink.transports=['mqtt_tls'];},'reject');
 await add('small-mobile-256-1024',(c,p)=>{p.collection.mode='mobile_research';p.collection.summary.window_ms=30000;p.collection.summary.max_addresses=256;c.uplink.max_body_bytes=p.uplink.max_body_bytes=1024;});

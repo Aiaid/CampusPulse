@@ -15,3 +15,9 @@ idf_component_register(
              fatfs sdmmc esp_driver_sdmmc esp_driver_gpio esp_driver_spi
              esp_driver_i2c esp_driver_usb_serial_jtag esp_adc lvgl__lvgl)
 target_compile_definitions(${COMPONENT_LIB} PRIVATE RAW_DISPLAY_EXTERNAL_RENDER=1 CP_V3_BOOTSTRAP_CONTINUOUS=1)
+
+# Keep LVGL's CPU-only object pool out of internal RAM needed for cold MQTT.
+# SPI framebuffers, DMA buffers and task stacks retain their existing placement.
+idf_component_get_property(WAVE_LVGL_LIB lvgl__lvgl COMPONENT_LIB)
+target_include_directories(${WAVE_LVGL_LIB} PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
+target_compile_definitions(${WAVE_LVGL_LIB} PRIVATE LV_MEM_POOL_INCLUDE="lvgl_psram.h")

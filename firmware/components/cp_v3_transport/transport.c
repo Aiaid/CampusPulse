@@ -38,6 +38,7 @@ static esp_event_handler_instance_t s_wifi_handler, s_ip_handler;
 static cp_v3_transport_config_t s_config;
 static cp_v3_origin_t s_origin;
 static cp_v3_time_t s_anchor, s_date;
+static uint64_t s_observed_mono, s_observed_lower;
 static bool s_date_known;
 static char s_token[CP_SETTINGS_TOKEN_SIZE];
 static portMUX_TYPE s_dns_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -95,6 +96,48 @@ static void wifi_notice(void *ctx,uint32_t event,uint32_t reason,unsigned attemp
     (void)ctx;ESP_LOGI("v3_wifi","event=%lu disconnect_reason=%lu attempt=%u elapsed_ms=%llu ip_acquired=%u",
         (unsigned long)event,(unsigned long)reason,attempt,(unsigned long long)elapsed,ip);
 }
+esp_err_t cp_v3_transport_wifi_state(cp_v3_transport_wifi_state_t *out){
+    if(!out)return ESP_ERR_INVALID_ARG;
+    memset(out,0,sizeof *out);
+    if(!owner()){out->reject_flags=CP_V3_TRANSPORT_REJECT_NOT_OWNER;return ESP_ERR_INVALID_STATE;}
+    if(!active())out->reject_flags|=CP_V3_TRANSPORT_REJECT_CANCELLED;
+    if(!s_wifi_initialized)out->reject_flags|=CP_V3_TRANSPORT_REJECT_WIFI_NOT_INITIALIZED;
+    if(!s_wifi_started)out->reject_flags|=CP_V3_TRANSPORT_REJECT_WIFI_NOT_STARTED;
+    if(!__atomic_load_n(&s_link,__ATOMIC_ACQUIRE))out->reject_flags|=CP_V3_TRANSPORT_REJECT_WIFI_NO_IP;
+    out->disconnect_seq=__atomic_load_n(&s_wifi_disconnect_seq,__ATOMIC_ACQUIRE);
+    out->disconnect_reason=__atomic_load_n(&s_wifi_disconnect_reason,__ATOMIC_ACQUIRE);
+    return ESP_OK;
+}
+esp_err_t cp_v3_transport_reconnect_wifi(void){
+    cp_v3_transport_wifi_state_t state;
+    if(cp_v3_transport_wifi_state(&state)!=ESP_OK||
+       (state.reject_flags&~CP_V3_TRANSPORT_REJECT_WIFI_NO_IP))return ESP_ERR_INVALID_STATE;
+    if(!(state.reject_flags&CP_V3_TRANSPORT_REJECT_WIFI_NO_IP))return ESP_OK;
+    if(s_config.mode==CP_V3_TRANSPORT_MQTT_TLS){
+        esp_err_t stopped=cp_v3_mqtt_stop();
+        if(stopped!=ESP_OK){
+            /* Preserve the existing fail-closed stop latch and retained MQTT
+             * storage. Recovery must never revive an unsettled QoS client. */
+            cp_v3_transport_cancel();
+            esp_err_t radio=esp_wifi_stop();
+            if(radio==ESP_OK||radio==ESP_ERR_WIFI_NOT_STARTED)s_wifi_started=false;
+            return stopped;
+        }
+    }
+    if(!active())return ESP_ERR_INVALID_STATE;
+    /* LOST_IP can leave STA associated. IDF 5.5.3 requires disconnect before
+     * connect in that case; this leaves RAM Wi-Fi/EAP configuration intact. */
+    esp_err_t result=esp_wifi_disconnect();
+    if(!active())return ESP_ERR_INVALID_STATE;
+    if(result!=ESP_OK)return result;
+    __atomic_store_n(&s_link,false,__ATOMIC_RELEASE);
+    const v3_wifi_startup_io_t io={NULL,wifi_now,wifi_active,wifi_snapshot,wifi_connect,wifi_pause,wifi_notice};
+    v3_wifi_startup_outcome_t outcome=v3_wifi_startup_wait(&io,s_config.wifi_timeout_ms,
+        s_config.wifi_reconnect_max_attempts,s_config.wifi_reconnect_delay_ms);
+    return outcome.result==V3_WIFI_READY?ESP_OK:
+        outcome.result==V3_WIFI_TIMEOUT?ESP_ERR_TIMEOUT:
+        outcome.result==V3_WIFI_CONNECT_FAILED?outcome.connect_error:ESP_ERR_INVALID_STATE;
+}
 static void dns_complete(const char *name, const ip_addr_t *address, void *arg) {
     (void)name;
     portENTER_CRITICAL(&s_dns_lock);
@@ -143,16 +186,44 @@ static esp_err_t dns_flush_cache(void *arg) {
     context->flushed = true;
     return ESP_OK;
 }
+static esp_err_t set_wall_current(const cp_v3_time_t *current) {
+    struct timeval tv = {.tv_sec = (time_t)(current->utc_ms / 1000u), .tv_usec = (suseconds_t)(current->utc_ms % 1000u) * 1000};
+    return settimeofday(&tv, NULL) == 0 ? ESP_OK : ESP_FAIL;
+}
 static esp_err_t set_wall_clock(const cp_v3_time_t *seed) {
     cp_v3_time_t current;
     if (!cp_v3_transport_anchor(seed, now_ms(), &current)) return ESP_ERR_INVALID_STATE;
-    struct timeval tv = {.tv_sec = (time_t)(current.utc_ms / 1000u), .tv_usec = (suseconds_t)(current.utc_ms % 1000u) * 1000};
-    return settimeofday(&tv, NULL) == 0 ? ESP_OK : ESP_FAIL;
+    return set_wall_current(&current);
 }
 esp_err_t cp_v3_transport_time(cp_v3_time_t *out) {
     if (!out) return ESP_ERR_INVALID_ARG;
     memset(out, 0, sizeof *out);
     if (!owner() || !active() || !cp_v3_transport_anchor(&s_anchor, now_ms(), out)) return ESP_ERR_INVALID_STATE;
+    if (out->mono_ms<s_observed_mono) { memset(out,0,sizeof *out); return ESP_ERR_INVALID_STATE; }
+    s_observed_mono=out->mono_ms;
+    uint64_t lower=out->utc_ms-out->uncertainty_ms;
+    if (lower>s_observed_lower) s_observed_lower=lower;
+    return ESP_OK;
+}
+esp_err_t cp_v3_transport_adopt_clock(const cp_v3_time_t *seed,uint32_t expected_epoch) {
+    if (!seed) return ESP_ERR_INVALID_ARG;
+    const cp_v3_time_t candidate=*seed;
+    if (!owner() || !active() || !s_wifi_initialized || !s_wifi_started ||
+        !expected_epoch || expected_epoch!=s_anchor.clock_epoch || expected_epoch==UINT32_MAX ||
+        candidate.clock_epoch!=expected_epoch+1 || candidate.mono_ms<s_observed_mono ||
+        candidate.mono_ms<s_anchor.mono_ms) return ESP_ERR_INVALID_STATE;
+    cp_v3_time_t current;
+    if (!cp_v3_transport_anchor(&candidate,now_ms(),&current) ||
+        current.utc_ms-current.uncertainty_ms<s_observed_lower || !active()) return ESP_ERR_INVALID_STATE;
+    esp_err_t result=set_wall_current(&current);
+    if (result!=ESP_OK) return result;
+    /* Cancellation may arrive while the SDK/system call was running. The
+     * candidate wall time alone grants no trust and must not replace the old
+     * anchor after cancellation; cancelled transport_time cannot expose it. */
+    if (!active()) return ESP_ERR_INVALID_STATE;
+    s_anchor=candidate; s_config.clock_seed=candidate; s_date_known=false;
+    s_observed_mono=current.mono_ms;
+    s_observed_lower=current.utc_ms-current.uncertainty_ms;
     return ESP_OK;
 }
 esp_err_t cp_v3_transport_sync_clock(void) {
@@ -216,6 +287,7 @@ esp_err_t cp_v3_transport_stop(void) {
     if (s_sta) { esp_netif_destroy_default_wifi(s_sta); s_sta = NULL; }
     wipe(s_token, sizeof s_token); memset(&s_config, 0, sizeof s_config);
     memset(&s_anchor, 0, sizeof s_anchor); memset(&s_date, 0, sizeof s_date);
+    s_observed_mono=s_observed_lower=0;
     s_date_known = false; __atomic_store_n(&s_link, false, __ATOMIC_RELEASE);
     __atomic_store_n(&s_owner, NULL, __ATOMIC_RELEASE);
     return ESP_OK;
@@ -252,6 +324,7 @@ esp_err_t cp_v3_transport_start(const cp_settings_t *settings, const cp_v3_trans
     esp_err_t result = esp_wifi_get_mode(&mode);
     if (result != ESP_ERR_WIFI_NOT_INIT) { __atomic_store_n(&s_owner, NULL, __ATOMIC_RELEASE); return ESP_ERR_INVALID_STATE; }
     s_config = *config; s_origin = origin; s_anchor = config->clock_seed;
+    s_observed_mono=current.mono_ms; s_observed_lower=current.utc_ms-current.uncertainty_ms;
     __atomic_store_n(&s_wifi_events,0,__ATOMIC_RELEASE);
     __atomic_store_n(&s_wifi_disconnect_seq,0,__ATOMIC_RELEASE);
     __atomic_store_n(&s_wifi_disconnect_reason,0,__ATOMIC_RELEASE);
@@ -344,6 +417,20 @@ static esp_err_t write_all(esp_tls_t *tls, const void *bytes, size_t n, uint64_t
     }
     return n ? cancelled_or_timeout() : ESP_OK;
 }
+static esp_err_t request_preflight(cp_v3_transport_response_t *out){
+    cp_v3_transport_wifi_state_t state;
+    esp_err_t result=cp_v3_transport_wifi_state(&state);
+    out->state_reject_flags=state.reject_flags;
+    out->wifi_disconnect_seq=state.disconnect_seq;
+    out->wifi_disconnect_reason=state.disconnect_reason;
+    if(result!=ESP_OK||state.reject_flags)return ESP_ERR_INVALID_STATE;
+    cp_v3_time_t current;
+    if(cp_v3_transport_time(&current)!=ESP_OK){
+        out->state_reject_flags|=CP_V3_TRANSPORT_REJECT_CLOCK;
+        return ESP_ERR_INVALID_STATE;
+    }
+    return ESP_OK;
+}
 static esp_err_t request_mode(cp_v3_http_method_t method, const char *path,
     const void *body, size_t length, char *response, size_t capacity,
     cp_v3_transport_response_t *out,bool receipt_only) {
@@ -353,9 +440,7 @@ static esp_err_t request_mode(cp_v3_http_method_t method, const char *path,
         !cp_v3_transport_path(method, path) || (receipt_only&&!cp_v3_transport_receipt_only_path(method,path)) ||
         (!body && length) || length > CP_V3_TRANSPORT_REQUEST_MAX ||
         (method == CP_V3_HTTP_GET && length) || (method == CP_V3_HTTP_POST && !length)) return ESP_ERR_INVALID_ARG;
-    if (!owner() || !active() || !s_wifi_initialized || !__atomic_load_n(&s_link, __ATOMIC_ACQUIRE)) return ESP_ERR_INVALID_STATE;
-    cp_v3_time_t current;
-    if (cp_v3_transport_time(&current) != ESP_OK) return ESP_ERR_INVALID_STATE;
+    if(request_preflight(out)!=ESP_OK)return ESP_ERR_INVALID_STATE;
     s_date_known = false;
     if(s_config.mode==CP_V3_TRANSPORT_MQTT_TLS){
         esp_err_t mqtt=cp_v3_mqtt_request(method,path,body,length,receipt_only,response,capacity,out,active);

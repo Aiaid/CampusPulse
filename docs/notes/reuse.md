@@ -1059,3 +1059,16 @@ MQTT/TLS. It retains certificate validation and the repository's CPV3 framing,
 scoped topic/RPC handling and exact durable receipts. The simulator, private
 configuration guard and generated activity/vehicle fixtures are authored here;
 no device credential, raw capture or private upstream application is imported.
+
+## 2026-11-06 — Versioned small-statistics vehicle candidates
+
+`cp_v3_stats` now calls the existing in-repository `cp_vehicle` parser and
+conservative evidence accumulator for `cp-v3-vehicle-candidates/1`. This reuses
+the selected MIT/FoloToy rules and attribution recorded above; it imports no
+additional third-party source or private observations. The all-unknown version,
+exclusions and malformed/unsupported abstention remain distinct contracts.
+
+Waveshare's PSRAM pool configuration uses LVGL's existing `LV_MEM_POOL_INCLUDE`
+and `LV_MEM_POOL_ALLOC` extension points without changing vendor source or its
+MIT notices. Online clock, control staging and recovery adapters are authored
+here against ESP-IDF APIs; existing SDK and OFL notices remain unchanged.

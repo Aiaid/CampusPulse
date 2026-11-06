@@ -13,15 +13,19 @@ storage, address table, classifier or temporal-history ownership is added here.
   actual slice duration. Random episode UUID, revision, observation state/cause,
   bounded totals and scan-quality semantics remain intact. It neither uploads
   address keys nor claims arrival, boarding or waiting-time predictions.
+  Its original wrapper retains `unclassified-v1`; new-policy callers use
+  `cp_v3_small_event_body_rules` with the actual compiled rules version.
 - `cp_v3_small_status_body` preserves resource unknowns as JSON null, includes
   required queue/loss/retry counters and optionally adds six measured TF raw
   recording counters. Raw counters are omitted when unavailable, not fabricated
   as zero. Their presence must match the frozen policy's local_raw mode.
 
-Initial extractor/rules are `cp-v3-stats/1` and `unclassified-v1`: every retained
-key is unknown. Nonzero other categories fail closed until a reviewed classifier
-version and corresponding wire/server contract are implemented. A company ID,
-OUI or Appearance value does not become a phone/vehicle count.
+Supported version pairs are `cp-v3-stats/1` with either `unclassified-v1` (every
+retained key unknown) or `cp-v3-vehicle-candidates/1` (e-bike/car candidate,
+unknown and conflicting partitions from the built-in conservative rules).
+The latter still rejects nonzero phone/other counts and any verification claim.
+A company ID, OUI or Appearance alone never becomes a phone/vehicle count.
+Unknown versions fail closed and the snapshot's actual rules version is emitted.
 
 Caller supplies actual policy/node/boot scope, batch UUID and once-allocated
 per-stream sequence. The writer returns exact body bytes, their SHA-256 and
@@ -52,6 +56,8 @@ Measured exact synthetic bodies with the server's template identifiers:
 | --- | ---: |
 |30s window,5s bins |585 |
 |60s window,5s bins |678 |
+|30s vehicle-candidate window,5s bins |596 |
+|60s vehicle-candidate window,5s bins |689 |
 | terminal visibility event |581 |
 | status without raw counters |430 |
 

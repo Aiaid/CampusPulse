@@ -32,7 +32,7 @@ typedef struct {
     /* Caller-trusted RTC/physical-host anchor, captured on this boot's monotonic
      * clock. Mandatory before TLS; no unauthenticated SNTP bootstrap. */
     cp_v3_time_t clock_seed;
-    uint32_t wifi_timeout_ms; /* 1000..180000, one absolute initial-IP deadline */
+    uint32_t wifi_timeout_ms; /* 1000..180000, one absolute IP deadline per startup/recovery */
     /* Zero preserves one-connect startup. Retries occur only after a recorded
      * disconnect, in the owning task; they never extend wifi_timeout_ms. */
     uint8_t wifi_reconnect_max_attempts; /* 0..3 additional connects */
@@ -87,6 +87,16 @@ typedef enum {
     CP_V3_TRANSPORT_RESPONSE_HEADERS, CP_V3_TRANSPORT_RESPONSE_BODY,
     CP_V3_TRANSPORT_COMPLETE
 } cp_v3_transport_stage_t;
+/* Numeric-only preflight evidence. CLOCK is request-only; Wi-Fi state does not
+ * sample/advance clock authority. Zero means none of these gates rejected. */
+enum {
+    CP_V3_TRANSPORT_REJECT_NOT_OWNER=1u, CP_V3_TRANSPORT_REJECT_CANCELLED=2u,
+    CP_V3_TRANSPORT_REJECT_WIFI_NOT_INITIALIZED=4u, CP_V3_TRANSPORT_REJECT_WIFI_NOT_STARTED=8u,
+    CP_V3_TRANSPORT_REJECT_WIFI_NO_IP=16u, CP_V3_TRANSPORT_REJECT_CLOCK=32u
+};
+typedef struct {
+    uint32_t reject_flags, disconnect_seq, disconnect_reason;
+} cp_v3_transport_wifi_state_t;
 typedef struct {
     int http_status;
     size_t body_bytes;
@@ -117,12 +127,24 @@ typedef struct {
     int32_t mqtt_publish_id,mqtt_puback_id,mqtt_connect_code;
     uint32_t mqtt_outbox_bytes,mqtt_callback_stack_min;
     bool mqtt_session_ready,mqtt_response_received,mqtt_stop_confirmed,mqtt_retained;
+    uint32_t state_reject_flags, wifi_disconnect_seq, wifi_disconnect_reason;
 } cp_v3_transport_response_t;
 
-/* One application task exclusively owns start/request/time/stop. It must stop
+/* One application task exclusively owns start/reconnect/request/time/stop. It must stop
  * other Wi-Fi owners first. No NVS erase/save, v2 policy loop, TF, scanner,
- * retries or queue reclamation. The caller owns frozen request bytes/receipts. */
+ * automatic request retries or queue reclamation. The caller owns frozen request bytes/receipts. */
 esp_err_t cp_v3_transport_start(const cp_settings_t *, const cp_v3_transport_config_t *);
+/* Owner-only, non-consuming snapshot. A nonowner gets only NOT_OWNER and an
+ * invalid-state result; an owner gets ESP_OK even when another gate is closed. */
+esp_err_t cp_v3_transport_wifi_state(cp_v3_transport_wifi_state_t *);
+/* Owner-only closed/parked-boundary recovery, with no memory lease held. Keeps
+ * the same Wi-Fi/EAP config, MQTT identity/highwater, clock and frozen bodies.
+ * Requires active initialized/started transport; never clears cancellation.
+ * An existing IP link returns immediately. Otherwise MQTT stop must first be
+ * confirmed, then disconnect/connect uses the configured bounded IP wait and
+ * retry count. SDK stop/disconnect time is additional to that IP deadline.
+ * No new transport owner, reset, credential write or authority is introduced. */
+esp_err_t cp_v3_transport_reconnect_wifi(void);
 esp_err_t cp_v3_transport_request(cp_v3_http_method_t, const char *path,
     const void *body, size_t length, char *response, size_t capacity,
     cp_v3_transport_response_t *result);
@@ -134,6 +156,18 @@ esp_err_t cp_v3_transport_request_receipt_only(cp_v3_http_method_t, const char *
     const void *body, size_t length, char *response, size_t capacity,
     cp_v3_transport_response_t *result);
 esp_err_t cp_v3_transport_time(cp_v3_time_t *);
+/* Owner-only adoption of an ORIGINAL already signature-verified online seed;
+ * this API checks clock structure/order, NOT signatures or policy authority.
+ * First park all observation/storage workers and call transport_time once to
+ * record the closed boundary. Do not repeatedly sample the old clock during
+ * probe retries. Release the memory lease between single online attempts.
+ * expected_old_epoch must still match; seed epoch must be exactly old+1.
+ * The candidate is aged once with 500ppm allowance, compared to the fixed last
+ * observed UTC lower bound, and installed only after wall-clock success. Both
+ * MQTT and diagnostic HTTPS accept this path. Original seed timestamps and
+ * uncertainty are preserved; frozen observations must never be remapped. */
+esp_err_t cp_v3_transport_adopt_clock(const cp_v3_time_t *verified_seed,
+    uint32_t expected_old_epoch);
 /* Explicit closed-boundary action; advances clock epoch. Only the most recent
  * successful HTTPS response's Date candidate is accepted, never plain HTTP. */
 esp_err_t cp_v3_transport_sync_clock(void);

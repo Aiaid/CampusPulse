@@ -11,6 +11,7 @@
 #define CP_V3_STATS_PAYLOAD_MAX 1650u
 #define CP_V3_STATS_VERSION "cp-v3-stats/1"
 #define CP_V3_STATS_RULESET "unclassified-v1"
+#define CP_V3_STATS_VEHICLE_RULESET "cp-v3-vehicle-candidates/1"
 #define CP_V3_STATS_HEAT_VERSION "address-bin-presence/1"
 typedef enum {
     CP_V3_STATS_PHONE_RELATED, CP_V3_STATS_E_BIKE_RELATED, CP_V3_STATS_CAR_RELATED,
@@ -46,9 +47,8 @@ typedef void (*cp_v3_stats_release_fn)(void *, void *);
 typedef struct {
     uint16_t capacity;
     uint32_t window_ms, bin_ms; /* Exact division, <=12bins.60s/5s and30s/5s fit. */
-    const char *rules_version; /* Only unclassified-v1 is currently accepted. */
-    /* Reserved extension hooks: this version rejects non-NULL classify or true
-     * rules_verified. No candidate/classified count can be activated yet. */
+    const char *rules_version; /* One of the compiled, versioned rulesets above. */
+    /* External callbacks and physical-verification claims remain unsupported. */
     bool rules_verified;
     cp_v3_stats_classify_fn classify;
     void *classify_context;
@@ -66,7 +66,7 @@ typedef struct {
 } cp_v3_stats_bin_t;
 typedef struct {
     uint16_t capacity, unique_keys, counts[CP_V3_STATS_CLASS_COUNT];
-    uint16_t candidate_keys[4], verified_keys; /* Candidates remain in primary unknown. */
+    uint16_t candidate_keys[4], verified_keys; /* Primary counts are candidates; verified is always0. */
     uint8_t bin_count;
     uint32_t window_ms, bin_ms, duration_ms;
     uint8_t configured_bins;
@@ -108,6 +108,10 @@ cp_v3_stats_t *cp_v3_stats_init(void *memory, size_t bytes, const cp_v3_stats_co
 cp_v3_stats_t *cp_v3_stats_alloc(const cp_v3_stats_config_t *, cp_v3_stats_allocate_fn,
     cp_v3_stats_release_fn, void *allocator_context);
 void cp_v3_stats_free(cp_v3_stats_t *);
+/* Selects a compiled ruleset for the NEXT begin only. Does not rewrite the
+ * current window, allocate, or clear any external owner's temporal history.
+ * The supplied string is compared then replaced by an internal constant. */
+bool cp_v3_stats_set_rules(cp_v3_stats_t *, const char *rules_version);
 bool cp_v3_stats_begin(cp_v3_stats_t *, uint64_t start_mono_us);
 cp_v3_stats_result_t cp_v3_stats_observe(cp_v3_stats_t *, const cp_v3_stats_report_t *);
 /* Ordered radio-state transitions. Snapshot extrapolates only the last explicitly

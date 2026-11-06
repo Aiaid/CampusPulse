@@ -12,6 +12,36 @@ REPO = COMPONENT.parents[2]
 
 
 class ControlTests(unittest.TestCase):
+    def test_ruleset_and_optional_online_negotiation(self):
+        cases = json.loads(subprocess.check_output(['node', str(COMPONENT / 'tests/generate_negotiation.mjs')], cwd=REPO, text=True))
+        with tempfile.TemporaryDirectory(prefix='cp-v3-control-negotiation-') as directory:
+            root = Path(directory)
+            executable = root / 'fixture'
+            self.compile(executable, 'negotiation_fixture.c')
+            for case in cases:
+                with self.subTest(case=case['name']):
+                    caps = root / 'caps.json'
+                    response = root / 'response.json'
+                    caps.write_text(json.dumps(case['caps'], indent=2))
+                    response.write_text(json.dumps(case['response'], indent=2))
+                    subprocess.run([str(executable), str(caps), str(response), str(int(case['init'])),
+                                    case['offer'], case['rule'], str(int(case['rebind'])), str(int(case['renewal']))], check=True)
+
+    def test_same_boot_capability_renewal(self):
+        cases = json.loads(subprocess.check_output(['node', str(COMPONENT / 'tests/generate_renewal.mjs')], cwd=REPO, text=True))
+        with tempfile.TemporaryDirectory(prefix='cp-v3-control-renewal-') as directory:
+            root = Path(directory)
+            executable = root / 'fixture'
+            self.compile(executable, 'renewal_fixture.c')
+            for case in cases:
+                with self.subTest(case=case['name']):
+                    paths = []
+                    for key in ('caps', 'response', 'renewal_caps', 'renewal_response'):
+                        path = root / (key + '.json')
+                        path.write_text(json.dumps(case[key], indent=2))
+                        paths.append(str(path))
+                    subprocess.run([str(executable), *paths], check=True)
+
     def test_small_first_window_span_admission(self):
         with tempfile.TemporaryDirectory(prefix='cp-v3-control-window-start-') as directory:
             executable = Path(directory) / 'fixture'

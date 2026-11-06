@@ -18,6 +18,10 @@ static uint64_t scan_start_delay_us;
 static bool unaligned_normal_allocations;
 static unsigned aligned_allocations,misalign_aligned_allocation;
 static size_t arena_sizes[2];
+static uint32_t clock_epoch=1;
+static uint64_t api_wait_elapsed_us;
+static bool reset_before_rebind_commit;
+static unsigned rebind_handoff_takes;
 static void report_at(uint64_t,uint8_t,bool);
 void test_lock(void) { lock_depth++; }
 void test_unlock(void) {
@@ -70,7 +74,14 @@ int xQueueSend(QueueHandle_t q,const void *value,TickType_t wait) {
 }
 unsigned uxQueueMessagesWaiting(QueueHandle_t q) { return q->count; }
 SemaphoreHandle_t xSemaphoreCreateMutexStatic(StaticSemaphore_t *s) { s->held=0; return s; }
-int xSemaphoreTake(SemaphoreHandle_t s,TickType_t wait) { (void)wait; assert(!s->held); s->held=1; return pdTRUE; }
+int xSemaphoreTake(SemaphoreHandle_t s,TickType_t wait) {
+    (void)wait;assert(!s->held);s->held=1;
+    if(instance&&s==instance->api){clock_us+=api_wait_elapsed_us;api_wait_elapsed_us=0;}
+    if(instance&&s==instance->handoff&&instance->rebind_requested&&reset_before_rebind_commit&&++rebind_handoff_takes==2){
+        reset_before_rebind_commit=false;reset(1);
+    }
+    return pdTRUE;
+}
 int xSemaphoreGive(SemaphoreHandle_t s) { assert(s->held); s->held=0; return pdTRUE; }
 int xTaskCreate(void (*task)(void *),const char *name,unsigned stack,void *arg,unsigned priority,TaskHandle_t *out) {
     (void)task;(void)name;(void)arg;(void)priority;internal_used+=stack;*out=(void *)1;return pdPASS;
@@ -88,7 +99,7 @@ int ble_gap_ext_disc(uint8_t address,uint16_t duration,uint16_t period,uint8_t f
 int ble_gap_disc_cancel(void) { cancels++;scan_active=false;struct ble_gap_event event={.type=BLE_GAP_EVENT_DISC_COMPLETE};return gap_callback(&event,gap_context); }
 int ble_gap_disc_active(void) { return scan_active; }
 static bool wall(void *ctx,uint64_t mono,cp_v3_temporal_time_t *out) {
-    (void)ctx;*out=(cp_v3_temporal_time_t){.mono_ms=mono,.utc_ms=1898553600000ULL+mono,.clock_epoch=1,.utc_known=true};return true;
+    (void)ctx;*out=(cp_v3_temporal_time_t){.mono_ms=mono,.utc_ms=1898553600000ULL+mono,.clock_epoch=clock_epoch,.utc_known=true};return true;
 }
 static bool entropy(void *ctx,uint8_t out[16]) { (void)ctx;memset(out,0,16);out[15]=(uint8_t)++entropy_counter;return true; }
 static unsigned raw_calls; static bool raw_ok=true;
@@ -105,6 +116,8 @@ static void clear(void) {
     deferred_report=false;gap_callback=NULL;scan_active=false;scan_start_delay_us=0;
     unaligned_normal_allocations=false;aligned_allocations=misalign_aligned_allocation=0;
     arena_sizes[0]=arena_sizes[1]=0;
+    clock_epoch=1;api_wait_elapsed_us=0;
+    reset_before_rebind_commit=false;rebind_handoff_takes=0;
 }
 static cp_v3_capture_config_t configuration(bool events) {
     cp_v3_capture_config_t c={.statistics={.capacity=512,.window_ms=1000,.bin_ms=1000,.rules_version=CP_V3_STATS_RULESET},
@@ -133,6 +146,166 @@ static void report_at(uint64_t at,uint8_t address,bool extended) {
 }
 static void advance(cp_v3_capture_t *s,uint64_t at) { clock_us=at;step(s); }
 static void release_windows(cp_v3_capture_t *s) { cp_v3_capture_window_t w;while(cp_v3_capture_window(s,&w,0)) assert(cp_v3_capture_window_release(s,w.window_seq,w.scope.assignment_generation)); }
+static cp_v3_scope_t next_scope(void) {
+    cp_v3_scope_t next=scope();next.assignment_generation=2;strcpy(next.policy_id,"new-policy");
+    memset(next.policy_sha256,'b',64);strcpy(next.placement_id,"new-place");strcpy(next.dataset,"field");return next;
+}
+static void rebind_tests(void) {
+    clear();cp_v3_capture_t *s=prepare(true);
+    cp_v3_scope_t old=scope(),next=next_scope();cp_v3_temporal_context_t context={1,2,2};
+    assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE); /* Still scanning. */
+    report_at(1100000,1,false);report_at(1200000,2,false);report_at(1300000,3,false);step(s);
+    assert(s->status.callback_drops==1);
+    assert(cp_v3_capture_pause(s,CP_V3_TEMPORAL_PLACEMENT_CHANGE,100)==ESP_OK);
+    cp_v3_capture_window_t old_window,again_window;
+    assert(cp_v3_capture_window(s,&old_window,0)&&old_window.scope.assignment_generation==1);
+    assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE);
+    assert(cp_v3_capture_window(s,&again_window,0)&&!memcmp(&old_window,&again_window,sizeof old_window));
+    release_windows(s);step(s);
+    cp_v3_capture_event_t old_event,again_event;uint32_t last_event_seq=0;uint8_t last_id[16];
+    while(cp_v3_capture_event(s,&old_event,0)) {
+        assert(old_event.scope.assignment_generation==1&&old_event.event.context.config_generation==1);
+        assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE);
+        assert(cp_v3_capture_event(s,&again_event,0)&&!memcmp(&old_event,&again_event,sizeof old_event));
+        last_event_seq=old_event.event.event_seq;memcpy(last_id,old_event.event.event_id,sizeof last_id);
+        assert(cp_v3_capture_event_release(s,old_event.event.event_id,old_event.event.revision));
+    }
+    step(s);assert(last_event_seq&&s->status.quiescent);
+    cp_v3_capture_status_t before=s->status;uint32_t next_window=s->next_window_seq,full_windows=s->full_windows;
+    unsigned old_allocations=allocation_count,old_starts=starts,old_entropy=entropy_counter;
+    StaticQueue_t free_before=*s->free,ready_before=*s->ready;uint16_t window_head=s->window_head;
+    assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_OK);
+    assert(starts==old_starts&&!scan_active&&ble_init_count==1&&allocation_count==old_allocations&&entropy_counter==old_entropy);
+    assert(s->status.quiescent&&s->status.paused&&!s->accept&&!s->want_running&&!s->have_window);
+    assert(s->next_window_seq==next_window&&s->full_windows==full_windows&&s->window_head==window_head);
+    assert(!memcmp(&free_before,s->free,sizeof free_before)&&!memcmp(&ready_before,s->ready,sizeof ready_before));
+    assert(s->status.callback_reports==before.callback_reports&&s->status.callback_drops==before.callback_drops&&
+        s->status.windows_closed==before.windows_closed&&s->status.raw_reports==before.raw_reports&&
+        s->status.raw_drops==before.raw_drops&&s->status.temporal.reports==before.temporal.reports);
+    assert(s->temporal_context.config_generation==2&&s->temporal_context.placement_generation==2&&
+        s->config.context.config_generation==2&&s->status.temporal.tracks==0&&s->status.temporal.history_slices==1);
+    assert(cp_v3_capture_start(s,&old,next_window,160,160,30000)==ESP_ERR_INVALID_STATE);
+    assert(cp_v3_capture_start(s,&next,next_window-1,160,160,30000)==ESP_ERR_INVALID_STATE);
+    assert(cp_v3_capture_start(s,&next,next_window,160,160,30000)==ESP_OK&&starts==old_starts+1);
+    report_at(clock_us+100000,4,false);step(s);
+    assert(cp_v3_capture_pause(s,CP_V3_TEMPORAL_CONFIG_CHANGE,100)==ESP_OK);
+    assert(cp_v3_capture_window(s,&again_window,0)&&again_window.window_seq==next_window&&
+        again_window.scope.assignment_generation==2&&!strcmp(again_window.scope.dataset,"field")&&
+        again_window.statistics.worker_reports==1&&again_window.statistics.unique_keys==1);
+    assert(cp_v3_capture_event(s,&again_event,0)&&again_event.event.event_seq>last_event_seq&&
+        memcmp(last_id,again_event.event.event_id,sizeof last_id)&&again_event.scope.assignment_generation==2&&
+        again_event.event.context.config_generation==2&&again_event.event.context.placement_generation==2);
+    release_windows(s);assert(cp_v3_capture_event_release(s,again_event.event.event_id,again_event.event.revision));step(s);
+    /* Policy-only changes preserve the placement generation; dataset changes
+     * require a real new placement context even if the place identifier stays. */
+    cp_v3_scope_t third=next;third.assignment_generation=3;strcpy(third.policy_id,"third-policy");
+    context=(cp_v3_temporal_context_t){1,3,2};clock_epoch=2;old_starts=starts;
+    assert(cp_v3_capture_rebind(s,&third,&context,100)==ESP_OK&&s->last_temporal.clock_epoch==2&&starts==old_starts);
+    cp_v3_scope_t fourth=third;fourth.assignment_generation=4;strcpy(fourth.dataset,"demo");
+    context=(cp_v3_temporal_context_t){1,4,2};assert(cp_v3_capture_rebind(s,&fourth,&context,100)==ESP_ERR_INVALID_STATE);
+    context.placement_generation=3;assert(cp_v3_capture_rebind(s,&fourth,&context,100)==ESP_OK);
+
+    clear();s=prepare(false);report_at(1100000,1,false);step(s);
+    assert(cp_v3_capture_pause(s,CP_V3_TEMPORAL_SCAN_GAP,100)==ESP_OK);release_windows(s);step(s);
+    next=next_scope();context=(cp_v3_temporal_context_t){1,2,2};
+    cp_v3_scope_t bad=next;strcpy(bad.node_id,"other-node");assert(cp_v3_capture_rebind(s,&bad,&context,100)==ESP_ERR_INVALID_STATE);
+    bad=next;bad.boot_id[35]='2';assert(cp_v3_capture_rebind(s,&bad,&context,100)==ESP_ERR_INVALID_STATE);
+    bad=next;bad.assignment_generation=1;assert(cp_v3_capture_rebind(s,&bad,&context,100)==ESP_ERR_INVALID_STATE);
+    context.boot_generation=2;assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE);context.boot_generation=1;
+    context.config_generation=3;assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE);context.config_generation=2;
+    context.placement_generation=1;assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE);context.placement_generation=2;
+    assert(cp_v3_capture_rebind(s,&next,&context,0)==ESP_ERR_INVALID_ARG);
+    assert(cp_v3_capture_rebind(s,&next,NULL,100)==ESP_ERR_INVALID_ARG);
+    /* Direct state checks reject stale quiescent snapshots. No faulty test
+     * state is stepped: each is restored before trying the next condition. */
+    bool *busy[]={&s->accept,&s->scanning,&s->want_running,&s->have_window,&s->pending_window_valid,
+        &s->held_valid,&s->start_requested,&s->rebind_requested,&s->pause_requested,&s->scan_transition,
+        &s->event_ready,&s->event_release_requested,&s->status.bounded_complete};
+    for(unsigned i=0;i<sizeof busy/sizeof *busy;i++){assert(!*busy[i]);*busy[i]=true;
+        assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE);*busy[i]=false;}
+    s->callbacks=1;assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE);s->callbacks=0;
+    s->window_count=1;assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE);s->window_count=0;
+    s->command=UINT32_MAX;assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE);s->command=s->completed_command;
+    uint16_t index;assert(xQueueReceive(s->free,&index,0)==pdTRUE&&xQueueSend(s->ready,&index,0)==pdTRUE);
+    assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE);
+    assert(xQueueReceive(s->ready,&index,0)==pdTRUE&&xQueueSend(s->free,&index,0)==pdTRUE);
+    scan_active=true;assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE);scan_active=false;step(s);
+    assert(s->scope.assignment_generation==1&&starts==1);
+    assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_OK);
+    assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE); /* No generation regression/reuse. */
+
+    /* Inject an old episode after the published quiescent snapshot. The worker
+     * fences it under OLD scope/context, rejects this rebind, and waits for its
+     * exact terminal release. Clock change must not relabel that old terminal. */
+    clear();s=prepare(true);assert(cp_v3_capture_pause(s,CP_V3_TEMPORAL_SCAN_GAP,100)==ESP_OK);release_windows(s);step(s);
+    assert(s->status.quiescent);cp_v3_temporal_time_t at=mapped(s,clock_us);uint8_t address[6]={9};
+    assert(cp_v3_temporal_set_coverage(s->temporal,at,true)==CP_V3_TEMPORAL_OK);
+    assert(cp_v3_temporal_report(s->temporal,at,0,address,true,-60,NULL)==CP_V3_TEMPORAL_OK);
+    next=next_scope();context=(cp_v3_temporal_context_t){1,2,2};clock_epoch=2;
+    assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE);
+    assert(s->scope.assignment_generation==1&&s->temporal_context.config_generation==1&&starts==1);
+    assert(cp_v3_capture_event(s,&old_event,0)&&old_event.scope.assignment_generation==1&&
+        old_event.event.context.config_generation==1&&old_event.event.reason==CP_V3_TEMPORAL_CLOCK_CHANGE);
+    assert(cp_v3_capture_event_release(s,old_event.event.event_id,old_event.event.revision));step(s);
+    assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_OK&&starts==1&&s->last_temporal.clock_epoch==2);
+    assert(cp_v3_capture_start(s,&next,s->next_window_seq,160,160,30000)==ESP_OK);
+    report_at(clock_us+100000,10,false);step(s);assert(cp_v3_capture_pause(s,CP_V3_TEMPORAL_CONFIG_CHANGE,100)==ESP_OK);
+    assert(cp_v3_capture_event(s,&again_event,0)&&again_event.event.event_seq>old_event.event.event_seq&&
+        memcmp(again_event.event.event_id,old_event.event.event_id,16)&&again_event.event.context.config_generation==2);
+
+    /* A host reset after the temporal boundary but before scope commit leaves
+     * both the public scope and the engine context old. No teardown/reinit. */
+    clear();s=prepare(true);assert(cp_v3_capture_pause(s,CP_V3_TEMPORAL_SCAN_GAP,100)==ESP_OK);release_windows(s);step(s);
+    next=next_scope();context=(cp_v3_temporal_context_t){1,2,2};reset_before_rebind_commit=true;
+    assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_INVALID_STATE);
+    assert(!s->synchronized&&s->scope.assignment_generation==1&&s->temporal_context.config_generation==1&&
+        s->status.ble_resets==1&&starts==1&&ble_init_count==1);
+    synchronized();old=scope();assert(cp_v3_capture_start(s,&old,s->next_window_seq,160,160,30000)==ESP_OK);
+    report_at(clock_us+100000,8,false);step(s);assert(cp_v3_capture_pause(s,CP_V3_TEMPORAL_CONFIG_CHANGE,100)==ESP_OK);
+    assert(cp_v3_capture_event(s,&old_event,0)&&old_event.scope.assignment_generation==1&&old_event.event.context.config_generation==1);
+
+    /* Expiring the wait before the worker runs cannot grant capture. The queued
+     * command fences ordinary start until it is processed, and stays paused. */
+    clear();s=prepare(false);assert(cp_v3_capture_pause(s,CP_V3_TEMPORAL_SCAN_GAP,100)==ESP_OK);release_windows(s);step(s);
+    next=next_scope();context=(cp_v3_temporal_context_t){1,2,2};api_wait_elapsed_us=200000;
+    uint32_t saved_command=s->command;
+    assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_ERR_TIMEOUT&&s->rebind_requested&&s->scope.assignment_generation==1);
+    assert(cp_v3_capture_start(s,&old,s->next_window_seq,160,160,30000)==ESP_ERR_INVALID_STATE);
+    step(s);assert(s->completed_command==saved_command+1&&s->command_result==ESP_OK&&!scan_active&&starts==1);
+
+    /* A temporal-disabled capture uses the same command without creating an
+     * arena. Rebind also cannot replenish a finite trial's consumed allowance. */
+    clear();cp_v3_capture_config_t config=configuration(false);config.temporal_enabled=false;config.stop_after_windows=2;
+    assert(cp_v3_capture_prepare(&config,&s)==ESP_OK);old=scope();assert(cp_v3_capture_start(s,&old,1,160,160,30000)==ESP_OK);
+    advance(s,2100000);assert(cp_v3_capture_pause(s,CP_V3_TEMPORAL_SCAN_GAP,100)==ESP_OK);release_windows(s);step(s);
+    assert(s->full_windows==1);next=next_scope();context=(cp_v3_temporal_context_t){1,2,2};
+    assert(cp_v3_capture_rebind(s,&next,&context,100)==ESP_OK&&s->full_windows==1&&!s->temporal);
+    assert(cp_v3_capture_start(s,&next,s->next_window_seq,160,160,30000)==ESP_OK);advance(s,clock_us+1100000);release_windows(s);step(s);
+    assert(s->full_windows==2&&s->status.bounded_complete);third=next;third.assignment_generation=3;context.config_generation=3;
+    assert(cp_v3_capture_rebind(s,&third,&context,100)==ESP_ERR_INVALID_STATE);
+    clear();
+}
+static void late_bounded_pause_test(void) {
+    clear();cp_v3_capture_config_t config=configuration(false);config.stop_after_windows=20;
+    cp_v3_capture_t *s;assert(cp_v3_capture_prepare(&config,&s)==ESP_OK);cp_v3_scope_t policy=scope();
+    assert(cp_v3_capture_start(s,&policy,1,160,160,60000)==ESP_OK);
+    uint64_t epoch=s->epoch_us;
+    for(uint32_t sequence=1;sequence<=20;sequence++) {
+        advance(s,epoch+(uint64_t)sequence*1000000);
+        cp_v3_capture_window_t w;assert(cp_v3_capture_window(s,&w,0)&&w.window_seq==sequence&&w.statistics.window_closed);
+        assert(cp_v3_capture_window_release(s,sequence,1));
+    }
+    /* Network owner notices completion five seconds late, while the worker's
+     * bounded pause is still pending. It must fence at window 20, not now. */
+    clock_us=epoch+25000000;assert(cp_v3_capture_pause(s,CP_V3_TEMPORAL_SCAN_GAP,100)==ESP_OK);step(s);
+    assert(s->status.bounded_complete&&s->status.quiescent&&!s->pause_requested&&!s->have_window&&!s->pending_window_valid);
+    assert(s->status.windows_closed==20&&s->status.last_closed_window_seq==20&&s->next_window_seq==21&&s->full_windows==20);
+    assert(starts==1&&!scan_active&&!s->accept&&!s->want_running&&!s->status.failed);
+    assert(!cp_v3_capture_window(s,&(cp_v3_capture_window_t){0},0)&&!s->status.window_handoffs);
+    clock_us+=5000000;assert(cp_v3_capture_pause(s,CP_V3_TEMPORAL_SCAN_GAP,100)==ESP_OK);step(s);
+    assert(s->status.quiescent&&s->status.windows_closed==20&&!s->have_window&&!s->status.failed);
+    clear();
+}
 static void tests(void) {
     clear();cp_v3_capture_t *s=prepare(false);
     report_at(1100000,1,false);step(s);report_at(1900000,1,true);raw_ok=false;step(s);advance(s,2100000);
@@ -272,4 +445,8 @@ static void tests(void) {
     cp_v3_capture_prepare_status(&status);assert(status.failed&&!strcmp(status.failure_stage,"ble_after")&&ble_init_count==1);
     clear();puts("capture deterministic orchestration, exact source/drop ledger, ordering barrier, raw hook, history, authority and memory gates passed");
 }
-int main(void) { tests();return 0; }
+int main(void) {
+    tests();rebind_tests();late_bounded_pause_test();
+    puts("capture scope rebind boundaries, identity, sequence, worker and resource preservation passed");
+    puts("20-window completion followed by late repeated pause stays quiescent without window 21");return 0;
+}

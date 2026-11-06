@@ -25,6 +25,38 @@ publication/deployment is checked against the actual main workflow run.
 
 ## P0 — Deliver the core MVP
 
+- [ ] Ship the user-requested conservative rule-based recognition alongside V3
+      online updates (2026-11-06): reuse the existing reviewed vehicle-evidence
+      rules under a new explicitly allowlisted ruleset, keeping `unclassified-v1`
+      unchanged. Output e-bike/car candidates, unknown and conflicts from bounded
+      full-window evidence, retain malformed/peripheral/phone exclusions, and do
+      not invent phone-positive rules or classify from a bare company/OUI. Verify
+      actual-AD C/TypeScript parity and then real field receipts; never relabel
+      historical unclassified windows or present candidates as physical counts.
+      Software, actual-AD parity and real9th field receipts with the new version
+      are verified; classifier accuracy remains separate from deployment.
+
+- [ ] Restore continuous, same-boot V3 operation and webpage configuration
+      changes (2026-11-06 user correction): remove the normal 20-minute stop/
+      restart and error-reboot workaround; renew signed time, real capabilities,
+      immutable policy and lease online. Pause/censor and durably freeze old
+      observations before clock or scope changes, park storage/status generation,
+      reuse the existing NimBLE collector without deinitialization, and resume
+      only after a real new applied ACK. Preserve boot-global sequences and every
+      frozen historical body. Restore webpage-only binding to 9号楼 / field-live
+      through a bounded, revision-checked transition that does not close the old
+      placement/authority before the device is safely paused; migrate any existing
+      renewal approval only after the new ACK without extending its expiry.
+      Verify same-boot renewal and field receipts on the actual Waveshare. The
+      earlier bounded startup acceptance does not establish continuous operation.
+      Version0.5.2 has real saved startup, same-boot9th/field/rules switching,
+      multiple field receipts and lease recovery. Actual registration1→2,
+      generation17→18 and two new epoch2 field windows crossed the original
+      20-minute stop point without a new boot. Deliberate post-run power cycling
+      and all-day acceptance remain separate. Retain
+      expired in-flight candidates and report cancelled-transition park limits;
+      see [current evidence](../notes/waveshare-continuous-2026-11-06.md).
+
 - [ ] Make saved automatic startup the default USB setup behavior (2026-11-06
       user request): support open/personal and explicitly unverified PEAP through
       saved profile, signed-clock bootstrap and both S3 runtimes; preserve old

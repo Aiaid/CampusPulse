@@ -22,14 +22,14 @@ fi
 INCLUDES=(-I "$TEST_DIR" -I "$PROJECT/main" -I "$PROJECT/flash_queue/nvs_store" -I "$MBEDTLS_PREFIX/include")
 : "${IDF_PATH:?Set ESP-IDF 5.5.3 path for the real transport origin parser}"
 INCLUDES+=(-I "$FIRMWARE/components/cp_v3_transport" -I "$IDF_PATH/components/http_parser")
-for component in cp_v3_startup cp_v3_capture cp_v3_control cp_v3_evidence cp_v3_queue cp_v3_budget cp_v3_transport cp_settings cp_v3_stats cp_v3_temporal cp_v3_small_results; do
+for component in cp_vehicle cp_v3_startup cp_v3_capture cp_v3_control cp_v3_evidence cp_v3_queue cp_v3_budget cp_v3_transport cp_settings cp_v3_stats cp_v3_temporal cp_v3_small_results; do
   INCLUDES+=(-I "$FIRMWARE/components/$component/include")
 done
 "${CC:-cc}" -std=c11 -D_DEFAULT_SOURCE -Wno-unused-parameter -Wall -Wextra -Werror -fsanitize=address,undefined -DTRIAL_BOOTSTRAP_HOST_TEST \
   "${INCLUDES[@]}" "$PROJECT/main/board_coordinator.c" "$PROJECT/main/board_runtime.c" \
   "$PROJECT/main/board_shared_capture.c" "$PROJECT/main/board_capabilities.c" \
   "$PROJECT/main/trial_bootstrap.c" "$TEST_DIR/test_board_coordinator.c" \
-  "$FIRMWARE/components/cp_v3_stats/stats.c" "$FIRMWARE/components/cp_v3_temporal/temporal.c" \
+  "$FIRMWARE/components/cp_v3_stats/stats.c" "$FIRMWARE/components/cp_vehicle/cp_vehicle.c" "$FIRMWARE/components/cp_v3_temporal/temporal.c" \
   "$FIRMWARE/components/cp_v3_transport/wifi_validation.c" \
   "$FIRMWARE/components/cp_v3_transport/protocol.c" "$IDF_PATH/components/http_parser/http_parser.c" \
   "$FIRMWARE/components/cp_settings/settings_validate.c" \

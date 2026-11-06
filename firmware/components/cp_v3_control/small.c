@@ -19,18 +19,27 @@ static bool current(cp_v3_control_t *c,cp_v3_time_t t){if(!valid_now(t)||t.clock
 static bool absent_or_null(W *w,int at,const char *k){int a=f(w,at,k);return a<0||v3_is(w,a,V3_NULL);}
 static unsigned slice_bit(uint64_t n){return n==1000?1:n==2000?2:n==5000?4:0;}
 static unsigned mode_bit(W *w,int at){return v3_equal(w,at,"off")?1:v3_equal(w,at,"terminal_only")?2:v3_equal(w,at,"revisions")?4:0;}
+static unsigned ruleset_bit(W *w,int at){return v3_equal(w,at,CP_V3_CONTROL_RULESET_UNCLASSIFIED)?1:v3_equal(w,at,CP_V3_CONTROL_RULESET_VEHICLE)?2:0;}
 static bool streams(W *w,int at,bool *events){
     if(v3_array_exact(w,at,"window_statistics node_status")){*events=false;return true;}
     if(v3_array_exact(w,at,"window_statistics node_status candidate_events")){*events=true;return true;}return false;
 }
 bool v3_small_caps(cp_v3_control_t *c){
     W *w=c->workspace;char text[65];uint64_t ignored;
-    if(!v3_fields_optional(w,0,"schema capability_id node_id boot_id producer_version policy_schemas issued_at expires_at scanner summary statistics local_raw uplink queue resources","features temporal")||
+    if(!v3_fields_optional(w,0,"schema capability_id node_id boot_id producer_version policy_schemas issued_at expires_at scanner summary statistics local_raw uplink queue resources","features temporal online_control")||
         !eq(w,0,"schema","device-capabilities/1")||!id(w,0,"capability_id",text)||!eq(w,0,"node_id",c->node_id)||!eq(w,0,"boot_id",c->boot_id)||
         !eq(w,0,"producer_version",CP_V3_SMALL_PRODUCER)||!v3_array_exact(w,f(w,0,"policy_schemas"),"device-config/3")||
         !date(w,0,"issued_at",&c->capability_issued_utc_ms)||!date(w,0,"expires_at",&c->capability_expires_utc_ms)||
         c->capability_issued_utc_ms>=c->capability_expires_utc_ms||!absent_or_null(w,0,"features"))return false;
-    int a=f(w,0,"scanner"),b;
+    int a,b;
+    if(!absent_or_null(w,0,"online_control")){
+        a=f(w,0,"online_control");
+        if(!v3_fields(w,a,"schema scope_rebind capability_renewal")||!eq(w,a,"schema","online-control/1")||
+            (!yes(w,a,"scope_rebind")&&!no(w,a,"scope_rebind"))||
+            (!yes(w,a,"capability_renewal")&&!no(w,a,"capability_renewal")))return false;
+        c->capability_online_scope_rebind=yes(w,a,"scope_rebind");c->capability_online_renewal=yes(w,a,"capability_renewal");
+    }
+    a=f(w,0,"scanner");
     if(!v3_fields(w,a,"modes phys duplicate_filter min_interval_units max_interval_units")||!v3_array_exact(w,f(w,a,"modes"),"passive")||
         !v3_array_exact(w,f(w,a,"phys"),"1m")||!n(w,a,"min_interval_units",4,16384,&c->capability_interval_min)||
         !n(w,a,"max_interval_units",c->capability_interval_min,16384,&c->capability_interval_max))return false;
@@ -39,7 +48,13 @@ bool v3_small_caps(cp_v3_control_t *c){
     a=f(w,0,"summary");if(!v3_fields(w,a,"max_addresses max_bins max_window_ms")||!n(w,a,"max_addresses",1,512,&c->capability_addresses)||
         !n(w,a,"max_bins",1,12,&c->capability_bins)||!n(w,a,"max_window_ms",30000,60000,&c->capability_window_ms))return false;
     a=f(w,0,"statistics");if(!v3_fields(w,a,"schemas extractor_versions ruleset_versions")||!v3_array_exact(w,f(w,a,"schemas"),"window-statistics/1")||
-        !v3_array_exact(w,f(w,a,"extractor_versions"),"cp-v3-stats/1")||!v3_array_exact(w,f(w,a,"ruleset_versions"),"unclassified-v1"))return false;
+        !v3_array_exact(w,f(w,a,"extractor_versions"),"cp-v3-stats/1"))return false;
+    b=f(w,a,"ruleset_versions");if(!v3_is(w,b,V3_ARRAY))return false;
+    for(uint16_t i=w->tokens[b].first;i!=V3_NONE;i=w->tokens[i].next){unsigned bit=ruleset_bit(w,i);
+        if(!bit||(c->capability_rulesets&bit))return false;
+        c->capability_rulesets|=(uint8_t)bit;
+    }
+    if(!c->capability_rulesets)return false;
     if(!absent_or_null(w,0,"temporal")){
         a=f(w,0,"temporal");cp_v3_control_temporal_t *t=&c->temporal_cap;
         if(!v3_fields(w,a,"slice_ms max_history_ms max_tracks max_open_events max_event_ms event_schemas report_modes")||
@@ -89,7 +104,9 @@ bool v3_small_policy(cp_v3_control_t *c,int root,cp_v3_trial_policy_t *p){
         !n(w,b,"bin_ms",5000,5000,&p->bin_ms)||p->window_ms/p->bin_ms>c->capability_bins||
         !shortn(w,b,"max_addresses",1,c->capability_addresses,&p->stats_max_addresses))return false;
     a=f(w,root,"evidence");if(!v3_fields(w,a,"mode schema extractor_version ruleset_version")||!eq(w,a,"mode","statistics")||
-        !eq(w,a,"schema","window-statistics/1")||!eq(w,a,"extractor_version","cp-v3-stats/1")||!eq(w,a,"ruleset_version","unclassified-v1"))return false;
+        !eq(w,a,"schema","window-statistics/1")||!eq(w,a,"extractor_version","cp-v3-stats/1")||
+        !(ruleset_bit(w,f(w,a,"ruleset_version"))&c->capability_rulesets)||
+        !s(w,a,"ruleset_version",p->ruleset_version,sizeof p->ruleset_version))return false;
     a=f(w,root,"local_raw");if(eq(w,a,"mode","off")){if(!v3_fields(w,a,"mode"))return false;}
     else {cp_v3_control_raw_t *r=&p->local_raw;
         if(!c->capability_local_raw||!eq(w,a,"mode","tf_cpraw")||!v3_fields(w,a,"mode format max_segment_bytes max_total_bytes min_free_bytes sync_interval_ms full_behavior")||
@@ -230,7 +247,7 @@ cp_v3_control_result_t cp_v3_control_lease_request(cp_v3_control_t *c,uint32_t s
         (c->state!=CP_V3_CONTROL_APPLIED&&c->state!=CP_V3_CONTROL_PAUSED))return CP_V3_CONTROL_STATE;
     if(c->lease_pending||seq==c->contact_seq){if(seq!=c->pending_contact_seq||uptime!=c->pending_uptime_ms||!c->lease_length)return CP_V3_CONTROL_STATE;}
     else {
-        if(seq<=c->contact_seq||uptime<c->contact_uptime_ms||uptime<c->last_mono_ms)return CP_V3_CONTROL_STATE;
+        if(seq<=c->contact_seq||seq<=c->detached_contact_seq||uptime<c->contact_uptime_ms||uptime<c->last_mono_ms)return CP_V3_CONTROL_STATE;
         int n=snprintf(c->lease_json,sizeof c->lease_json,"{\"protocol\":\"campuspulse/3\",\"boot_id\":\"%s\",\"policy_id\":\"%s\",\"policy_sha256\":\"%s\",\"assignment_generation\":%llu,\"contact_seq\":%u,\"uptime_ms\":%llu}",
             c->boot_id,c->policy.scope.policy_id,c->policy.scope.policy_sha256,(unsigned long long)c->policy.scope.assignment_generation,(unsigned)seq,(unsigned long long)uptime);
         if(n<0||(size_t)n>=sizeof c->lease_json)return CP_V3_CONTROL_RESOURCE;
@@ -239,7 +256,8 @@ cp_v3_control_result_t cp_v3_control_lease_request(cp_v3_control_t *c,uint32_t s
     *bytes=c->lease_json;*length=c->lease_length;return CP_V3_CONTROL_OK;
 }
 cp_v3_control_result_t cp_v3_control_lease_receipt(cp_v3_control_t *c,const void *json,size_t length,cp_v3_time_t now){
-    if(!c||!c->small_statistics||!c->applied_at_utc_ms||!c->lease_length||!current(c,now)||now.mono_ms<c->pending_uptime_ms)return CP_V3_CONTROL_STATE;
+    if(!c||!c->small_statistics||!c->applied_at_utc_ms||!c->lease_length||
+        c->pending_contact_seq<=c->detached_contact_seq||!current(c,now)||now.mono_ms<c->pending_uptime_ms)return CP_V3_CONTROL_STATE;
     cp_v3_control_result_t result=cp_v3_control_match_frozen_receipt(c->workspace,&c->policy.scope,c->lease_json,c->lease_length,json,length,c->sha256,c->hash_context);
     if(result!=CP_V3_CONTROL_OK)return result;
     W *w=c->workspace;uint64_t server,deadline;uint32_t span;date(w,0,"server_time",&server);u(w,0,"lease_until_ms",0,V3_SAFE,&deadline);n(w,0,"span_seq",1,UINT32_MAX,&span);bool contiguous=yes(w,0,"contiguous");
@@ -255,7 +273,7 @@ cp_v3_control_result_t cp_v3_control_stage(cp_v3_control_t *c,cp_v3_control_t *c
     if(!c||!candidate||c==candidate||!c->small_statistics||!c->policy_length||c->state==CP_V3_CONTROL_ACK_PENDING||!current(c,now))return CP_V3_CONTROL_STATE;
     *candidate=*c;candidate->policy_length=0;candidate->state=CP_V3_CONTROL_REGISTERED;candidate->staged_from_generation=c->policy.scope.assignment_generation;
     candidate->acknowledgement_length=0;candidate->acknowledged_at_utc_ms=0;candidate->applied_at_utc_ms=0;candidate->deadline_utc_ms=0;candidate->deadline_mono_ms=0;
-    candidate->lease_length=0;candidate->lease_pending=false;candidate->contact_seq=0;candidate->pending_contact_seq=0;candidate->span_seq=0;
+    candidate->lease_length=0;candidate->lease_pending=false;candidate->contact_seq=0;candidate->pending_contact_seq=0;candidate->span_seq=0;candidate->detached_contact_seq=0;
     /* Config GET includes previous applied_generation; offer requires a locally
      * held old policy for that check. Validate its presence against c separately. */
     W *w=c->workspace;uint64_t generation;
@@ -275,11 +293,103 @@ cp_v3_control_result_t cp_v3_control_activate_staged(cp_v3_control_t *c,cp_v3_co
     if(result==CP_V3_CONTROL_OK){*c=*candidate;candidate->state=CP_V3_CONTROL_EMPTY;}
     return result;
 }
+static bool closed_after(cp_v3_boundary_t b,cp_v3_boundary_t floor){
+    return !b.window_open&&!b.segment_open&&b.closed_window_seq>=floor.closed_window_seq&&b.closed_segment_seq>=floor.closed_segment_seq;
+}
+cp_v3_control_result_t cp_v3_control_detach_lease_at_boundary(cp_v3_control_t *c,cp_v3_boundary_t boundary,
+    cp_v3_control_checkpoint_fn checkpoint,void *context){
+    if(!c||!c->small_statistics||!checkpoint||!c->lease_pending||!c->lease_length||
+        (c->state!=CP_V3_CONTROL_APPLIED&&c->state!=CP_V3_CONTROL_PAUSED)||
+        c->pending_contact_seq<=c->contact_seq||c->pending_contact_seq<=c->detached_contact_seq)return CP_V3_CONTROL_STATE;
+    if(!closed_after(boundary,c->acknowledgement_boundary))return CP_V3_CONTROL_BOUNDARY;
+    if(!checkpoint(context,&c->policy.scope,c->lease_json,c->lease_length))return CP_V3_CONTROL_RESOURCE;
+    c->state=CP_V3_CONTROL_PAUSED;c->lease_pending=false;c->detached_contact_seq=c->pending_contact_seq;
+    return CP_V3_CONTROL_OK;
+}
+static bool renewal_time(const cp_v3_control_t *c,cp_v3_time_t now){
+    return valid_now(now)&&now.clock_epoch>=c->clock_epoch&&now.mono_ms>=c->last_mono_ms&&
+        now.mono_ms>=c->registered_uptime_ms&&now.utc_ms-now.uncertainty_ms>=c->trusted_utc_lower_ms;
+}
+cp_v3_control_result_t cp_v3_control_stage_capabilities(const cp_v3_control_t *c,cp_v3_control_t *candidate,
+    const void *json,size_t length,cp_v3_time_t now,cp_v3_boundary_t boundary){
+    if(!c||!candidate||c==candidate||!c->small_statistics||!c->workspace||!c->sha256||
+        c->state<CP_V3_CONTROL_REGISTERED||c->state==CP_V3_CONTROL_ACK_PENDING||c->lease_pending||
+        !c->registration_seq||c->registration_seq==UINT32_MAX||candidate->state!=CP_V3_CONTROL_EMPTY)return CP_V3_CONTROL_STATE;
+    if(!closed_after(boundary,c->acknowledgement_boundary)||!renewal_time(c,now))return CP_V3_CONTROL_BOUNDARY;
+    cp_v3_control_result_t result=cp_v3_control_init(candidate,c->workspace,c->node_id,c->boot_id,json,length,now,c->sha256,c->hash_context);
+    if(result!=CP_V3_CONTROL_OK){cp_v3_control_clear(candidate);return result;}
+    char fresh_id[65],old_id[65];W *w=c->workspace;
+    bool ids=v3_parse(w,candidate->capability_json,candidate->capability_length)&&s(w,0,"capability_id",fresh_id,sizeof fresh_id)&&
+        v3_parse(w,c->capability_json,c->capability_length)&&s(w,0,"capability_id",old_id,sizeof old_id);
+    if(!candidate->small_statistics||!ids||!strcmp(fresh_id,old_id)||!strcmp(candidate->capability_sha256,c->capability_sha256)||
+        candidate->capability_issued_utc_ms<c->capability_issued_utc_ms||candidate->capability_expires_utc_ms<=c->capability_expires_utc_ms){
+        cp_v3_control_clear(candidate);return CP_V3_CONTROL_BINDING_MISMATCH;
+    }
+    candidate->capability_renewal=true;candidate->renewal_boundary=boundary;
+    strcpy(candidate->renewal_from_capability_sha256,c->capability_sha256);
+    strcpy(candidate->renewal_from_policy_sha256,c->policy.scope.policy_sha256);
+    strcpy(candidate->renewal_capability_sha256,candidate->capability_sha256);
+    candidate->renewal_from_registration_seq=c->registration_seq;candidate->renewal_from_apply_seq=c->apply_seq;
+    candidate->staged_from_generation=c->policy.scope.assignment_generation;
+    candidate->last_applied_generation=c->last_applied_generation;candidate->apply_seq=c->apply_seq;
+    candidate->acknowledgement_boundary=boundary;
+    candidate->trusted_utc_lower_ms=now.utc_ms-now.uncertainty_ms;
+    const char *bytes;size_t bytes_length;
+    result=cp_v3_control_registration(candidate,c->registration_seq+1,now.mono_ms,&bytes,&bytes_length);
+    if(result!=CP_V3_CONTROL_OK)cp_v3_control_clear(candidate);
+    return result;
+}
+cp_v3_control_result_t cp_v3_control_renewal_registration(const cp_v3_control_t *candidate,const char **bytes,size_t *length){
+    if(bytes)*bytes=NULL;
+    if(length)*length=0;
+    if(!candidate||!bytes||!length||!candidate->capability_renewal||!candidate->registration_length||
+        candidate->registration_seq!=candidate->renewal_from_registration_seq+1||
+        candidate->state<CP_V3_CONTROL_REGISTERING)return CP_V3_CONTROL_STATE;
+    *bytes=candidate->registration_json;*length=candidate->registration_length;return CP_V3_CONTROL_OK;
+}
+cp_v3_control_result_t cp_v3_control_activate_renewal(cp_v3_control_t *c,cp_v3_control_t *candidate,
+    cp_v3_time_t now,cp_v3_boundary_t boundary,uint32_t seq,cp_v3_actual_apply_fn apply,void *ctx){
+    if(!c||!candidate||c==candidate||!c->small_statistics||!candidate->small_statistics||
+        !candidate->capability_renewal||!candidate->renewal_registered||candidate->state!=CP_V3_CONTROL_OFFERED||
+        c->state<CP_V3_CONTROL_REGISTERED||c->state==CP_V3_CONTROL_ACK_PENDING||c->lease_pending||candidate->lease_pending||
+        c->workspace!=candidate->workspace||c->sha256!=candidate->sha256||c->hash_context!=candidate->hash_context||
+        strcmp(c->node_id,candidate->node_id)||strcmp(c->boot_id,candidate->boot_id)||
+        strcmp(c->capability_sha256,candidate->renewal_from_capability_sha256)||
+        strcmp(c->policy.scope.policy_sha256,candidate->renewal_from_policy_sha256)||
+        strcmp(candidate->capability_sha256,candidate->renewal_capability_sha256)||
+        !strcmp(c->capability_sha256,candidate->capability_sha256)||
+        c->policy.scope.assignment_generation!=candidate->staged_from_generation||
+        c->registration_seq!=candidate->renewal_from_registration_seq||c->apply_seq!=candidate->renewal_from_apply_seq||
+        c->last_applied_generation!=candidate->last_applied_generation||c->registration_seq==UINT32_MAX||
+        candidate->registration_seq!=c->registration_seq+1||candidate->apply_seq!=c->apply_seq||
+        candidate->policy.scope.assignment_generation<=c->policy.scope.assignment_generation||seq<=c->apply_seq)return CP_V3_CONTROL_BINDING_MISMATCH;
+    if(!closed_after(boundary,c->acknowledgement_boundary)||!closed_after(boundary,candidate->renewal_boundary)||
+        !renewal_time(c,now)||now.clock_epoch!=candidate->clock_epoch||!current(candidate,now))return CP_V3_CONTROL_BOUNDARY;
+    cp_v3_control_result_t result=cp_v3_control_apply(candidate,now,boundary,seq,apply,ctx);
+    if(result==CP_V3_CONTROL_OK){
+        *c=*candidate;c->capability_renewal=false;c->renewal_registered=false;
+        cp_v3_control_clear(candidate);
+    }
+    return result;
+}
 cp_v3_control_result_t cp_v3_control_clock_boundary(cp_v3_control_t *c,cp_v3_time_t now,cp_v3_boundary_t boundary){
     if(!c||!c->small_statistics)return CP_V3_CONTROL_UNSUPPORTED;
     if(!valid_now(now)||now.clock_epoch<=c->clock_epoch||now.mono_ms<c->last_mono_ms||now.utc_ms-now.uncertainty_ms<c->trusted_utc_lower_ms||
-        boundary.window_open||boundary.segment_open||boundary.closed_window_seq<c->acknowledgement_boundary.closed_window_seq||boundary.closed_segment_seq<c->acknowledgement_boundary.closed_segment_seq){c->state=CP_V3_CONTROL_PAUSED;return CP_V3_CONTROL_BOUNDARY;}
+        boundary.window_open||boundary.segment_open||boundary.closed_window_seq<c->acknowledgement_boundary.closed_window_seq||boundary.closed_segment_seq<c->acknowledgement_boundary.closed_segment_seq){
+        /* Keep the exact in-flight operation retryable. Only currently applied
+         * authority is failed closed; no invalid map or deadline is adopted. */
+        if(c->state==CP_V3_CONTROL_APPLIED)c->state=CP_V3_CONTROL_PAUSED;
+        return CP_V3_CONTROL_BOUNDARY;
+    }
     c->clock_epoch=now.clock_epoch;c->last_mono_ms=now.mono_ms;c->trusted_utc_lower_ms=now.utc_ms-now.uncertainty_ms;
-    if(c->applied_at_utc_ms){bool paused=c->state!=CP_V3_CONTROL_APPLIED;set_deadline(c,c->lease_server_utc_ms,c->deadline_utc_ms,now);if(paused)c->state=CP_V3_CONTROL_PAUSED;}
+    if(c->applied_at_utc_ms){
+        /* Clock refresh is not an ACK/lease receipt. Preserve both the original
+         * UTC cutoff and its already frozen monotonic bound; even a narrower
+         * clock interval cannot extend authority. Pending/failed states remain
+         * exactly pending/failed, including when old applied metadata exists. */
+        c->deadline_mono_ms=min(c->deadline_mono_ms,v3_deadline_mono(now,c->deadline_utc_ms));
+        if(c->state==CP_V3_CONTROL_APPLIED&&(now.mono_ms>=c->deadline_mono_ms||
+            now.utc_ms+now.uncertainty_ms>=c->deadline_utc_ms))c->state=CP_V3_CONTROL_PAUSED;
+    }
     return CP_V3_CONTROL_OK;
 }

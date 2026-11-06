@@ -1,4 +1,5 @@
 #include "cp_v3_stats.h"
+#include "cp_vehicle.h"
 #include <stdalign.h>
 #include <limits.h>
 #include <string.h>
@@ -9,8 +10,9 @@ typedef struct {
     uint16_t bins;
     uint8_t verified_mask, candidate_mask; /* Reserved; unclassified-v1 stays0. */
     uint32_t reports;
+    cp_vehicle_evidence_t vehicle;
 } entry_t;
-_Static_assert(sizeof(entry_t) == 16, "Address-entry budget changed");
+_Static_assert(sizeof(entry_t) == 32, "Address-entry budget changed");
 struct cp_v3_stats {
     uint32_t magic;
     size_t memory_bytes;
@@ -40,11 +42,17 @@ size_t cp_v3_stats_memory_bytes(uint16_t capacity) {
     if (!slots) return 0;
     return aligned(aligned(sizeof(cp_v3_stats_t)) + (size_t)capacity * sizeof(entry_t)) + aligned((size_t)slots * sizeof(uint16_t));
 }
+static const char *ruleset(const char *version) {
+    if (!version) return NULL;
+    if (!strcmp(version, CP_V3_STATS_RULESET)) return CP_V3_STATS_RULESET;
+    if (!strcmp(version, CP_V3_STATS_VEHICLE_RULESET)) return CP_V3_STATS_VEHICLE_RULESET;
+    return NULL;
+}
 static bool configuration(const cp_v3_stats_config_t *c) {
     return c && cp_v3_stats_memory_bytes(c->capacity) && c->window_ms && c->window_ms <= 60000 &&
         c->bin_ms >= 1000 && c->bin_ms <= c->window_ms && c->window_ms % c->bin_ms == 0 &&
         c->window_ms / c->bin_ms <= CP_V3_STATS_MAX_BINS && c->rules_version &&
-        !strcmp(c->rules_version, CP_V3_STATS_RULESET) && !c->rules_verified && !c->classify;
+        ruleset(c->rules_version) && !c->rules_verified && !c->classify;
 }
 cp_v3_stats_t *cp_v3_stats_init(void *memory, size_t bytes, const cp_v3_stats_config_t *config) {
     if (!memory || (uintptr_t)memory % cp_v3_stats_memory_alignment() || !configuration(config)) return NULL;
@@ -53,7 +61,7 @@ cp_v3_stats_t *cp_v3_stats_init(void *memory, size_t bytes, const cp_v3_stats_co
     memset(memory, 0, need);
     cp_v3_stats_t *s = memory;
     s->magic = MAGIC; s->memory_bytes = need; s->config = *config;
-    s->config.rules_version = CP_V3_STATS_RULESET;
+    s->config.rules_version = ruleset(config->rules_version);
     s->slots = cp_v3_stats_hash_slots(config->capacity);
     s->entries = (entry_t *)((uint8_t *)memory + aligned(sizeof *s));
     s->hash = (uint16_t *)((uint8_t *)memory + aligned(aligned(sizeof *s) + (size_t)config->capacity * sizeof(entry_t)));
@@ -77,6 +85,12 @@ void cp_v3_stats_free(cp_v3_stats_t *s) {
     for (size_t i = 0; i < bytes; ++i) p[i] = 0;
     if (release) release(context, s);
 }
+bool cp_v3_stats_set_rules(cp_v3_stats_t *s, const char *version) {
+    const char *compiled = ruleset(version);
+    if (!s || s->magic != MAGIC || !compiled) return false;
+    s->config.rules_version = compiled;
+    return true;
+}
 bool cp_v3_stats_begin(cp_v3_stats_t *s, uint64_t start) {
     if (!s || s->magic != MAGIC || start > UINT64_MAX - (uint64_t)s->config.window_ms * 1000u) return false;
     memset(s->entries, 0, (size_t)s->config.capacity * sizeof(entry_t));
@@ -86,7 +100,7 @@ bool cp_v3_stats_begin(cp_v3_stats_t *s, uint64_t start) {
     s->window.configured_bins = (uint8_t)(s->config.window_ms / s->config.bin_ms);
     s->window.start_mono_us = start; s->window.end_mono_us = start + (uint64_t)s->config.window_ms * 1000u;
     s->window.report_gaps_known = true;
-    strcpy(s->window.rules_version, CP_V3_STATS_RULESET); strcpy(s->window.extractor_version, CP_V3_STATS_VERSION);
+    strcpy(s->window.rules_version, s->config.rules_version); strcpy(s->window.extractor_version, CP_V3_STATS_VERSION);
     s->begun = true; s->scan_known = s->scanning = s->clock_usable = s->sequence_known = false;
     s->coverage_cursor = start; s->last_sequence = s->internal_processing_losses = 0;
     return true;
@@ -186,15 +200,43 @@ cp_v3_stats_result_t cp_v3_stats_observe(cp_v3_stats_t *s, const cp_v3_stats_rep
     if (r->data_status == 1) increment(s, &s->window.fragment_more_reports);
     else if (r->data_status == 2) increment(s, &s->window.truncated_reports);
     else if (r->data_status) increment(s, &s->window.unknown_status_reports);
-    if (r->data_status || r->length > CP_V3_STATS_PAYLOAD_MAX || (!r->kind && r->length > 31)) {
+    bool vehicle_rules = !strcmp(s->window.rules_version, CP_V3_STATS_VEHICLE_RULESET);
+    if (r->data_status || r->length > CP_V3_STATS_PAYLOAD_MAX || (!r->kind && r->length > 31) ||
+        (vehicle_rules && (r->kind || r->length > 31))) {
+        /* An incomplete/unsupported report must also veto an earlier name hit
+         * for this key. No fragment assembly or extended classifier is claimed. */
+        if (vehicle_rules && e) e->flags |= 1u;
         increment(s, &s->window.unsupported_reports); return CP_V3_STATS_UNSUPPORTED_REPORT;
     }
     if ((!r->payload && r->length) || !valid_ad(r->payload, r->length)) {
+        if (vehicle_rules && e) e->flags |= 1u;
         increment(s, &s->window.malformed_reports); return CP_V3_STATS_BAD_AD;
     }
-    /* unclassified-v1: even valid company/OUI/Phone Appearance observations are
-     * unknown. The future callback interface is deliberately not activated. */
+    if (vehicle_rules && e) {
+        uint32_t malformed_before = e->vehicle.malformed_reports;
+        if (!cp_vehicle_observe(&e->vehicle, r->payload, r->length)) {
+            e->flags |= 1u; s->window.counters_saturated = true;
+        } else if (e->vehicle.malformed_reports != malformed_before) {
+            increment(s, &s->window.malformed_reports); return CP_V3_STATS_BAD_AD;
+        }
+    }
     return overflow ? CP_V3_STATS_ADDRESS_FULL : CP_V3_STATS_OK;
+}
+/* Same category mapping as classifyCompactVehicleEvidence. The compact oracle
+ * returns unknown with a conflict limitation; the six-way statistics partition
+ * retains that conflict explicitly. Ecosystem/module clues never become a car.
+ * All positives are rule-based candidates, with no phone-positive rule. */
+static cp_v3_stats_class_t vehicle_category(const entry_t *entry) {
+    const cp_vehicle_evidence_t *v = &entry->vehicle;
+    const uint32_t car = UINT32_C(1) << CP_VEHICLE_NAME_BYD;
+    const uint32_t ecosystem = (UINT32_C(1) << CP_VEHICLE_NAME_NINEBOT) |
+        (UINT32_C(1) << CP_VEHICLE_NAME_SEGWAY) | (UINT32_C(1) << CP_VEHICLE_NAME_SMARTBIKE) |
+        (UINT32_C(1) << CP_VEHICLE_NAME_BDB_PKE) | (UINT32_C(1) << CP_VEHICLE_NAME_ZUB_PREFIX);
+    const bool ebike = (v->name_brand_mask & (CP_VEHICLE_NAME_MASK_ALL & ~(car | ecosystem))) != 0;
+    const bool car_hit = (v->name_brand_mask & car) != 0;
+    if (entry->flags || v->malformed_reports || !v->parsed_reports || v->exclusion_mask) return CP_V3_STATS_UNKNOWN;
+    if (ebike && car_hit) return CP_V3_STATS_CONFLICTING;
+    return ebike ? CP_V3_STATS_E_BIKE_RELATED : car_hit ? CP_V3_STATS_CAR_RELATED : CP_V3_STATS_UNKNOWN;
 }
 static void coverage(cp_v3_stats_t *s, uint64_t from, uint64_t until, bool scanning) {
     uint64_t width = (uint64_t)s->config.bin_ms * 1000u;
@@ -232,7 +274,13 @@ bool cp_v3_stats_snapshot(const cp_v3_stats_t *s, uint64_t now, cp_v3_stats_snap
     uint64_t elapsed = until - s->window.start_mono_us, width = (uint64_t)s->config.bin_ms * 1000u;
     out->duration_ms = (uint32_t)(elapsed / 1000u); out->window_closed = until == s->window.end_mono_us;
     out->bin_count = (uint8_t)((elapsed + width - 1) / width);
-    out->counts[CP_V3_STATS_UNKNOWN] = out->unique_keys;
+    for (unsigned i = 0; i < out->unique_keys; ++i) {
+        cp_v3_stats_class_t category = !strcmp(out->rules_version, CP_V3_STATS_VEHICLE_RULESET)
+            ? vehicle_category(&s->entries[i]) : CP_V3_STATS_UNKNOWN;
+        ++out->counts[category];
+        if (category == CP_V3_STATS_E_BIKE_RELATED || category == CP_V3_STATS_CAR_RELATED)
+            ++out->candidate_keys[category];
+    }
     out->received_reports_known = out->source.reports_seen_known;
     out->received_reports = out->received_reports_known ? out->source.reports_seen : 0;
     out->callback_drops_known = out->source.queue_drops_known;

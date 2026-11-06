@@ -66,6 +66,9 @@ jobs:
           uv run --no-project python firmware/components/cp_v3_transport/tests/test_mqtt_protocol.py
           uv run --no-project python firmware/components/cp_v3_startup/tests/test_startup.py
           uv run --no-project python firmware/components/cp_v3_clock/tests/run.py
+          uv run --no-project python firmware/components/cp_v3_clock/tests/test_online.py
+          uv run --no-project python firmware/components/cp_v3_transport/tests/test_clock_adoption.py
+          uv run --no-project python firmware/components/cp_v3_transport/tests/test_wifi_recovery.py
       - name: Verify production MQTT settings and firmware ownership on host
         run: |
           bash firmware/components/cp_settings/tests/run-host.sh
@@ -76,6 +79,8 @@ jobs:
         run: npx playwright install --with-deps chromium webkit
       - name: Verify autonomous setup UI with synthetic serial and APIs
         run: node tests/provisioning/startup-ui.browser.mjs
+      - name: Verify online scope changes with synthetic APIs
+        run: node tests/provisioning/online-binding.browser.mjs
       - name: Verify protected provisioning wizard with synthetic peers
         run: node scripts/provisioning-browser-smoke.mjs
       - name: Verify MQTT pool and enrollment workflow with synthetic peers

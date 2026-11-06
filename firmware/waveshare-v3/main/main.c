@@ -11,6 +11,7 @@
 #include "cp_v3_startup.h"
 #include "cp_v3_saved_credentials.h"
 #include "cp_v3_clock_bootstrap.h"
+#include "cp_v3_clock_online.h"
 #include "local_raw.h"
 #include "runtime_logic.h"
 #include "runtime_json.h"
@@ -19,6 +20,8 @@
 #include "runtime_upload.h"
 #include "runtime_registration.h"
 #include "runtime_policy_wait.h"
+#include "runtime_online.h"
+#include "runtime_online_json.h"
 #include <sys/stat.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -59,17 +62,24 @@
 #define FS_POOL 262144u
 #define WORKING_MAX 4194304u
 #define WRITE_MAX 67108864u
-#define AUTO_CYCLE_MS 1200000u
 #define FORCE_USB_MAGIC UINT32_C(0x43505553)
 static const char *TAG="v3small";
 static char s_node[16],s_boot[37];
 static trial_bootstrap_t s_bootstrap;
 static cp_v3_startup_profile_t *s_startup_profile;
-static bool s_autonomous,s_signed_time,s_cycle_ready,s_auto_retry=true;
+static bool s_signed_time,s_auto_retry=true;
 static _Atomic bool s_startup_saved,s_auto_starting;
 static _Atomic bool s_policy_wait_expired,s_policy_wait_cancelled;
 static RTC_NOINIT_ATTR uint32_t s_force_usb_magic,s_force_usb_inverse;
 static cp_v3_control_t *s_control;
+static cp_v3_control_t *s_candidate;
+static cp_v3_trial_policy_t *s_allocated_policy;
+static edge_online_state_t *s_online;
+static edge_online_transition_t s_transition;
+static uint8_t s_time_spki[91];
+static char s_time_key_id[65];
+static bool s_time_pin_ready;
+static cp_v3_temporal_context_t s_capture_context;
 static cp_v3_control_workspace_t *s_workspace;
 static cp_v3_queue_t *s_queue;
 static raw_v3_queue_store_t *s_store;
@@ -96,6 +106,10 @@ static char s_phase[24]="WAIT USB";
 static _Atomic bool s_stop,s_usb_stop,s_power_stop,s_safe,s_display_asleep,s_storage_stop,s_storage_done;
 static _Atomic bool s_capture_ready,s_storage_fault,s_storage_started,s_raw_ready,s_bootstrapped,s_storage_backpressure,s_storage_resume,s_storage_ready,s_storage_gate;
 static _Atomic bool s_mounted,s_queue_ready,s_run_failed;
+static _Atomic bool s_storage_park_requested,s_storage_parked;
+static bool s_ui_raw_policy,s_ui_history;
+static uint32_t s_ui_history_ms;
+static uint64_t s_observation_upper;
 static _Atomic bool s_selected_mqtt;
 static _Atomic uint32_t s_windows,s_window_acks,s_event_acks,s_status_acks,s_last_body;
 static _Atomic uint32_t s_upload_failures,s_ack_failures,s_retries;
@@ -103,6 +117,7 @@ static uint32_t s_historical_acks;
 static const char *s_error_code="unavailable";
 static bool s_error_retryable=true;
 static uint32_t s_window_seq,s_event_seq,s_status_seq,s_control_seq;
+static uint32_t s_lease_stream_seq;
 static _Atomic uint32_t s_status_coalesced,s_last_durable_window;
 static uint64_t s_writes,s_tx_bytes;
 static bool s_transport_started,s_retry_tested;
@@ -127,6 +142,10 @@ static bool current(cp_v3_time_t *out) {
     return true;
 }
 static void publish_anchor(cp_v3_time_t t){portENTER_CRITICAL(&s_lock);s_anchor=t;portEXIT_CRITICAL(&s_lock);}
+static void publish_policy_view(void) {
+    portENTER_CRITICAL(&s_lock);s_ui_raw_policy=s_control->policy.local_raw.enabled;
+    s_ui_history=s_control->policy.temporal.rolling;s_ui_history_ms=s_control->policy.temporal.history_ms;portEXIT_CRITICAL(&s_lock);
+}
 static bool queue_clock(void *ctx,uint64_t *lower,uint64_t *upper) {
     (void)ctx;cp_v3_temporal_time_t t;if(!clock_copy(NULL,monotonic_ms(),&t)||t.utc_ms<t.uncertainty_ms)return false;
     *lower=t.utc_ms-t.uncertainty_ms;*upper=t.utc_ms+t.uncertainty_ms;return true;
@@ -249,7 +268,9 @@ static bool automatic_bootstrap(void) {
             if(peap_none)s_bootstrap.eap_verification=CP_V3_EAP_VERIFY_NONE;
             snprintf(s_bootstrap.origin,sizeof s_bootstrap.origin,"%s",CP_API_ORIGIN);
             s_bootstrap.transport=CP_V3_TRANSPORT_MQTT_TLS;s_bootstrap.clock_seed=trusted;s_bootstrap.max_windows=0;
-            s_signed_time=true;s_autonomous=true;s_cycle_ready=true;s_auto_starting=false;
+            memcpy(s_time_spki,s_startup_profile->time_public_spki,91);
+            snprintf(s_time_key_id,sizeof s_time_key_id,"%s",s_startup_profile->time_key_id);s_time_pin_ready=true;
+            s_signed_time=true;s_auto_starting=false;
             cp_v3_startup_clear(s_startup_profile);
             ESP_LOGI(TAG,"signed_clock_verified=1 uncertainty_ms=%lu autonomous=1",(unsigned long)trusted.uncertainty_ms);return true;
         }
@@ -271,8 +292,8 @@ static bool save_startup_profile(void) {
     uint64_t cost=s_bootstrap.startup_reconfigure?CP_V3_STARTUP_RECONFIGURE_LOGICAL_WRITE_BYTES:CP_V3_STARTUP_LOGICAL_WRITE_BYTES;
     esp_err_t result=write_charge(NULL,cost)?(s_bootstrap.startup_reconfigure?cp_v3_startup_reconfigure(s_startup_profile):cp_v3_startup_save(s_startup_profile)):ESP_ERR_NO_MEM;
     xSemaphoreGive(s_tf);
-    if(result!=ESP_OK){s_startup_saved=false;s_autonomous=false;s_usb_stop=true;puts("V3 STARTUP SAVE FAILED");fflush(stdout);ESP_LOGE(TAG,"startup_save_failed error=%ld",(long)result);return false;}
-    s_startup_saved=true;s_cycle_ready=true;puts("V3 STARTUP SAVED");fflush(stdout);return true;
+    if(result!=ESP_OK){s_startup_saved=false;s_usb_stop=true;puts("V3 STARTUP SAVE FAILED");fflush(stdout);ESP_LOGE(TAG,"startup_save_failed error=%ld",(long)result);return false;}
+    s_startup_saved=true;puts("V3 STARTUP SAVED");fflush(stdout);return true;
 }
 static void phase(const char *name) {
     portENTER_CRITICAL(&s_lock);snprintf(s_phase,sizeof s_phase,"%s",name);portEXIT_CRITICAL(&s_lock);
@@ -303,7 +324,7 @@ static edge_ui_phase_t ui_phase(const char *name,const cp_v3_capture_status_t *c
     if(!strcmp(name,"WAIT USB"))return EDGE_UI_WAIT_USB;
     if(!strcmp(name,"WAIT POLICY"))return EDGE_UI_WAIT_POLICY;
     if(capture->running)return EDGE_UI_COLLECTING;
-    if(!strcmp(name,"LEASE PAUSED")||(s_storage_gate&&capture->paused))return EDGE_UI_PAUSED;
+    if(!strncmp(name,"ONLINE",6)||!strcmp(name,"LEASE PAUSED")||(s_storage_gate&&capture->paused))return EDGE_UI_PAUSED;
     return EDGE_UI_STARTING;
 }
 static bool enter_usb_wait(void) {
@@ -340,10 +361,11 @@ static void display_task(void *unused) {
         }
         local_raw_status_t raw={0};if(s_raw_ready)local_raw_snapshot(s_raw,&raw);
         metrics.phase=ui_phase(name,&c);metrics.capture_known=s_capture_ready;metrics.metrics_known=s_capture_ready;
-        metrics.raw_policy_enabled=s_capture_ready&&s_control->policy.local_raw.enabled;metrics.raw_active=raw.active;
+        portENTER_CRITICAL(&s_lock);metrics.raw_policy_enabled=s_capture_ready&&s_ui_raw_policy;
+        metrics.history_known=s_capture_ready&&s_ui_history;metrics.history_ms=metrics.history_known?s_ui_history_ms:0;portEXIT_CRITICAL(&s_lock);
+        metrics.raw_active=raw.active;
         metrics.raw_fault=raw.io_failed_latched||raw.counters[4]||raw.counters[5];metrics.storage_fault=s_storage_fault||raw.io_failed_latched;
         metrics.tf_mounted=s_mounted;metrics.raw_queue_capacity=raw.capacity;metrics.raw_queue_used=raw.capacity>=raw.free_slots?raw.capacity-raw.free_slots:0;
-        metrics.history_known=s_capture_ready&&s_control->policy.temporal.rolling;metrics.history_ms=metrics.history_known?s_control->policy.temporal.history_ms:0;
         metrics.history_slices=c.temporal.history_slices;metrics.tracks=c.temporal.tracks;metrics.open_events=c.temporal.open_events;
         metrics.windows=s_windows;metrics.confirmed_windows=s_window_acks;metrics.last_body_bytes=s_last_body;
         metrics.upload_failures=s_upload_failures;metrics.retries=s_retries;
@@ -398,7 +420,8 @@ static size_t capabilities(char *out,size_t cap,cp_v3_time_t t,uint64_t free_byt
     int n=snprintf(out,cap,"{\"schema\":\"device-capabilities/1\",\"capability_id\":\"small-%s\",\"node_id\":\"%s\",\"boot_id\":\"%s\",\"producer_version\":\"cp-v3-small/1\",\"policy_schemas\":[\"device-config/3\"],\"issued_at\":\"%s\",\"expires_at\":\"%s\","
         "\"scanner\":{\"modes\":[\"passive\"],\"phys\":[\"1m\"],\"duplicate_filter\":[false],\"min_interval_units\":4,\"max_interval_units\":16384},"
         "\"summary\":{\"max_addresses\":512,\"max_bins\":12,\"max_window_ms\":60000},"
-        "\"statistics\":{\"schemas\":[\"window-statistics/1\"],\"extractor_versions\":[\"cp-v3-stats/1\"],\"ruleset_versions\":[\"unclassified-v1\"]},"
+        "\"statistics\":{\"schemas\":[\"window-statistics/1\"],\"extractor_versions\":[\"cp-v3-stats/1\"],\"ruleset_versions\":[\"unclassified-v1\",\"cp-v3-vehicle-candidates/1\"]},"
+        "\"online_control\":{\"schema\":\"online-control/1\",\"scope_rebind\":true,\"capability_renewal\":true},"
         "\"temporal\":{\"slice_ms\":[2000],\"max_history_ms\":600000,\"max_tracks\":512,\"max_open_events\":64,\"max_event_ms\":3600000,\"event_schemas\":[\"candidate-event/1\"],\"report_modes\":[\"off\",\"terminal_only\"]},"
         "\"local_raw\":{\"formats\":[\"cpraw/1\"],\"max_segment_bytes\":1048576,\"min_sync_interval_ms\":1000},"
         "\"uplink\":{\"transports\":[\"%s\"],\"streams\":[\"window_statistics\",\"node_status\",\"candidate_events\"],\"max_batch_items\":1,\"max_body_bytes\":2048,\"max_sample_reports_per_window\":0,\"cpraw_archive\":false},"
@@ -428,7 +451,19 @@ static bool calibrate_rtc(void) {
 }
 static bool raw_hook(void *ctx,const cp_v3_stats_report_t *r){(void)ctx;return s_raw?local_raw_hook(s_raw,r):false;}
 static cp_v3_apply_result_t actual_apply(void *ctx,const cp_v3_trial_policy_t *p,cp_v3_boundary_t *b) {
-    (void)ctx;if(b->window_open||b->segment_open||s_capture)return CP_V3_APPLY_BOUNDARY_FAILED;
+    (void)ctx;if(b->window_open||b->segment_open)return CP_V3_APPLY_BOUNDARY_FAILED;
+    if(s_capture) {
+        if(!s_storage_parked||!edge_online_resources_equal(s_allocated_policy,p))return CP_V3_APPLY_UNSUPPORTED;
+        cp_v3_capture_status_t state;cp_v3_capture_status(s_capture,&state);
+        local_raw_status_t raw;local_raw_snapshot(s_raw,&raw);
+        if(!state.quiescent||state.failed||!raw.safe_to_unmount||raw.io_failed_latched||s_storage_fault||
+            state.last_closed_window_seq!=b->closed_window_seq||s_last_durable_window!=b->closed_window_seq)return CP_V3_APPLY_BOUNDARY_FAILED;
+        cp_v3_temporal_context_t context=s_capture_context;context.config_generation=p->scope.assignment_generation;
+        if(strcmp(s_allocated_policy->scope.placement_id,p->scope.placement_id)||strcmp(s_allocated_policy->scope.dataset,p->scope.dataset))context.placement_generation=p->scope.assignment_generation;
+        if(!calibrate_rtc())return CP_V3_APPLY_INTERNAL_ERROR;
+        if(cp_v3_capture_rebind_rules(s_capture,&p->scope,&context,p->ruleset_version,5000)!=ESP_OK)return CP_V3_APPLY_BOUNDARY_FAILED;
+        s_capture_context=context;*s_allocated_policy=*p;return CP_V3_APPLY_OK;
+    }
     if(p->mqtt_tls!=(s_bootstrap.transport==CP_V3_TRANSPORT_MQTT_TLS))return CP_V3_APPLY_UNSUPPORTED;
     if(!p->statistics||!p->tf_queue||!p->stats_max_addresses||p->stats_max_addresses>512||p->bin_ms!=5000||
        (p->window_ms!=30000&&p->window_ms!=60000)||p->max_body_bytes!=BODY_MAX||
@@ -447,13 +482,13 @@ static cp_v3_apply_result_t actual_apply(void *ctx,const cp_v3_trial_policy_t *p
         local_raw_config_t raw={p->local_raw.max_segment_bytes,p->local_raw.max_total_bytes,p->local_raw.min_free_bytes,p->local_raw.sync_interval_ms};
         if(local_raw_probe(s_raw,&raw,NULL)!=ESP_OK)return CP_V3_APPLY_STORAGE_FAILED;
     }
-    cp_v3_capture_config_t config={.statistics={.capacity=p->stats_max_addresses,.window_ms=p->window_ms,.bin_ms=p->bin_ms,.rules_version=CP_V3_STATS_RULESET},
+    cp_v3_capture_config_t config={.statistics={.capacity=p->stats_max_addresses,.window_ms=p->window_ms,.bin_ms=p->bin_ms,.rules_version=p->ruleset_version},
         .temporal_enabled=p->temporal.rolling,.report_events=p->candidate_events,.context={1,p->scope.assignment_generation,p->scope.assignment_generation},
-        .report_slots=128,.window_slots=4,.event_slots=4,.stop_after_windows=s_autonomous?AUTO_CYCLE_MS/p->window_ms:s_bootstrap.max_windows,.min_internal_free=56000,.min_internal_largest=20000,.min_psram_free=512u*1024,.min_psram_largest=128u*1024,
+        .report_slots=128,.window_slots=4,.event_slots=4,.stop_after_windows=s_bootstrap.max_windows,.min_internal_free=56000,.min_internal_largest=20000,.min_psram_free=512u*1024,.min_psram_largest=128u*1024,
         .clock=clock_copy,.entropy=entropy,.raw=p->local_raw.enabled?raw_hook:NULL};
     config.temporal=(cp_v3_temporal_config_t){p->temporal.max_tracks,p->temporal.max_open_events,4,(uint16_t)p->temporal.slice_ms,p->temporal.history_ms,p->temporal.gap_ms,p->temporal.max_event_ms};
     size_t temporal=p->temporal.rolling?cp_v3_temporal_memory_bytes(&config.temporal):0;
-    size_t estimate=temporal+cp_v3_stats_memory_bytes(p->stats_max_addresses)+128u*(sizeof(cp_v3_stats_report_t)+1650u)+4u*sizeof(cp_v3_capture_window_t)+4u*sizeof(cp_v3_capture_event_t)+local_raw_memory_bytes()+FS_POOL;
+    size_t estimate=temporal+cp_v3_stats_memory_bytes(p->stats_max_addresses)+128u*(sizeof(cp_v3_stats_report_t)+1650u)+4u*sizeof(cp_v3_capture_window_t)+4u*sizeof(cp_v3_capture_event_t)+local_raw_memory_bytes()+FS_POOL+sizeof *s_candidate+sizeof *s_allocated_policy+sizeof *s_online;
     if((p->temporal.rolling&&!temporal)||estimate>p->working_bytes||heap_caps_get_free_size(MALLOC_CAP_SPIRAM)<estimate)return CP_V3_APPLY_RESOURCE_EXHAUSTED;
     cp_v3_transport_memory_t memory;
     if(cp_v3_transport_begin_memory(2000,&memory)!=ESP_OK)return CP_V3_APPLY_RESOURCE_EXHAUSTED;
@@ -471,7 +506,7 @@ static cp_v3_apply_result_t actual_apply(void *ctx,const cp_v3_trial_policy_t *p
     }
     cp_v3_capture_status_t status;cp_v3_capture_status(s_capture,&status);
     if(!status.prepared||status.running||status.failed||heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)<memory.min_internal_free||heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)<memory.min_internal_largest||heap_caps_get_free_size(MALLOC_CAP_SPIRAM)<512u*1024||heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)<128u*1024)return CP_V3_APPLY_RESOURCE_EXHAUSTED;
-    s_capture_ready=true;
+    s_capture_context=config.context;*s_allocated_policy=*p;s_capture_ready=true;
     ESP_LOGI(TAG,"resources_reserved stats=%u temporal=%u report=%u window=%u event=%u raw=%u queue_pool=%u",(unsigned)status.statistics_bytes,(unsigned)status.temporal_bytes,(unsigned)status.report_bytes,(unsigned)status.window_bytes,(unsigned)status.event_bytes,(unsigned)local_raw_memory_bytes(),FS_POOL);
     ESP_LOGI(TAG,"arena_alignment stats=%u/%u temporal=%u/%u",status.statistics_alignment,status.statistics_alignment_remainder,status.temporal_alignment,status.temporal_alignment_remainder);
     return CP_V3_APPLY_OK;
@@ -501,6 +536,8 @@ static bool request_mode(cp_v3_http_method_t method,const char *path,const void 
         ESP_LOGW(TAG,"transport_mode=%u mqtt_ready=%u mqtt_response=%u mqtt_retained=%u mqtt_stop_confirmed=%u mqtt_publish_id=%ld mqtt_puback_id=%ld mqtt_connect_code=%ld mqtt_outbox=%lu mqtt_stack_min=%lu",
             (unsigned)s_bootstrap.transport,(unsigned)r->mqtt_session_ready,(unsigned)r->mqtt_response_received,(unsigned)r->mqtt_retained,(unsigned)r->mqtt_stop_confirmed,
             (long)r->mqtt_publish_id,(long)r->mqtt_puback_id,(long)r->mqtt_connect_code,(unsigned long)r->mqtt_outbox_bytes,(unsigned long)r->mqtt_callback_stack_min);
+        ESP_LOGW(TAG,"transport_preflight reject_flags=%lu wifi_disconnect_seq=%lu wifi_disconnect_reason=%lu",
+            (unsigned long)r->state_reject_flags,(unsigned long)r->wifi_disconnect_seq,(unsigned long)r->wifi_disconnect_reason);
         return false;
     }return true;
 }
@@ -538,23 +575,32 @@ static edge_policy_poll_result_t policy_poll_attempt(void *ctx) {
         offered==CP_V3_CONTROL_WAIT?EDGE_POLICY_POLL_WAIT:EDGE_POLICY_POLL_RETRY;
 }
 static bool control_match(void *ctx,const cp_v3_expected_t *e,const void *body,size_t bytes,const void *receipt,size_t length) {
-    (void)ctx;return cp_v3_control_match_frozen_receipt(s_workspace,&e->scope,body,bytes,receipt,length,cp_v3_transport_sha256,NULL)==CP_V3_CONTROL_OK;
+    (void)ctx;if(edge_online_is_ready(body,bytes))return edge_online_ready_matches(e,body,bytes,receipt,length,cp_v3_transport_sha256,NULL);
+    return cp_v3_control_match_frozen_receipt(s_workspace,&e->scope,body,bytes,receipt,length,cp_v3_transport_sha256,NULL)==CP_V3_CONTROL_OK;
 }
 static void body_hash(const void *body,size_t bytes,char out[65]) {
     uint8_t digest[32];(void)cp_v3_transport_sha256(NULL,body,bytes,digest);for(unsigned i=0;i<32;i++)snprintf(out+2*i,3,"%02x",digest[i]);
 }
 static bool control_exchange(const char *stream,const char *path,const char *body,size_t bytes,uint32_t seq,bool lease) {
-    cp_v3_expected_t e={.scope=s_control->policy.scope,.seq_first=seq,.seq_last=seq,.accepted_count=1,.body_bytes=bytes};uuid4(e.batch_id);strcpy(e.stream,stream);body_hash(body,bytes,e.body_sha256);
-    unsigned slot;xSemaphoreTake(s_tf,portMAX_DELAY);
+    cp_v3_expected_t e={.scope=s_control->policy.scope,.seq_first=seq,.seq_last=seq,.accepted_count=1,.body_bytes=bytes};strcpy(e.stream,stream);body_hash(body,bytes,e.body_sha256);
+    unsigned slot=CP_V3_QUEUE_SLOTS;xSemaphoreTake(s_tf,portMAX_DELAY);
+    for(unsigned i=0;i<CP_V3_QUEUE_SLOTS;i++){cp_v3_queue_slot_t *p=&s_queue->slots[i];
+        if(p->state==CP_V3_QUEUE_PENDING&&p->kind==CP_V3_QUEUE_CONTROL&&p->expected.scope.assignment_generation==e.scope.assignment_generation&&
+            !strcmp(p->expected.scope.boot_id,e.scope.boot_id)&&!strcmp(p->expected.stream,stream)&&!strcmp(p->expected.body_sha256,e.body_sha256)){slot=i;e=p->expected;break;}}
+    if(slot==CP_V3_QUEUE_SLOTS){
+    uuid4(e.batch_id);
     size_t encoded=cp_v3_queue_encoded_size(s_queue,bytes);
     if(!encoded||!write_charge(NULL,edge_lifecycle_charge(encoded))){xSemaphoreGive(s_tf);return false;}
     s_publish_authorized=true;s_publish_allowance=edge_lifecycle_charge(encoded);
     cp_v3_queue_result_t saved=cp_v3_queue_push_expiring(s_queue,CP_V3_QUEUE_CONTROL,&e,body,bytes,s_control->policy.accept_until_utc_ms,&slot);s_publish_authorized=false;xSemaphoreGive(s_tf);
     if(saved!=CP_V3_QUEUE_OK){ESP_LOGE(TAG,"control_durability_failed=%u",(unsigned)saved);return false;}
+    }else xSemaphoreGive(s_tf);
     cp_v3_expected_t frozen;size_t frozen_bytes;
     xSemaphoreTake(s_tf,portMAX_DELAY);cp_v3_queue_result_t read=cp_v3_queue_read(s_queue,slot,s_network_body,BODY_MAX,&frozen_bytes,&frozen);xSemaphoreGive(s_tf);
     if(read!=CP_V3_QUEUE_OK||frozen_bytes!=bytes||strcmp(frozen.body_sha256,e.body_sha256)||memcmp(s_network_body,body,bytes))return false;
-    for(unsigned attempt=0;attempt<s_control->policy.retry_max_attempts&&!s_stop;attempt++){
+    /* Live mode returns to its bounded online loop after one exact attempt. */
+    unsigned max_attempts=s_bootstrap.max_windows?s_control->policy.retry_max_attempts:1;
+    for(unsigned attempt=0;attempt<max_attempts&&!s_stop;attempt++){
         if(attempt)s_retries++;
         cp_v3_transport_response_t r;if(request(CP_V3_HTTP_POST,path,s_network_body,frozen_bytes,&r)){
             cp_v3_time_t t;if(!current(&t))return false;
@@ -595,6 +641,8 @@ static bool persist_pending(pending_t *p) {
         (void)cp_v3_capture_pause(s_capture,CP_V3_TEMPORAL_CAPACITY,0);
         return false;
     }
+    uint64_t frozen_upper;if(!edge_frozen_upper(p->body,p->bytes,&frozen_upper)){s_storage_fault=true;return false;}
+    portENTER_CRITICAL(&s_lock);if(frozen_upper>s_observation_upper)s_observation_upper=frozen_upper;portEXIT_CRITICAL(&s_lock);
     bool released=true;if(p->window)released=cp_v3_capture_window_release(s_capture,p->window_seq,p->generation);
     if(p->event)released=cp_v3_capture_event_release(s_capture,p->event_id,p->revision);
     if(!released){s_storage_fault=true;return false;}
@@ -617,6 +665,15 @@ static void storage_task(void *unused) {
     if(s_storage_stop){heap_caps_free(p);heap_caps_free(w);heap_caps_free(event);s_storage_done=true;vTaskDelete(NULL);return;}
     uint32_t last_status_window=0;
     for(;;){
+        if(s_storage_park_requested&&!p->active){
+            cp_v3_capture_status_t state;cp_v3_capture_status(s_capture,&state);
+            if(edge_online_storage_parkable(&state,p->active,s_last_durable_window,last_status_window,s_windows)){
+                s_storage_parked=true;
+                while(s_storage_park_requested&&!s_storage_stop)vTaskDelay(pdMS_TO_TICKS(10));
+                s_storage_parked=false;
+                if(s_storage_stop)break;
+            }
+        }
         xSemaphoreTake(s_tf,portMAX_DELAY);(void)cp_v3_queue_expire(s_queue);xSemaphoreGive(s_tf);
         if(p->active){if(!persist_pending(p)){vTaskDelay(pdMS_TO_TICKS(100));continue;}}
         bool got=false;char batch[37];
@@ -632,7 +689,7 @@ static void storage_task(void *unused) {
             if(!event->report_allowed){s_storage_fault=true;break;}
             if(s_event_seq==UINT32_MAX){s_storage_fault=true;break;}uuid4(batch);p->kind=CP_V3_QUEUE_EVENT;p->event=true;
             memcpy(p->event_id,event->event.event_id,16);p->revision=event->event.revision;
-            if(cp_v3_small_event_body(&event->scope,&event->event,event->slice_ms,batch,++s_event_seq,cp_v3_transport_sha256,NULL,p->body,s_control->policy.max_body_bytes,&p->bytes,&p->expected)!=CP_V3_OK||!edge_retention_expiry(event->event.start,0,s_control->policy.source_retention_hours,&p->expiry)){s_storage_fault=true;break;}p->active=true;got=true;
+            if(cp_v3_small_event_body_rules(&event->scope,&event->event,event->slice_ms,s_control->policy.ruleset_version,batch,++s_event_seq,cp_v3_transport_sha256,NULL,p->body,s_control->policy.max_body_bytes,&p->bytes,&p->expected)!=CP_V3_OK||!edge_retention_expiry(event->event.start,0,s_control->policy.source_retention_hours,&p->expiry)){s_storage_fault=true;break;}p->active=true;got=true;
         }else if(s_windows>last_status_window){
             cp_v3_small_status_t status={0};if(!clock_copy(NULL,monotonic_ms(),&status.time)){s_storage_fault=true;break;}
             cp_v3_capture_status_t cs;cp_v3_capture_status(s_capture,&cs);status.state=cs.failed?CP_V3_SMALL_FAILED:cs.running?CP_V3_SMALL_RUNNING:CP_V3_SMALL_PAUSED;
@@ -668,20 +725,20 @@ static bool frozen_aged(const char *body,size_t bytes) {
     return edge_frozen_upper(body,bytes,&upper)&&clock_copy(NULL,monotonic_ms(),&t)&&edge_time_aged(t,upper);
 }
 static bool replay_historical_controls(void) {
-    for(;;){
-        unsigned slot;size_t bytes;cp_v3_expected_t e;
-        xSemaphoreTake(s_tf,portMAX_DELAY);cp_v3_queue_result_t next=cp_v3_queue_oldest(s_queue,CP_V3_QUEUE_CONTROL,&slot);
-        cp_v3_queue_result_t read=next==CP_V3_QUEUE_OK?cp_v3_queue_read(s_queue,slot,s_network_body,BODY_MAX,&bytes,&e):next;xSemaphoreGive(s_tf);
-        if(next==CP_V3_QUEUE_NOT_FOUND)return true;
+    for(unsigned slot=0;slot<CP_V3_QUEUE_SLOTS;slot++){
+        size_t bytes;cp_v3_expected_t e;
+        xSemaphoreTake(s_tf,portMAX_DELAY);bool pending=s_queue->slots[slot].state==CP_V3_QUEUE_PENDING&&s_queue->slots[slot].kind==CP_V3_QUEUE_CONTROL;
+        cp_v3_queue_result_t read=pending?cp_v3_queue_read(s_queue,slot,s_network_body,BODY_MAX,&bytes,&e):CP_V3_QUEUE_NOT_FOUND;xSemaphoreGive(s_tf);
+        if(!pending||read==CP_V3_QUEUE_EXPIRED||read==CP_V3_QUEUE_CLOCK_UNKNOWN)continue;
         if(read!=CP_V3_QUEUE_OK)return false;
         /* Never use a historical receipt to authorize this fresh boot. */
-        if(!strcmp(e.scope.boot_id,s_boot))return false;
+        if(!strcmp(e.scope.boot_id,s_boot))continue;
         const char *path=!strcmp(e.stream,"lease")?"/api/v3/device/lease":"/api/v3/device/config/ack";
-        cp_v3_transport_response_t r;if(!request_mode(CP_V3_HTTP_POST,path,s_network_body,bytes,&r,true))return false;
+        cp_v3_transport_response_t r;if(!request_mode(CP_V3_HTTP_POST,path,s_network_body,bytes,&r,true))continue;
         xSemaphoreTake(s_tf,portMAX_DELAY);cp_v3_queue_result_t ack=cp_v3_queue_ack_control(s_queue,slot,s_reply,r.body_bytes,control_match,NULL);xSemaphoreGive(s_tf);
         if(ack!=CP_V3_QUEUE_OK){s_ack_failures++;return false;}
         ESP_LOGI(TAG,"historical_control_reclaimed=1 current_boot_authority=0");
-    }
+    }return true;
 }
 static bool upload_one(cp_v3_queue_kind_t kind) {
     unsigned slot=0;size_t bytes=0;cp_v3_expected_t e;
@@ -722,10 +779,13 @@ static bool upload_one(cp_v3_queue_kind_t kind) {
     else if(kind==CP_V3_QUEUE_WINDOW)s_window_acks++;else if(kind==CP_V3_QUEUE_EVENT)s_event_acks++;else s_status_acks++;
     ESP_LOGI(TAG,"durable_acked stream=%u bytes=%u historical=%u window_acks=%lu status_acks=%lu",(unsigned)kind,(unsigned)bytes,(unsigned)historical,(unsigned long)s_window_acks,(unsigned long)s_status_acks);return true;
 }
+#include "runtime_online_impl.h"
 static bool run(void) {
     if(s_stop)return false;
-    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.server_ca_pem=s_bootstrap.server_ca_pem[0]?s_bootstrap.server_ca_pem:NULL,.eap_verification=s_bootstrap.eap_verification,.eap_ca_pem=s_bootstrap.eap_ca_pem[0]?s_bootstrap.eap_ca_pem:NULL,.eap_domain=s_bootstrap.eap_domain[0]?s_bootstrap.eap_domain:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=edge_request_timeout_ms(s_bootstrap.origin),.server_clock_error_ms=100,.mode=s_bootstrap.transport,.active_boot=s_boot,.cancelled=cancelled};
-    phase("WIFI CONNECT");if(cp_v3_transport_start(&s_bootstrap.settings,&config)!=ESP_OK)return false;s_transport_started=true;
+    cp_v3_transport_config_t config={.origin=s_bootstrap.origin,.server_ca_pem=s_bootstrap.server_ca_pem[0]?s_bootstrap.server_ca_pem:NULL,.eap_verification=s_bootstrap.eap_verification,.eap_ca_pem=s_bootstrap.eap_ca_pem[0]?s_bootstrap.eap_ca_pem:NULL,.eap_domain=s_bootstrap.eap_domain[0]?s_bootstrap.eap_domain:NULL,.clock_seed=s_bootstrap.clock_seed,.wifi_timeout_ms=180000,.wifi_reconnect_max_attempts=3,.wifi_reconnect_delay_ms=3000,.request_timeout_ms=edge_request_timeout_ms(s_bootstrap.origin),.server_clock_error_ms=100,.mode=s_bootstrap.transport,.active_boot=s_boot,.cancelled=cancelled};
+    phase("WIFI CONNECT");esp_err_t started=cp_v3_transport_start(&s_bootstrap.settings,&config);
+    if(started!=ESP_OK){ESP_LOGE(TAG,"transport_start_failed error=%ld",(long)started);return false;}
+    s_transport_started=true;
     ui_network_snapshot();
     cp_v3_time_t t;if(!current(&t))return false;
     /* Preserve original drift reference; transport's derived now is never used
@@ -752,6 +812,9 @@ static bool run(void) {
     if(s_stop){s_policy_wait_cancelled=true;return false;}
     if(!s_auto_retry||!policy_clock_ready)return false;
     cp_v3_boundary_t boundary={0};if(cp_v3_control_apply(s_control,t,boundary,++s_control_seq,actual_apply,NULL)!=CP_V3_CONTROL_OK)return false;
+    if(!s_bootstrap.max_windows&&s_capture_ready){
+        s_storage_gate=true;(void)online_ack();return online_run();
+    }
     body=cp_v3_control_ack_bytes(s_control,&bytes);phase("ACK DURABLE");
     if(!body||!control_exchange("config_ack","/api/v3/device/config/ack",body,bytes,s_control_seq,false))return false;
     if(s_control->apply_result!=CP_V3_APPLY_OK){ESP_LOGE(TAG,"failed_apply_committed result=%u",(unsigned)s_control->apply_result);return false;}
@@ -773,10 +836,8 @@ static bool run(void) {
     if(cp_v3_capture_start(s_capture,&s_control->policy.scope,1,s_control->policy.scan_interval_units,s_control->policy.scan_window_units,permission.deadline_mono_ms)!=ESP_OK)return false;
     s_storage_gate=true;
     phase("SMALL COLLECT");uint64_t lease_at=monotonic_ms()+s_control->policy.lease_ms/3;uint32_t contact=0;
-    uint64_t cycle_deadline=s_autonomous?monotonic_ms()+AUTO_CYCLE_MS:0;
     bool okay=true;
     while(!s_stop&&!s_storage_fault&&s_auto_retry){
-        if(cycle_deadline&&monotonic_ms()>=cycle_deadline){ESP_LOGI(TAG,"autonomous_cycle_boundary=1");break;}
         if(!current(&t)){okay=false;break;}permission=cp_v3_control_permissions(s_control,t);
         cp_v3_capture_status_t bounded;cp_v3_capture_status(s_capture,&bounded);
         if(bounded.bounded_complete)break;
@@ -867,7 +928,8 @@ static void main_task(void *unused) {
             if(!enter_usb_wait())continue;
             phase("WAIT USB");
             if(trial_bootstrap_wait(s_node,s_boot,&s_bootstrap,cancelled)!=ESP_OK){cp_v3_startup_clear(s_startup_profile);s_safe=true;vTaskDelete(NULL);return;}
-            s_autonomous=s_bootstrap.save_startup&&s_bootstrap.max_windows==0;
+            if(s_bootstrap.clock_key_id[0]){memcpy(s_time_spki,s_bootstrap.clock_public_spki,91);
+                snprintf(s_time_key_id,sizeof s_time_key_id,"%s",s_bootstrap.clock_key_id);s_time_pin_ready=true;}
         }
         portENTER_CRITICAL(&s_lock);
         bool accepted=!s_stop&&!s_power_stop&&!s_usb_stop;
@@ -877,8 +939,9 @@ static void main_task(void *unused) {
         trial_bootstrap_clear(&s_bootstrap);automatic=false;
     }
     publish_anchor(s_bootstrap.clock_seed);
-    s_tf=xSemaphoreCreateMutex();s_control=psram(sizeof *s_control);s_workspace=psram(sizeof *s_workspace);s_queue=psram(sizeof *s_queue);s_store=psram(sizeof *s_store);s_reply=psram(CP_V3_TRANSPORT_RESPONSE_MAX);s_network_body=psram(4096);
-    bool okay=s_tf&&s_control&&s_workspace&&s_queue&&s_store&&s_reply&&s_network_body;
+    s_tf=xSemaphoreCreateMutex();s_control=psram(sizeof *s_control);s_candidate=psram(sizeof *s_candidate);s_allocated_policy=psram(sizeof *s_allocated_policy);s_online=psram(sizeof *s_online);
+    s_workspace=psram(sizeof *s_workspace);s_queue=psram(sizeof *s_queue);s_store=psram(sizeof *s_store);s_reply=psram(CP_V3_TRANSPORT_RESPONSE_MAX);s_network_body=psram(4096);
+    bool okay=s_tf&&s_control&&s_candidate&&s_allocated_policy&&s_online&&s_workspace&&s_queue&&s_store&&s_reply&&s_network_body;
     if(okay){xSemaphoreTake(s_tf,portMAX_DELAY);okay=budget_open()&&uplink_open();xSemaphoreGive(s_tf);}
     if(okay){okay=local_raw_prepare(s_tf,media_sync,NULL,&s_raw)==ESP_OK;s_raw_ready=okay;}
     if(okay)okay=local_raw_set_budget(s_raw,write_charge,NULL)==ESP_OK;
@@ -933,17 +996,11 @@ static void main_task(void *unused) {
     ESP_LOGI(TAG,"lifecycle_cleanup covered=%llu completed=%llu general_credit_granted=0",(unsigned long long)s_cleanup_covered,(unsigned long long)s_cleanup_completed);
     ESP_LOGI(TAG,"cleanup safe=%u storage=%ld raw=%ld network=%ld",(unsigned)safe,(long)unmount,(long)raw_stop,(long)network_stop);
     phase(policy_wait_closed?(s_policy_wait_expired?"POLICY EXPIRED":"POLICY WAIT STOPPED"):
-          okay&&safe?"SMALL TEST PASSED":"SMALL STOPPED ERROR");
+          okay&&safe?(s_bootstrap.max_windows?"SMALL TEST PASSED":"SMALL STOPPED SAFE"):"SMALL STOPPED ERROR");
     s_safe=safe;
     cp_v3_startup_clear(s_startup_profile);
-    if(s_safe&&s_autonomous&&s_cycle_ready&&s_auto_retry&&!s_usb_stop&&!s_power_stop){
-        phase(okay?"AUTO RESTART":"AUTO RETRY");
-        unsigned delay=okay?5:30;
-        for(unsigned i=0;i<delay*10&&!s_usb_stop&&!s_power_stop;i++)vTaskDelay(pdMS_TO_TICKS(100));
-        if(!s_usb_stop&&!s_power_stop&&!restart_saved(false))ESP_LOGE(TAG,"autonomous_restart_failed=1");
-    }
     /* A safe long-BOOT enters physical USB standby, never automatic Wi-Fi.
-     * Reboot is required to allocate a changed policy's one-instance scanner. */
+     * Explicit physical USB setup may request a fresh resource allocation. */
     if(s_safe&&!s_power_stop){s_usb_stop=true;phase("USB SAFE REBOOT");safe_usb_standby();}
     vTaskDelete(NULL);
 }
