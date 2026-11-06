@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { makeFieldActors, MAX_FIELD_ACTORS } from '../../src/campus/field-actors.js';
+import { makeFieldActors, makeFieldSceneActors, MAX_FIELD_ACTORS } from '../../src/campus/field-actors.js';
 import { fieldIllustration } from '../../src/campus/field-illustration.js';
 
 const library = { id: 'library', x: 640, y: 270 };
@@ -24,9 +24,9 @@ describe('uploaded field map actors', () => {
     expect(result.some(actor => actor.route.placeId === 'teaching-9')).toBe(false);
   });
 
-  test('never defaults vehicle sprites from sensor activity, illustrative groups, manual parking or cars', () => {
+  test('never defaults vehicle sprites from sensor activity, illustrative groups, manual parking or unknown types', () => {
     const unsupported = [bikes({ source: 'manual' }), bikes({ source: 'illustrative' }),
-      bikes({ kind: 'cars' }), people({ kind: 'bikes' }), bikes({ kind: 'unknown' })];
+      bikes({ kind: 'cars', source: 'sensor' }), people({ kind: 'bikes' }), bikes({ kind: 'unknown' })];
     const result = actors([people(), ...unsupported]);
     expect(result).toHaveLength(3);
     expect(result.every(actor => actor.kind === 'walk')).toBe(true);
@@ -50,6 +50,46 @@ describe('uploaded field map actors', () => {
     const teaching = actors([people(), bikes()], { place_id: 'teaching-9' }, { id: 'teaching-9' });
     expect(teaching).toHaveLength(5);
     expect(new Set(teaching.map(actor => actor.route.placeId))).toEqual(new Set(['teaching-9']));
+  });
+
+  test('draws eligible cars as cars on exact-place vehicle paths and shares the vehicle layer', () => {
+    const cars = bikes({ kind: 'cars', metric_value: 1 });
+    const result = actors([people(), bikes(), cars]);
+    expect(result.filter(actor => actor.kind === 'ride')).toHaveLength(2);
+    expect(result.filter(actor => actor.kind === 'car')).toHaveLength(1);
+    expect(result.find(actor => actor.kind === 'car')).toMatchObject({ parked: false, placeId: 'library', route: { kind: 'ride', placeId: 'library' } });
+    expect(actors([cars], {}, library, { bikes: false })).toEqual([]);
+    expect(actors([cars], {}, library, { people: false })).toHaveLength(1);
+    expect(actors([bikes({ kind: 'cars', actor_eligible: false })])).toEqual([]);
+    expect(actors([bikes({ kind: 'cars', metric_value: undefined })])).toEqual([]);
+  });
+
+  test('keeps two observed places simultaneously and independently bound, including cars', () => {
+    const scene = (id, groups) => ({ place: { id }, illustration: illustration(groups, { place_id: id }) });
+    const first = scene('library', [people(), bikes(), bikes({ kind: 'cars', metric_value: 1 })]);
+    const second = scene('tianjiabing', [people({ metric_value: 1 }), bikes({ kind: 'cars', metric_value: 2 })]);
+    const result = makeFieldSceneActors([first, second]);
+    expect(result).toHaveLength(9);
+    expect(new Set(result.map(actor => actor.id)).size).toBe(9);
+    expect(result.every(actor => actor.placeId === actor.route.placeId)).toBe(true);
+    expect(result.filter(actor => actor.kind === 'car')).toHaveLength(3);
+    expect(result.filter(actor => actor.kind === 'ride')).toHaveLength(2);
+    expect(makeFieldSceneActors([{ ...first, illustration: null }, second])).toEqual(makeFieldSceneActors([second]));
+    expect(makeFieldSceneActors([first, { ...second, illustration: { ...second.illustration, update_failed: true } }])).toEqual(makeFieldSceneActors([first]));
+    expect(makeFieldSceneActors([first, { ...second, illustration: first.illustration }])).toEqual(makeFieldSceneActors([first]));
+    expect(makeFieldSceneActors([first, second], { bikes: false })).toHaveLength(4);
+    expect(makeFieldSceneActors([first, second], { people: false })).toHaveLength(5);
+    expect(makeFieldSceneActors([first, first, second])).toEqual(makeFieldSceneActors([second]));
+    expect(makeFieldSceneActors([scene('unknown', [people(), bikes({ kind: 'cars' })])])).toEqual([]);
+  });
+
+  test('applies the 200 actor budget globally across independent places and car groups', () => {
+    const scenes = ['library', 'tianjiabing'].map(id => ({ place: { id }, illustration: illustration([
+      people({ metric_value: 75, figure_count: 75 }), bikes({ kind: 'cars', metric_value: 75, figure_count: 75 }),
+    ], { place_id: id }) }));
+    const result = makeFieldSceneActors(scenes);
+    expect(result).toHaveLength(MAX_FIELD_ACTORS);
+    expect(new Set(result.map(actor => actor.placeId))).toEqual(new Set(['library', 'tianjiabing']));
   });
 
   test('requires matching place provenance and known geometry, never nearest-place reassignment', () => {
@@ -153,8 +193,9 @@ describe('uploaded field map actors', () => {
       automatic_observations: { vehicles } } } });
     expect(preferredCard.groups.find(group => group.kind === 'bikes').source).toBe('manual');
     const deviceActors = makeFieldActors(preferredCard, library);
-    expect(deviceActors).toHaveLength(5);
+    expect(deviceActors).toHaveLength(6);
     expect(deviceActors.filter(actor => actor.kind === 'ride')).toHaveLength(2);
+    expect(deviceActors.filter(actor => actor.kind === 'car')).toHaveLength(1);
     expect(deviceActors.some(actor => actor.parked)).toBe(false);
   });
 });

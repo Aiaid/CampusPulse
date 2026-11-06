@@ -1,6 +1,6 @@
 // Visual reference sizes in the retained 1024x640 map coordinate system.
 // These are illustration proportions, not metres or a geographic calibration.
-export const ACTOR_WORLD_HEIGHT = Object.freeze({walk:4.8,riding:4.8,parked:3.6});
+export const ACTOR_WORLD_HEIGHT = Object.freeze({walk:4.8,riding:4.8,parked:3.6,car:6.5});
 
 /** Tight per-direction alpha bounds prevent transparent padding changing size
  * or lifting feet/tyres off a route. The original sprite files remain intact.
@@ -30,7 +30,7 @@ export function alphaFrames({data,width,height}, threshold=32) {
  * anchors; the physical dimensions remain available to the light/shadow model.
  */
 export function actorDimensions(actor,frame,mapScale,{readable=false,viewWidth,amount=1}={}){
-  const kind=actor.kind==='walk'?'walk':actor.parked?'parked':'riding';
+  const kind=actor.kind==='walk'?'walk':actor.kind==='car'?'car':actor.parked?'parked':'riding';
   const scale=Number.isFinite(mapScale)&&mapScale>0?mapScale:0;
   const physicalHeight=ACTOR_WORLD_HEIGHT[kind]*scale;
   const physicalWidth=physicalHeight*frame.width/frame.height;

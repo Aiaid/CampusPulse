@@ -32,6 +32,15 @@ describe('scene actor proportions',()=>{
   expect(parked.height/riding.height).toBeGreaterThan(.6);
   expect(parked.height/riding.height).toBeLessThan(.85);
  });
+ test('cars retain their own broad silhouette and size through shared detail scaling',()=>{
+  const frame={width:80,height:40},options={readable:true,viewWidth:394};
+  const car=actorDimensions({kind:'car'},frame,2,options);
+  const walk=actorDimensions({kind:'walk'},{width:24,height:60},2,options);
+  expect(car.width/car.height).toBe(2);
+  expect(car.physicalHeight).toBe(13);
+  expect(car.height).toBeGreaterThan(walk.height);
+  expect(car.presentationScale).toBe(walk.presentationScale);
+ });
  test('explicit detail legibility reaches desktop and narrow-phone glyph sizes without changing physical height',()=>{
   const frame={width:24,height:60};
   const desktop=actorDimensions({kind:'walk'},frame,10.452/4.8,{readable:true,viewWidth:394});

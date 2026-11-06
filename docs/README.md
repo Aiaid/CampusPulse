@@ -23,6 +23,7 @@ not establish acceptance of newly built images. Start with the
 
 | Document | Purpose | Status |
 | --- | --- | --- |
+| [Online virtual-device live preview](notes/online-virtual-devices-2026-11-06.md) | Two independent MQTT/TLS virtual devices, scoped synthetic admission, vehicle candidates and multi-place live rendering | Deployed at f37b2a61; fresh ordinary API reads, exact receipts and actual online two-place/car rendering verified; bounded synthetic preview only |
 | [Device-driven live map rendering](notes/live-device-rendering-2026-11-06.md) | Uploaded-evidence-only live actors, exact place scope, empty/invalid source suppression and isolated virtual-device debugging | Source and local checks verified; publication tracked by commit/CI; bounded figures are not calibrated people/vehicle counts |
 | [V3-only migration](notes/v3-only-migration-2026-10-31.md) | Retired V1/V2 device code, preserved historical D1/R2/device data, current V3 APIs/firmware and evidence boundaries | Deployed at 98bc38f with CI 41192223297; retained records independently compared; later USB authentication repair is recorded separately below |
 | [V3 native MQTT gateway](specs/device-v3-mqtt.md) | Frozen CPV3 frame over existing EMQX topics, authenticated service binding, exact receipt and replay semantics | Current; CPV3 framing mandatory, stable cp/v1 topic namespace; prior deployed two-board bounded acceptance retained; no legacy payload fallback |

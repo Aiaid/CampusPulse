@@ -1052,3 +1052,10 @@ unchanged. The CPV3 frame, separate bounded reply assembler and boot/RPC
 high-water tracking are newly authored here. ESP-IDF, esp-mqtt and mbedTLS keep
 their existing dependency notices; no external private source, capture or
 credential is imported into tracked files.
+
+The 2026-11-06 explicitly authorized online virtual-device preview uses
+MQTT.js 5.16.1 (`mqtt`, MIT) as a Node development/runtime client for native
+MQTT/TLS. It retains certificate validation and the repository's CPV3 framing,
+scoped topic/RPC handling and exact durable receipts. The simulator, private
+configuration guard and generated activity/vehicle fixtures are authored here;
+no device credential, raw capture or private upstream application is imported.

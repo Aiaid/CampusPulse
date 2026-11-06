@@ -17,6 +17,7 @@ const releaseDefaults = {
   DEVICE_V3_STATISTICS_ENABLED: 'true',
   DEVICE_V3_STARTUP_ENABLED: 'true',
   DEVICE_V3_PRODUCER_VERSIONS: '["cp-v3-small/1"]',
+  DEVICE_V3_SIMULATOR_NODE_IDS: '[]',
   DEVICE_V3_INGEST_ENABLED: 'false',
   CPRAW_ARCHIVE_ENABLED: '0',
 };
@@ -45,6 +46,14 @@ if (process.env.DEVICE_V3_PRODUCER_VERSIONS !== undefined) {
     throw new Error('The small-statistics release allows only the cp-v3-small/1 producer.');
   }
 }
+// Exact virtual identities only; this never expands the global producer list.
+let simulatorNodes;
+try { simulatorNodes = JSON.parse(process.env.DEVICE_V3_SIMULATOR_NODE_IDS ?? releaseDefaults.DEVICE_V3_SIMULATOR_NODE_IDS); } catch { /* reject below */ }
+if (!Array.isArray(simulatorNodes) || simulatorNodes.length > 16 || new Set(simulatorNodes).size !== simulatorNodes.length ||
+  simulatorNodes.some(node => typeof node !== 'string' || !/^sim-live-[a-z0-9][a-z0-9_-]{0,54}$/.test(node))) {
+  throw new Error('Set DEVICE_V3_SIMULATOR_NODE_IDS to at most 16 unique exact sim-live- node IDs.');
+}
+releaseVars.DEVICE_V3_SIMULATOR_NODE_IDS = JSON.stringify(simulatorNodes);
 config.vars = { ...config.vars, ...releaseVars };
 // This delivery includes raw ingestion: fail closed before a deployment could
 // remove its archive binding. Local metrics-only tests may still omit the binding.

@@ -1,3 +1,4 @@
+import { useFieldMapObservations } from './use-field-map-observations.js';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Buildings, MapPin, MagnifyingGlass, Moon, Sun, CaretDown, X, Play, Pause, PersonSimpleWalk, Moped, Elevator, Plus, Minus, CornersOut, Crosshair, ArrowUpRight, ArrowDownRight, ArrowRight, Clock, Info, ArrowLeft, Check, SlidersHorizontal } from '@phosphor-icons/react';
 import CampusMap from './CampusMap';
@@ -94,6 +95,8 @@ export function App({ defaultMode = 'field', siteName = 'CampusPulse' } = {}) {
   const fieldSession = useFieldSession(selected?.id, !demo && !controlledReplay, fieldMinutes);
   const cursor = replay && fieldCursor.placeId === selected?.id ? fieldCursor.time : null;
   const fieldIllustration = deriveFieldIllustration({ mode: dataMode, live: fieldSession.live, history: fieldSession.history, cursor, now: fieldSession.now, enabled: !controlledReplay && fieldIllustrationEnabled, layers, place: selected });
+  const fieldScenes = useFieldMapObservations({ places: fieldRegistry.mapPlaces, selectedId: selected?.id,
+    selectedLive: fieldSession.live, now: fieldSession.now, enabled: !demo && !replay && !controlledReplay && fieldIllustrationEnabled, layers });
   const seekField = time => {
     setFieldCursor({ placeId: selected?.id || '', time });
     setDetailOpen(true);
@@ -192,7 +195,7 @@ export function App({ defaultMode = 'field', siteName = 'CampusPulse' } = {}) {
   const selectPlace = id => { setSelectedId(id); setDetailOpen(true); setTrendOpen(false); setSearchOpen(false); setQuery(''); mapRef.current?.focusPlace(id, 1.35); };
   const zoom = change => change > 0 ? mapRef.current?.zoomIn() : mapRef.current?.zoomOut();
   return <main className={`campus-app ${isDark ? 'dark' : 'light'} ${!demo ? 'field-data-view' : ''} ${controlledReplay ? 'controlled-replay-view' : ''}`}>
-    <div className="app-content" inert={noticeOpen || recordsOpen ? true : undefined}><div className={`map-layout ${detailOpen ? "detail-visible" : ""}`}><div className="overview-map" aria-label="校园总览地图"><CampusMap ref={mapRef} selectedId={selectedId} mapPlaces={mapPlaces} onSelect={selectPlace} layers={layers} minute={displayMinute} scenarioId={scenarioId} isDark={isDark} xray={canXray && xray} moving={demo && motionEnabled} demo={demo} lighting={lighting} fieldIllustration={fieldIllustration} /></div></div>
+    <div className="app-content" inert={noticeOpen || recordsOpen ? true : undefined}><div className={`map-layout ${detailOpen ? "detail-visible" : ""}`}><div className="overview-map" aria-label="校园总览地图"><CampusMap ref={mapRef} selectedId={selectedId} mapPlaces={mapPlaces} onSelect={selectPlace} layers={layers} minute={displayMinute} scenarioId={scenarioId} isDark={isDark} xray={canXray && xray} moving={demo && motionEnabled} demo={demo} lighting={lighting} fieldIllustration={fieldIllustration} fieldScenes={!demo && !replay && !controlledReplay ? fieldScenes : null} /></div></div>
     <header className="topbar">
       <a className="brand" href="#" aria-label={`${siteName} 全校总览`} onClick={e => { e.preventDefault(); mapRef.current?.reset(); }}><img className="brand-mark" src="/icons/campuspulse-192.png" width="35" height="35" alt="" style={{ height: 'auto', borderRadius: 8 }} /><span>{siteName}</span></a>
       <div className="campus-name"><span className="header-divider" /><MapPin size={18} weight="fill" /><span>华中师范大学</span><CaretDown size={12} /></div>

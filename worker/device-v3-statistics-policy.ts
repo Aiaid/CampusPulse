@@ -4,8 +4,11 @@ import { IngestError } from './strict-json';
 import { capabilityDigestV3, negotiateDeviceConfigV3, validateDeviceCapabilitiesV3, validateFrozenDeviceConfigV3,
   type DeviceCapabilitiesV3, type DeviceConfigV3 } from './device-v3-config';
 import type { DeviceV3IngestEnv } from './device-v3-ingest-validation';
+import { supportedStatisticsV3Versions } from './device-v3-statistics-validation';
+import { admitsV3SimulatorStatistics } from './device-v3-simulator-admission';
+export { V3_STATISTICS_RULESETS, V3_VEHICLE_CANDIDATE_RULESET } from './device-v3-statistics-validation';
 
-export type DeviceV3StatisticsEnv = DeviceV3IngestEnv & { DEVICE_V3_STATISTICS_ENABLED?: string };
+export type DeviceV3StatisticsEnv = DeviceV3IngestEnv & { DEVICE_V3_STATISTICS_ENABLED?: string; DEVICE_V3_SIMULATOR_NODE_IDS?: string };
 export type V3StatisticsPolicy = DeviceConfigV3 & {
   evidence: Extract<DeviceConfigV3['evidence'], { mode: 'statistics' }>;
   uplink: Extract<DeviceConfigV3['uplink'], { enabled: true }>;
@@ -19,7 +22,7 @@ export function v3StatisticsEnabled(env: DeviceV3StatisticsEnv): boolean {
 }
 export function supportsV3StatisticsPolicy(p: DeviceConfigV3): p is V3StatisticsPolicy {
   return p.evidence.mode === 'statistics' && p.evidence.schema === 'window-statistics/1' &&
-    p.evidence.extractor_version === 'cp-v3-stats/1' && p.evidence.ruleset_version === 'unclassified-v1' &&
+    supportedStatisticsV3Versions(p.evidence.extractor_version, p.evidence.ruleset_version) &&
     p.collection.enabled && p.collection.summary.enabled && p.temporal !== undefined &&
     p.uplink.enabled && ['https', 'mqtt_tls'].includes(p.uplink.transport) && p.uplink.max_body_bytes <= 8192 &&
     p.uplink.streams.includes('window_statistics') && p.uplink.streams.includes('node_status') &&
@@ -36,7 +39,8 @@ export function assertV3StatisticsPolicy(p: DeviceConfigV3, env: DeviceV3Statist
     let versions: unknown;
     try { versions = JSON.parse(env.DEVICE_V3_PRODUCER_VERSIONS ?? 'null'); } catch { versions = null; }
     if (!Array.isArray(versions) || versions.length < 1 || versions.length > 16 || new Set(versions).size !== versions.length ||
-      versions.some(v => typeof v !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,63}$/.test(v)) || !versions.includes(producer)) {
+      versions.some(v => typeof v !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,63}$/.test(v)) ||
+      (!versions.includes(producer) && !admitsV3SimulatorStatistics(p, env, producer))) {
       throw new IngestError(422, 'v3_statistics_version_unavailable', 'Statistics producer version is not enabled.');
     }
   }

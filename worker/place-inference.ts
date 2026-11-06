@@ -2,6 +2,7 @@
 import type { Env, Place } from './types';
 import type { PublicSensorWindow } from './sensors';
 import { readPlaceStatistics } from './statistics-public';
+import { projectVehicleStatistics } from './vehicle-statistics-projection';
 import { DEFAULT_ELEVATOR_POLICY, ELEVATOR_BASELINE_VERSION, estimateElevatorWait,
   type ManualWaitObservation } from './elevator-estimation';
 
@@ -36,6 +37,8 @@ async function readVehicles(env: Env, place: Place, _windows: PublicSensorWindow
   if (!place.observation_kinds.includes('parking')) return unavailableVehicle('purpose_not_enabled');
   const statistics = await readPlaceStatistics(env, place.id, now);
   if (!('versions' in statistics)) return unavailableVehicle(statistics.reason ?? 'no_field_statistics');
+  const candidates = projectVehicleStatistics(statistics, now);
+  if (candidates) return candidates;
   // The admitted unclassified-v1 producer deliberately reports unknown keys.
   // Zero positive categories is not evidence that no vehicles are present.
   return { ...unavailableVehicle('classification_unavailable'), model_version: statistics.versions.ruleset_version,

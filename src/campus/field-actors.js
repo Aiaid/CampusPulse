@@ -37,12 +37,13 @@ export function makeFieldActors(illustration, fieldPlace, layers = {}) {
   for (const group of groups) {
     if (!group || group.actor_eligible !== true || unusable(group)
       || (group.place_id != null && group.place_id !== placeId)) continue;
-    // No car sprite exists. Manual parking and unclassified BLE activity do
-    // not establish electric-bike observations or parked positions.
+    // Manual parking and unclassified BLE activity cannot establish a vehicle
+    // type. Cars have their own glyph and never enter the riding-bike count.
     const kind = group.kind === 'people' && group.source === 'sensor' ? 'walk'
-      : group.kind === 'bikes' && group.source === 'candidate' ? 'ride' : null;
+      : group.kind === 'bikes' && group.source === 'candidate' ? 'ride'
+      : group.kind === 'cars' && group.source === 'candidate' ? 'car' : null;
     if (!kind || layers[kind === 'walk' ? 'people' : 'bikes'] === false) continue;
-    const paths = fieldRoutes.filter(route => route.placeId === placeId && route.kind === kind
+    const paths = fieldRoutes.filter(route => route.placeId === placeId && route.kind === (kind === 'car' ? 'ride' : kind)
       && route.points.length >= 2);
     if (!paths.length) continue;
     const budget = Math.min(budgetFor(group), MAX_FIELD_ACTORS - result.length);
@@ -54,6 +55,27 @@ export function makeFieldActors(illustration, fieldPlace, layers = {}) {
         phase: (routeIndex * .381966 + paths.indexOf(route) * .173) % 1,
         speed: kind === 'walk' ? .95 + routeIndex * .07 : 2.6 + routeIndex * .18 });
     }
+  }
+  return result;
+}
+
+/** Overview scenes remain independently bound to their exact source place.
+ * Reject every duplicate place instead of multiplying an ambiguous source.
+ * The total budget applies across the entire map, including all vehicle types.
+ */
+export function makeFieldSceneActors(scenes, layers = {}) {
+  if (!Array.isArray(scenes)) return [];
+  const occurrences = new Map();
+  for (const scene of scenes) {
+    const id = scene?.place?.id;
+    if (typeof id === 'string') occurrences.set(id, (occurrences.get(id) || 0) + 1);
+  }
+  const result = [];
+  for (const scene of scenes) {
+    if (!scene || occurrences.get(scene.place?.id) !== 1) continue;
+    const actors = makeFieldActors(scene.illustration, scene.place, layers);
+    result.push(...actors.slice(0, MAX_FIELD_ACTORS - result.length));
+    if (result.length === MAX_FIELD_ACTORS) break;
   }
   return result;
 }

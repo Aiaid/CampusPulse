@@ -1,6 +1,12 @@
 /** Strict compact statistics/1 validation. No authorization, persistence or radio-truth claim. */
 import { IngestError, parseIngestJson } from './strict-json';
 
+export const V3_VEHICLE_CANDIDATE_RULESET = 'cp-v3-vehicle-candidates/1' as const;
+export const V3_STATISTICS_RULESETS = ['unclassified-v1', V3_VEHICLE_CANDIDATE_RULESET] as const;
+export function supportedStatisticsV3Versions(extractor: string, rules: string): boolean {
+  return extractor === 'cp-v3-stats/1' && V3_STATISTICS_RULESETS.some(version => version === rules);
+}
+
 export const STATISTICS_V3_STREAMS = ['window_statistics', 'candidate_events', 'node_status'] as const;
 export type StatisticsV3Stream = typeof STATISTICS_V3_STREAMS[number];
 export interface StatisticsV3Limits {
@@ -96,7 +102,8 @@ function rssi(value: unknown, maxSamples: number): StatisticsV3Rssi {
 }
 function versions(value: unknown, limits: StatisticsV3Limits): StatisticsV3Versions {
   const v = tuple(value, 2), extractor_version = string(v[0], LABEL), ruleset_version = string(v[1], LABEL);
-  if (extractor_version !== limits.extractor_version || ruleset_version !== limits.ruleset_version) fail('v3_statistics_version_unavailable');
+  if (!supportedStatisticsV3Versions(extractor_version, ruleset_version) ||
+      extractor_version !== limits.extractor_version || ruleset_version !== limits.ruleset_version) fail('v3_statistics_version_unavailable');
   return { extractor_version, ruleset_version };
 }
 export function validateStatisticsV3Envelope(value: unknown): StatisticsV3Envelope {
@@ -117,6 +124,9 @@ export function validateStatisticsV3Window(value: unknown, limits: StatisticsV3L
   if (visible_identifiers > limits.max_addresses || limits.max_addresses > 512) fail();
   const version = versions(o.v, limits);
   if (version.ruleset_version === 'unclassified-v1' && c.some((n, i) => i !== 4 && n !== 0)) fail();
+  // This built-in version has no positive phone or generic-other rule. Vehicle
+  // counts are candidates; ecosystem/company-only evidence remains unknown.
+  if (version.ruleset_version === V3_VEHICLE_CANDIDATE_RULESET && (c[0] !== 0 || c[3] !== 0)) fail();
   const r = tuple(o.r, 4).map(v => int(v)), [received, worker, adv, scan_response] = r;
   if (sum([adv, scan_response]) !== worker || received < worker || visible_identifiers > worker) fail();
   const aggregate = rssi(o.s, worker);

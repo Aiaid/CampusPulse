@@ -486,6 +486,17 @@ Historical context: the raw-first implementation direction was **superseded as
 
 ## Completed archive
 
+- [x] 2026-11-06: Connect two independent virtual devices to online live over
+      verified native MQTT/TLS and normal CPV3 authority/receipts, with explicit
+      synthetic provenance and exact named-node admission. Add authoritative
+      bike/car candidate projection, original Canvas car geometry and independent
+      multi-place overview reads without demo fallback. Preserve the existing
+      library receiver and physical-device work. The selected snapshot passed
+      1485 tests/build/browser/dry-run and deployed as f37b2a61; both devices
+      uploaded fresh windows and actual online two-place/car rendering passed.
+      Runs are bounded, queues session-only and results synthetic, not hardware
+      validation. See [online preview](../notes/online-virtual-devices-2026-11-06.md).
+
 - [x] 2026-11-06: Make live map actors exclusively device-observation-driven.
       Remove demo metrics, invented activity-derived vehicles and nearest-place
       reassignment; budget only eligible uploaded activity/vehicle candidates

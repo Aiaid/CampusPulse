@@ -12,7 +12,8 @@ import { sampleCampusActor } from './campus-scene-lighting';
 import { campusCrownMasks, drawCampusCrownMasks, drawNativeCanopyMasks } from './campus-tree-masks';
 import { getCampusNativeCanopyMasks, subscribeCampusNativeCanopy } from './CampusLightingLayer';
 import { createActorLightSampler, createRenderCache } from './render-cache';
-import { makeFieldActors } from './field-actors.js';
+import { makeFieldActors, makeFieldSceneActors } from './field-actors.js';
+import { createCarSprite } from './car-sprite.js';
 
 const actorDefinitions = createRenderCache(8);
 const actorOcclusion = createRenderCache(200);
@@ -192,12 +193,12 @@ function drawActorShadows(context, screen, spriteWidth, spriteHeight, mapScale, 
 /** Existing sprite animation; field density uses eligible uploaded evidence. */
 export default function ActivityLayer({ project, scale, translateX, translateY, viewWidth, viewHeight,
   layers = { people: true, bikes: true }, minute = 1200, scenarioId = 'weekday', isDark = false, xray = false, moving = true,
-  selectedId = 'library', demo = true, lighting = 'atmospheric', detailView = false, fieldIllustration = null, fieldPlace = null,
+  selectedId = 'library', demo = true, lighting = 'atmospheric', detailView = false, fieldIllustration = null, fieldPlace = null, fieldScenes = null,
 }) {
   const canvasRef = useRef(null);
   const current = useRef(null);
   const invalidate = useRef(null);
-  current.current = { project, scale, translateX, translateY, viewWidth, viewHeight, layers, minute, scenarioId, isDark, xray, moving, selectedId, demo, lighting, detailView, fieldIllustration, fieldPlace };
+  current.current = { project, scale, translateX, translateY, viewWidth, viewHeight, layers, minute, scenarioId, isDark, xray, moving, selectedId, demo, lighting, detailView, fieldIllustration, fieldPlace, fieldScenes };
 
   useEffect(() => {
     let request = 0;
@@ -206,7 +207,9 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
     let dirty = true;
     let frame = 0;
     const media = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const canMove = () => (current.current.demo ? current.current.moving : current.current.fieldIllustration && !current.current.fieldIllustration.replay) && (current.current.layers.people || current.current.layers.bikes) && !media.matches && !document.hidden;
+    const canMove = () => (current.current.demo ? current.current.moving : current.current.fieldScenes !== null
+      ? current.current.fieldScenes.some(scene => scene.illustration && !scene.illustration.replay)
+      : current.current.fieldIllustration && !current.current.fieldIllustration.replay) && (current.current.layers.people || current.current.layers.bikes) && !media.matches && !document.hidden;
     const redraw = () => {
       dirty = true;
       if (!request && !disposed) request = requestAnimationFrame(draw);
@@ -215,6 +218,7 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       person: loadImage('/assets/person-directions.png', redraw),
       movingBike: loadImage('/assets/ebike-moving-directions.png', redraw),
       parkedBike: loadImage('/assets/ebike-parked-directions.png', redraw),
+      car: createCarSprite(),
     };
     const unsubscribeTreeMaterial = subscribeTreeMaterial(redraw);
     const unsubscribeNativeCanopy = subscribeCampusNativeCanopy(redraw);
@@ -254,8 +258,9 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       const definitions = props.demo
         ? actorDefinitions.resolve(props.scenarioId, [props.minute, props.layers.people, props.layers.bikes],
           () => makeDemoActors(props.minute, props.layers, props.scenarioId))
-        : actorDefinitions.resolve('field', [props.fieldIllustration, props.fieldPlace?.id, props.layers.people, props.layers.bikes],
-          () => makeFieldActors(props.fieldIllustration, props.fieldPlace, props.layers));
+        : actorDefinitions.resolve('field', [props.fieldIllustration, props.fieldPlace?.id, props.fieldScenes, props.layers.people, props.layers.bikes],
+          () => props.fieldScenes !== null ? makeFieldSceneActors(props.fieldScenes, props.layers)
+            : makeFieldActors(props.fieldIllustration, props.fieldPlace, props.layers));
       const actors = definitions.map((actor) => actorPosition(actor, elapsed)).sort((a, b) => a.y - b.y);
       const treeRevision = treeMaterialState().revision;
       let hiddenCount = 0;
@@ -281,8 +286,8 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       const headings = new Set();
       for (const actor of actors) {
         const screen = projectPoint(actor.x, actor.y);
-        const sprite = actor.kind === 'walk' ? assets.person : actor.parked ? assets.parkedBike : assets.movingBike;
-        if (!sprite.complete || !sprite.naturalWidth) continue;
+        const sprite = actor.kind === 'walk' ? assets.person : actor.kind === 'car' ? assets.car : actor.parked ? assets.parkedBike : assets.movingBike;
+        if (!sprite?.complete || !sprite.naturalWidth) continue;
         const [column, row] = directionCell(actor.heading ?? 0);
         const frame = imageFrames(sprite)?.[row * 2 + column];
         if (!frame || frame.empty) continue;
@@ -438,6 +443,7 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       canvas.dataset.parkedCount = String(actors.filter((actor) => actor.parked).length);
       canvas.dataset.personCount = String(actors.filter((actor) => actor.kind === 'walk').length);
       canvas.dataset.ridingCount = String(actors.filter((actor) => actor.kind === 'ride' && !actor.parked).length);
+      canvas.dataset.carCount = String(actors.filter((actor) => actor.kind === 'car').length);
       canvas.dataset.parkedSignature = actors.filter((actor) => actor.parked).map((actor) => `${actor.x},${actor.y},${actor.heading}`).join(';');
       canvas.dataset.occludedCount = String(hiddenCount);
       canvas.dataset.visibleCount = String(visibleCount);
@@ -483,7 +489,7 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       document.removeEventListener('visibilitychange', playbackChanged);
       unsubscribeTreeMaterial();
       unsubscribeNativeCanopy();
-      Object.values(assets).forEach((image) => { image.onload = null; });
+      Object.values(assets).forEach((image) => { if (image) image.onload = null; });
     };
   }, []);
   // Props may change while paused; render that new view once without a loop.

@@ -18,6 +18,8 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'no-preference' });
   const now = Date.now(), iso = offset => new Date(now + offset).toISOString();
   const place = { id: 'library', name: '图书馆', kind: 'activity', observation_kinds: ['activity', 'parking'], gis_anchor: { x: 15656 / 24576, y: 9059 / 24576, verified: true } };
+  const secondPlace = { ...place, id: 'tianjiabing', name: '田家炳楼', gis_anchor: { x: 15360 / 24576, y: 9656 / 24576, verified: true } };
+  const twoPlaces = () => ['two-places', 'two-one-missing'].includes(scenario);
   const sensor = { source: 'sensor', dataset: 'field', node_id: 'synthetic-node', boot_id: 'synthetic-boot', placement_id: 'synthetic-placement', protocol: 'campuspulse/3', assignment_generation: 1, policy_id: 'synthetic-config', seq: 1,
     observed_at: iso(-1000), valid_until: iso(89000), duration_ms: 30000, scan_enabled_ms: 30000, visible_identifiers: 16,
     reports_aggregated: 100, uncertainty_ms: 0, aggregation_drops: 0, quality_flags: [], unique_table_overflow: false };
@@ -33,8 +35,8 @@ try {
   const manualParking = { id: 'manual-parking', place_id: place.id, source: 'manual', status: 'active', kind: 'parking',
     parking_min: 4, parking_max: 8, observed_at: iso(-1000), valid_until: iso(89000) };
   const candidateObservations = {
-    vehicles: { status: 'candidate_estimate', source: 'ble_rule_inference', model_version: 'fixture-candidates/1',
-      observed_at: iso(-1000), valid_until: iso(89000), candidate_count: 2, car_related_count: 0, ecosystem_count: 0,
+    vehicles: { status: 'candidate_estimate', source: 'ble_rule_inference', model_version: 'cp-v3-vehicle-candidates/1',
+      observed_at: iso(-1000), valid_until: iso(89000), candidate_count: 2, car_related_count: 2, ecosystem_count: 0,
       sample_count: 8, reason: null, quality_flags: [], evidence_kind: 'compact' },
     elevator: { status: 'unavailable', source: 'manual_historical_baseline', model_version: 'fixture-elevator/1',
       observed_at: null, valid_until: null, wait_seconds: null, range_seconds: null, sample_count: 0, day_count: 0,
@@ -47,13 +49,23 @@ try {
     if (!url.pathname.startsWith('/api/v1/')) return route.continue();
     requests.push(request.method());
     if (url.pathname.endsWith('/settings')) return route.fulfill({ json: { site_name: 'CampusPulse', default_mode: 'field' } });
-    if (url.pathname === '/api/v1/places') return route.fulfill({ json: { places: [currentPlace()] } });
+    if (url.pathname === '/api/v1/places') return route.fulfill({ json: { places: twoPlaces() ? [place, secondPlace] : [currentPlace()] } });
+    if (twoPlaces() && url.pathname.endsWith('/summary')) {
+      const second = url.pathname.includes('/tianjiabing/');
+      return route.fulfill({ json: { place: second ? secondPlace : place, as_of: iso(0),
+        sensor: second && scenario === 'two-one-missing' ? null : { ...sensor, visible_identifiers: second ? 24 : 12 },
+        latest_observation: null, latest_observations: { parking: null, elevator: null },
+        ...(second && scenario === 'two-one-missing' ? {} : { automatic_observations: { ...candidateObservations,
+          vehicles: { ...candidateObservations.vehicles, candidate_count: second ? 6 : 3, car_related_count: second ? 3 : 2 } } }),
+      } });
+    }
     if (url.pathname.endsWith('/summary') && scenario === 'failed') return route.fulfill({ status: 503, json: {} });
     if (url.pathname.endsWith('/summary')) return route.fulfill({ json: { place: currentPlace(), as_of: iso(0), sensor: currentSensor(),
       last_reported_sensor: scenario === 'reported' ? { ...sensor, visible_identifiers: 9, received_at: iso(-1000), observed_at: null, valid_until: null, uncertainty_ms: null, time_status: 'unknown', freshness: 'unverified' } : null,
-      ...(['candidate', 'candidate-with-manual'].includes(scenario) ? { automatic_observations: candidateObservations } : {}),
+      ...(['candidate', 'candidate-with-manual', 'car-only'].includes(scenario) ? { automatic_observations: scenario === 'car-only'
+        ? { ...candidateObservations, vehicles: { ...candidateObservations.vehicles, candidate_count: 0 } } : candidateObservations } : {}),
       latest_observation: null, latest_observations: { parking: scenario === 'candidate-with-manual' ? manualParking : null, elevator: null } } });
-    if (url.pathname.endsWith('/history')) return route.fulfill({ json: { place_id: currentPlace().id, from: iso(-3600000), to: iso(0), truncated: false, sensor_truncated: false, sensor_windows: [], observations: [] } });
+    if (url.pathname.endsWith('/history')) return route.fulfill({ json: { place_id: url.pathname.includes('/tianjiabing/') ? secondPlace.id : currentPlace().id, from: iso(-3600000), to: iso(0), truncated: false, sensor_truncated: false, sensor_windows: [], observations: [] } });
     return route.fulfill({ status: 404, json: {} });
   });
   const page = await context.newPage();
@@ -81,7 +93,7 @@ try {
   };
   const scopedPeopleOnly = async () => {
     await expect.poll(() => allLayers.evaluateAll(layers => layers.length > 0 && layers.every(layer =>
-      layer.dataset.actorPlaceIds === 'library' && layer.dataset.ridingCount === '0' && layer.dataset.parkedCount === '0')))
+      layer.dataset.actorPlaceIds === 'library' && layer.dataset.ridingCount === '0' && layer.dataset.carCount === '0' && layer.dataset.parkedCount === '0')))
       .toBe(true);
   };
   await page.goto(`${base}/?mode=field&place=library`);
@@ -113,9 +125,27 @@ try {
     scenario = supported; await page.reload();
     await populated();
     await expect.poll(() => allLayers.evaluateAll(layers => layers.length > 0 && layers.every(layer =>
-      layer.dataset.actorPlaceIds === 'library' && layer.dataset.ridingCount === '2' && layer.dataset.parkedCount === '0')))
+      layer.dataset.actorPlaceIds === 'library' && layer.dataset.ridingCount === '2' && layer.dataset.carCount === '2' && layer.dataset.parkedCount === '0')))
       .toBe(true);
   }
+  scenario = 'car-only'; await page.reload();
+  await page.locator('.layer-toggle.people').click();
+  await expect(detail).toHaveAttribute('data-person-count', '0');
+  await expect(detail).toHaveAttribute('data-riding-count', '0');
+  await expect(detail).toHaveAttribute('data-car-count', '2');
+  await expect.poll(nontransparent).toBeGreaterThan(0);
+  scenario = 'two-places'; await page.reload();
+  const overview = page.locator('.overview-map .cp-activity-layer');
+  await expect.poll(() => overview.getAttribute('data-actor-place-ids')).toMatch(/library.*tianjiabing|tianjiabing.*library/);
+  await expect(overview).toHaveAttribute('data-car-count', '4');
+  await expect(overview).toHaveAttribute('data-riding-count', '4');
+  await expect(detail).toHaveAttribute('data-actor-place-ids', 'library');
+  await page.getByRole('combobox', { name: '观测地点', exact: true }).selectOption('tianjiabing');
+  await expect(detail).toHaveAttribute('data-actor-place-ids', 'tianjiabing');
+  await expect(page.locator('.field-data-panel')).toContainText('24 个 BLE 可见标识');
+  scenario = 'two-one-missing'; await page.reload();
+  await expect(overview).toHaveAttribute('data-actor-place-ids', 'library');
+  await expect(overview).toHaveAttribute('data-car-count', '2');
   scenario = 'known'; await page.reload();
   await populated(); await scopedPeopleOnly();
   scenario = 'busy'; await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();

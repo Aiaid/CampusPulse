@@ -19,7 +19,7 @@ const TILE_ORIGIN = (import.meta.env.VITE_GIS_TILE_ORIGIN || 'https://gis.ccnu.e
 export const CampusMap = forwardRef(function CampusMap({
   selectedId = 'library', onSelect = () => {}, compactSelected = false,
   mapPlaces = places, renderScene = true, onPickGisAnchor,
-  fieldIllustration = null,
+  fieldIllustration = null, fieldScenes = null,
   layers = { people: true, bikes: true, waits: true }, minute = 1200, scenarioId = 'weekday', isDark = false, onZoomChange, maxZoom = 4, xray = false, moving = true, demo = true, lighting = 'atmospheric',
 }, ref) {
   const gradeId = useId().replace(/:/g, '');
@@ -245,9 +245,9 @@ export const CampusMap = forwardRef(function CampusMap({
           style={{ left: tile.x - rasterBounds.left, top: tile.y - rasterBounds.top, width: tile.size, height: tile.size, visibility: failedTiles.has(tile.key) ? 'hidden' : 'visible' }} />)}
       </div>
       <div className="cp-map__atmosphere" aria-hidden="true" />
-      {renderScene && <><ActivityLayer project={project} scale={scale} translateX={translateX} translateY={translateY} viewWidth={size.width} viewHeight={size.height} layers={layers} minute={minute} scenarioId={scenarioId} isDark={isDark} xray={xray} moving={moving} selectedId={selectedId} demo={demo} lighting={lighting} detailView={compactSelected} fieldIllustration={fieldIllustration} fieldPlace={mapPlaces.find(item => item.id === selectedId)} />
+      {renderScene && <><ActivityLayer project={project} scale={scale} translateX={translateX} translateY={translateY} viewWidth={size.width} viewHeight={size.height} layers={layers} minute={minute} scenarioId={scenarioId} isDark={isDark} xray={xray} moving={moving} selectedId={selectedId} demo={demo} lighting={lighting} detailView={compactSelected} fieldIllustration={fieldIllustration} fieldScenes={fieldScenes} fieldPlace={mapPlaces.find(item => item.id === selectedId)} />
       <NightLighting project={project} scale={scale} viewWidth={size.width} viewHeight={size.height} isDark={isDark} xray={xray} selectedId={selectedId} lighting={lighting} />
-      {(demo || fieldIllustration) && <MapRegions project={project} viewWidth={size.width} viewHeight={size.height} selectedId={selectedId} xray={xray} />}</>}
+      {(demo || fieldIllustration || fieldScenes?.some(scene => scene.illustration)) && <MapRegions project={project} viewWidth={size.width} viewHeight={size.height} selectedId={selectedId} xray={xray} />}</>}
       <div className="cp-map__landmarks">
         {mapPlaces.map((place) => {
           const selected = selectedId === place.id;

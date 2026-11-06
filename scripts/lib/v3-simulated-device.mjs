@@ -8,19 +8,43 @@ import { statisticsTools, expectedStatisticsReceipt } from '../v3-statistics-int
 const hash = body => createHash('sha256').update(body).digest('hex');
 const check = (ok, message) => { if (!ok) throw new Error(message); };
 export const SIMULATION_SCENARIOS = Object.freeze(['quiet', 'busy', 'loss', 'offline', 'failed']);
+export const SIMULATION_VEHICLE_RULESET = 'cp-v3-vehicle-candidates/1';
+/** Synthetic categories only; these values are not measured vehicle totals. */
+export function simulationVehicleProfile(vehicleData = false, vehicleCounts) {
+  check(typeof vehicleData === 'boolean' && (vehicleData || vehicleCounts === undefined), 'Vehicle counts require explicit vehicleData.');
+  if (!vehicleData) return null;
+  const counts = vehicleCounts ?? { bikes: 3, cars: 2 };
+  check(counts && typeof counts === 'object' && !Array.isArray(counts) &&
+    Object.keys(counts).length === 2 && Object.keys(counts).every(k => ['bikes', 'cars'].includes(k)) &&
+    Number.isInteger(counts.bikes) && counts.bikes >= 0 && Number.isInteger(counts.cars) && counts.cars >= 0 &&
+    counts.bikes + counts.cars <= 512, 'Invalid bounded synthetic vehicle counts.');
+  const total = counts.bikes + counts.cars;
+  return Object.freeze({ bikes: counts.bikes, cars: counts.cars, identifiers: Math.min(512, Math.max(12, Math.ceil(total / 5) * 12)) });
+}
 const cadence = n => { check([1000, 30000, 60000].includes(n), 'Cadence must be 1000, 30000 or 60000ms.'); return n; };
 const transportMode = value => { check(['https', 'mqtt_tls'].includes(value), 'Unsupported simulation transport.'); return value; };
-function simulationCustody(localConfiguration) {
+function simulationCustody(localConfiguration, onlineConfiguration, nodeId) {
+  check(!localConfiguration || !onlineConfiguration, 'Choose one simulation environment.');
+  if (onlineConfiguration !== undefined) {
+    check(onlineConfiguration?.origin === 'https://pulse.anend.net' &&
+      onlineConfiguration.operator_confirmed_production_simulation === true &&
+      onlineConfiguration.nodeId === nodeId && /^sim-live-[a-z0-9_-]+$/.test(nodeId) &&
+      typeof onlineConfiguration.placementId === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(onlineConfiguration.placementId) &&
+      onlineConfiguration.dataset === 'field' && onlineConfiguration.purpose === 'site_observation',
+    'Online simulation requires explicit pinned production field configuration.');
+    return Object.freeze({ dataset: 'field', purpose: 'site_observation', placement_id: onlineConfiguration.placementId });
+  }
   if (localConfiguration === undefined) return Object.freeze({ dataset: 'controlled_test', purpose: 'controlled_test' });
   check(localConfiguration?.storage === 'ephemeral-local-d1' && localConfiguration.dataset === 'field' &&
     localConfiguration.purpose === 'site_observation', 'Live simulation requires explicit ephemeral local field configuration.');
   return Object.freeze({ dataset: localConfiguration.dataset, purpose: localConfiguration.purpose });
 }
-function safePolicy(p, transport, custody) {
+function safePolicy(p, transport, custody, ruleset = 'unclassified-v1') {
   check(p.custody.dataset === custody.dataset && p.custody.purpose === custody.purpose && p.local_raw.mode === 'off',
     'Simulation policy must match the configured dataset/purpose and keep raw disabled.');
+  check(!custody.placement_id || p.custody.placement_id === custody.placement_id, 'Simulation placement differs from pinned configuration.');
   check(p.evidence.mode === 'statistics' && p.evidence.schema === 'window-statistics/1' && p.evidence.extractor_version === 'cp-v3-stats/1' &&
-    p.evidence.ruleset_version === 'unclassified-v1' && (p.temporal?.mode === 'off' ||
+    p.evidence.ruleset_version === ruleset && (p.temporal?.mode === 'off' ||
       p.temporal?.mode === 'rolling' && p.temporal.report_mode === 'off'), 'Unsupported simulation statistics policy.');
   check(p.collection.enabled && p.collection.summary.enabled && p.uplink.enabled && p.uplink.transport === transport &&
     p.uplink.raw_sample.mode === 'off' && p.uplink.archive.mode === 'off' && p.uplink.streams.length === 2 &&
@@ -36,8 +60,12 @@ function safePolicy(p, transport, custody) {
  * @param {any} options
  */
 export async function createSimulationPolicy(capabilities, { placementId, cadenceMs = 1000, generation = 1, now = Date.now(), leaseDurationMs = 120000,
-  transport = capabilities.uplink?.transports?.[0] ?? 'https', localConfiguration } = {}) {
-  const custody = simulationCustody(localConfiguration);
+  transport = capabilities.uplink?.transports?.[0] ?? 'https', localConfiguration, onlineConfiguration, vehicleData = false, vehicleCounts } = {}) {
+  const custody = simulationCustody(localConfiguration, onlineConfiguration, capabilities.node_id);
+  const vehicleProfile = simulationVehicleProfile(vehicleData, vehicleCounts);
+  const ruleset = vehicleProfile ? SIMULATION_VEHICLE_RULESET : 'unclassified-v1';
+  check(capabilities.statistics?.ruleset_versions?.includes(ruleset), 'Selected simulation ruleset is absent from capabilities.');
+  check(!onlineConfiguration || placementId === onlineConfiguration.placementId && transport === 'mqtt_tls', 'Online simulation requires pinned placement and native MQTT/TLS.');
   cadence(cadenceMs);
   transportMode(transport);
   check(capabilities.uplink?.transports?.includes(transport), 'Selected transport is absent from simulated capabilities.');
@@ -46,12 +74,17 @@ export async function createSimulationPolicy(capabilities, { placementId, cadenc
   p.collection.summary.window_ms = cadenceMs;
   p.collection.summary.bin_ms = cadenceMs === 1000 ? 1000 : 5000;
   p.temporal = { mode: 'off' };
+  p.evidence.ruleset_version = ruleset;
   p.control.activation.after_window_seq = 0;
   p.control.activation.after_segment_seq = 0;
   p.control.lease.duration_ms = leaseDurationMs;
+  if (onlineConfiguration) {
+    p.control.activation.expires_at = new Date(Math.min(now + 1800000, Date.parse(capabilities.expires_at))).toISOString();
+    p.custody.accept_until = new Date(now + 1800000).toISOString();
+  }
   p.uplink.transport = transport;
   Object.assign(p.custody, custody);
-  safePolicy(p, transport, custody);
+  safePolicy(p, transport, custody, ruleset);
   return (await tools.freezeDeviceConfigV3(p)).policy;
 }
 
@@ -59,17 +92,27 @@ export async function createSimulationPolicy(capabilities, { placementId, cadenc
 export async function createSimulatedV3Device(options) {
   const tools = await statisticsTools(), now = options.now ?? Date.now;
   const caps = tools.statisticsCapabilities(options.nodeId, now());
+  const vehicleProfile = simulationVehicleProfile(options.vehicleData, options.vehicleCounts);
+  if (vehicleProfile) caps.statistics.ruleset_versions = [SIMULATION_VEHICLE_RULESET];
   caps.uplink.transports = [transportMode(options.transport ?? 'https')];
+  if (options.onlineConfiguration) {
+    check(options.transport === 'mqtt_tls', 'Online simulation requires native MQTT/TLS.');
+    caps.expires_at = new Date(now() + 1800000).toISOString();
+  }
   caps.boot_id = randomUUID(); caps.capability_id = `sim-statistics-${randomUUID()}`;
   return new SimulatedV3Device(options, tools, caps);
 }
 
 export class SimulatedV3Device {
-  constructor({ nodeId, deviceBearer, request, cadenceMs = 1000, scenario = 'quiet', now = Date.now, transport = 'https', replay = null, localConfiguration }, tools, caps) {
+  constructor({ nodeId, deviceBearer, request, cadenceMs = 1000, scenario = 'quiet', now = Date.now, transport = 'https', replay = null, localConfiguration, onlineConfiguration, vehicleData = false, vehicleCounts }, tools, caps) {
     check(typeof request === 'function' && typeof nodeId === 'string' && typeof deviceBearer === 'string', 'A node, credential and injected request are required.');
     this.cadenceMs = cadence(cadenceMs); this.tools = tools; this.clock = now;
     this.transport = transportMode(transport);
-    this.custody = simulationCustody(localConfiguration);
+    this.custody = simulationCustody(localConfiguration, onlineConfiguration, nodeId);
+    this.onlineConfiguration = onlineConfiguration !== undefined;
+    this.vehicleProfile = simulationVehicleProfile(vehicleData, vehicleCounts);
+    this.ruleset = this.vehicleProfile ? SIMULATION_VEHICLE_RULESET : 'unclassified-v1';
+    check(!replay || !this.vehicleProfile, 'Historical replay cannot adopt synthetic vehicle categories.');
     check(!replay || this.custody.dataset === 'controlled_test', 'Historical replay cannot enter the local live view.');
     check(caps.uplink?.transports?.includes(this.transport), 'Selected transport is absent from simulated capabilities.');
     this.nodeId = nodeId; this.bearer = deviceBearer; this.request = request; this.caps = caps;
@@ -152,12 +195,17 @@ export class SimulatedV3Device {
     this.configReason = delivered.reason ?? null;
     if (!delivered.config) { this.phase = delivered.reason === 'unassigned' ? 'unassigned' : 'unavailable'; this.nextStart = null; return; }
     const frozen = await this.tools.validateFrozenDeviceConfigV3(delivered.config), p = frozen.policy;
+    // A new explicitly started online session cannot ACK a prior session's
+    // boot-bound assignment. Wait for its separately revision-checked policy.
+    if (this.onlineConfiguration && p.control.activation.boot_id !== this.caps.boot_id) {
+      this.phase = 'unassigned'; this.configReason = 'awaiting_current_boot_assignment'; this.nextStart = null; return;
+    }
     if (p.assignment_generation <= this.terminalGeneration) return;
     // Drain retained older-policy bytes before a new activation closes its span.
     if (this.pending.length) return;
     let compatible = true;
     try {
-      safePolicy(p, this.transport, this.custody);
+      safePolicy(p, this.transport, this.custody, this.ruleset);
       if (this.replay) check(p.collection.summary.window_ms === this.replay.window_ms && p.collection.summary.bin_ms === this.replay.bin_ms,
         'Replay cadence is immutable for this source.');
     } catch { compatible = false; }
@@ -207,14 +255,17 @@ export class SimulatedV3Device {
     if (this.pending.length) { this.phase = 'queue_paused'; return; }
     const end = this.nextStart + duration, binMs = p.collection.summary.bin_ms, count = duration / binMs;
     const loss = this.scenario === 'loss', busy = this.scenario === 'busy';
-    const reports = busy ? 48 : loss ? 32 : 4, identifiers = busy ? 12 : loss ? 8 : 2;
+    const identifiers = this.vehicleProfile?.identifiers ?? (busy ? 12 : loss ? 8 : 2);
+    const reports = Math.max(busy ? 48 : loss ? 32 : 4, identifiers);
     const worker = reports * count, callback = loss ? 2 : 0, aggregation = loss ? 1 : 0;
     const time = [this.uptime(end), end, 1, 0];
     const synthetic = { d: duration, b: binMs,
-      c: [0, 0, 0, 0, identifiers, 0], r: [worker + callback + aggregation, worker, worker - count, count],
+      c: this.vehicleProfile ? [0, this.vehicleProfile.bikes, this.vehicleProfile.cars, 0,
+        identifiers - this.vehicleProfile.bikes - this.vehicleProfile.cars, 0] : [0, 0, 0, 0, identifiers, 0],
+      r: [worker + callback + aggregation, worker, worker - count, count],
       x: Array.from({ length: count }, () => [reports, identifiers, reports, -60 * reports]),
       s: [worker, -60 * worker, -60, -60], l: [loss ? duration - 100 : duration, callback, aggregation, 0],
-      f: loss ? 52 : 0, v: ['cp-v3-stats/1', 'unclassified-v1'] };
+      f: loss ? 52 : 0, v: ['cp-v3-stats/1', this.ruleset] };
     const source = this.replay ? this.replay.windows[this.replayIndex].item : synthetic;
     const window = { ...structuredClone(source), q: ++this.sequences.window_statistics, w: ++this.windowSeq, t: time,
       // This is the current replay clock mapping. Original clock evidence is
