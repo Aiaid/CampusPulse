@@ -32,6 +32,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "driver/usb_serial_jtag.h"
+#include "driver/usb_serial_jtag_vfs.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -575,6 +577,17 @@ static bool run(void){
 }
 void te_small_runtime(void *unused){
     (void)unused;phase("WAIT USB");
+    /* IDF5.5.3's no-driver VFS cannot read with O_NONBLOCK: its available
+     * count comes from the driver's RX ring. Keep the official bounded TX
+     * implementation/default256-byte buffer; never wait forever for a host. */
+    if(!usb_serial_jtag_is_driver_installed()){
+        usb_serial_jtag_driver_config_t usb=USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+        usb.rx_buffer_size=1024;
+        if(usb_serial_jtag_driver_install(&usb)!=ESP_OK){ESP_LOGE(TAG,"usb_console_driver_failed=1");goto done;}
+    }
+    /* Reuse an existing owner; this console remains installed for safe USB
+     * standby and cancellation. Do not uninstall it during runtime cleanup. */
+    usb_serial_jtag_vfs_use_driver();
     int flags=fcntl(STDIN_FILENO,F_GETFL,0);if(flags<0||fcntl(STDIN_FILENO,F_SETFL,flags|O_NONBLOCK)<0)goto done;
     uint8_t mac[6];if(esp_efuse_mac_get_default(mac)!=ESP_OK)goto done;
     snprintf(node,sizeof node,"cp_%02x%02x%02x%02x%02x%02x",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);memset(mac,0,sizeof mac);
