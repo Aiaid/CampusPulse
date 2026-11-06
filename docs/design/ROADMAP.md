@@ -474,6 +474,33 @@ Historical context: the raw-first implementation direction was **superseded as
 
 ## Completed archive
 
+- [x] 2026-11-06: Connect complete saved CPRAW aggregates to the deployed main
+      frontend through authenticated historical replay. Version `5c180e39` and
+      migration 0020 retain all 602,315 reports / 113 windows with original timing,
+      a partial tail and private provenance; production device allowlists and
+      public field isolation remain intact. Exact online/static-render checks
+      and subsequent actual in-app-browser login, first/tail card sync, slider,
+      playback/pause/EOF stop and desktop/390px visual checks pass. Preserve the
+      earlier browser-setting blocker as historical evidence. See
+      [online replay](../notes/online-cpraw-replay-2026-11-06.md).
+
+- [x] 2026-11-06: Replay saved CPRAW through the unchanged portable V3 statistics
+      core and actual local simulator/CPV3 gateway/API/D1/administrator browser.
+      Revalidate all 602,315 reports; accept bounded 12x1s, 1x30s and 1x60s cases
+      with exact normalized-window and receipt checks. Preserve raw hashes,
+      original timing/loss evidence and explicit new controlled-test authority;
+      keep public field isolation and finite EOF. Broker/native TLS and hardware
+      remain outside scope. See [replay acceptance](../notes/v3-data-replay-acceptance-2026-11-06.md).
+
+- [x] 2026-11-06: Add an isolated local V3 simulated device with one-command
+      frontend/API startup, real CPV3 gateway/RPC/service binding and temporary D1.
+      Cover registration, policy preparation/publication, applied/failed ACK,
+      lease, exact statistics receipts, five scenarios, bounded offline queues,
+      retry backoff, reboot, local admin relogin and public-data isolation.
+      Seven real workerd/D1 tests and browser/mobile acceptance pass; Broker is
+      simulated and queues are session-only, with no native TLS or hardware claim.
+      See [simulator guide](../notes/v3-device-simulator.md).
+
 - [x] 2026-11-03: Fix PEAP send-button readiness (2026-11-03): preserve the legacy optional
       outer identity by defaulting an empty input to the username before USB
       encoding, keep the normalized firmware field nonempty, and show concrete

@@ -20,6 +20,16 @@ field views start empty. The frontend defaults to a visibly labelled simulation;
 switch to 现场观察 for the separate field-record flow.
 Manual entry needs the local operator token and a parking or elevator place.
 
+## V3 simulated-device debugging
+
+Run `npm run dev:simulator`, then open
+<http://127.0.0.1:5174/__simulator> for an independent local frontend, real API,
+CPV3 gateway and synthetic device. The panel controls activity/loss/offline/failure,
+opens a local administrator session and supports real policy/receipt debugging.
+No `.dev.vars` or existing device/database state is needed. See the
+[simulator guide](v3-device-simulator.md) for cadence options, workflow and the
+session-only queue/Broker/hardware boundaries.
+
 ## Administration
 
 Apply all current migrations and configure an independent random `ADMIN_TOKEN`
