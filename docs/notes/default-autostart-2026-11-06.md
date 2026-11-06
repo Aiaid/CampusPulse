@@ -1,7 +1,10 @@
 # Default saved V3 startup — 2026-11-06
 
-Status: implementation, targeted software verification and both S3 image builds
-passed. Release and actual saved-profile reboot remain separate gates.
+Status: committed, pushed and deployed. Waveshare completed the normal webpage
+save flow, real applied ACK, automatic grant and saved-profile restart. T-Energy
+applied the new continuous-operation budget; its subsequent upload/restart
+acceptance is still being recorded. Same-boot continuous renewal is a separate
+follow-up and is not established by the earlier restart test.
 This supersedes the earlier blanket restriction on saved PEAP in the
 [November 3 authentication repair](v3-usb-wifi-auth-2026-11-03.md).
 
@@ -67,8 +70,42 @@ also prevents preparation on expired or mismatched USB capabilities. Both board
 policy waiters follow actual capability expiry and conservative current-clock
 bounds instead of a fixed 180-request limit; late responses cannot activate an
 expired snapshot. Waiting and expiry are reported separately from generic run
-failure. T-Energy's recognized profile now receives its actual 128 KiB/day uplink
-ceiling, with incompatible new policies rejected before device delivery.
+failure. T-Energy preparation distinguishes the original 1 MiB storage /
+128 KiB uplink tier from firmware advertising the new 192 MiB logical-storage /
+8 MiB uplink tier. New policies use the matching tier; old immutable policies,
+ledger charges and historical receipts are retained. Logical storage accounting
+is not a measurement of physical Flash writes or endurance.
+
+Grant approval permits a concurrent lease heartbeat only when the exact startup
+revision, boot, capability digest, desired/applied source and immutable applied
+ACK remain unchanged. Policy, boot and revocation races still reject approval.
+Revocation retains its full control-version guard.
+
+## Production release and physical evidence
+
+The default setup release was committed as `884e715`, with later USB/runtime
+fixes in `3bb6f36`, `5e48c7d` and `773ced6`. Source `f3ede69` adds online-control
+interfaces, the precise grant guard and the compatible T-Energy budget tier,
+while preserving the separately published frontend/simulator source. Its direct
+production release applied additive migration 0021 and published:
+
+| Component | Cloudflare version |
+| --- | --- |
+| Main API and frontend | `4890317c-2992-4bc4-8e96-1c2db583fda0` |
+| Native MQTT gateway | `8d70441b-7809-4fe9-9ee2-a3d3742c68fa` |
+
+No historical collection records or legacy device queues were deleted. Existing
+production bindings, credentials and the exact simulator allowlist were retained.
+The direct release used targeted checks and a production build; this note does
+not claim a new completed hosted CI run.
+
+The [Waveshare acceptance record](waveshare-default-startup-acceptance-2026-11-06.md)
+separates the ordinary USB-free power restart from a later diagnostic USB reset.
+The USB-free boot registered and applied a policy, but USB was reconnected before
+it completed a full window. The subsequent saved-profile boot uploaded windows
+without host configuration or time commands. Neither is an all-day or arbitrary
+power-loss test. The newer continuous, same-boot runtime remains separately
+tracked.
 
 ## Verification boundary
 
@@ -77,6 +114,7 @@ unit/browser regressions, startup/NVS fault tests, clock verifier and executed
 mock-SDK bootstrap tests passed. Parser/UART and both board wait helpers have
 sanitizer coverage, including policies arriving after the old request-count
 limit, clock failure and cancellation. These are software results, not proof of
-real PEAP reboot, radio completeness, sustained daily capacity or arbitrary
-power-loss recovery. Hardware images and acceptance are recorded after actual
-build and device verification, with credentials/captures kept private.
+radio completeness, sustained daily capacity or arbitrary power-loss recovery.
+The bounded real PEAP restart evidence is recorded separately above. Hardware
+images and acceptance are recorded after actual build and device verification,
+with credentials/captures kept private.

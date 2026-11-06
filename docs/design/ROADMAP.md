@@ -33,9 +33,15 @@ publication/deployment is checked against the actual main workflow run.
       the matching real applied ACK. Retain temporary runs and explicit revoke.
       CA-verified PEAP retains full date checks/manual USB until independent
       pre-network trusted time is available; never silently weaken verification.
-      Match the generated T-Energy profile to its 128 KiB/day uplink ceiling,
+      Match generated T-Energy profiles to their advertised legacy or sustained
+      budget tier without rewriting old policies or resetting ledger usage,
       and block policy preparation on expired or mismatched USB capabilities.
       Verify host/browser/build coverage and separately validate real reboot.
+      Default setup and targeted fixes are committed/pushed and directly deployed;
+      Waveshare normal setup, automatic grant and saved restart passed bounded
+      acceptance. T-Energy applied its new sustained quota; subsequent upload and
+      restart acceptance remain pending. See the
+      [release and evidence record](../notes/default-autostart-2026-11-06.md).
 
 - [ ] Repair administrator V3 policy preparation after the real 2026-11-03
       Waveshare failure: recognize its fixed TF queue geometry and generate
