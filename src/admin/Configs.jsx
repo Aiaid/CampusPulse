@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import StartupGrant from './StartupGrant.jsx';
+import OnlineBinding from './OnlineBinding.jsx';
 import {configurationBlockReason} from './provisioning/setup-startup.js';
 import { ArrowClockwise, CheckCircle, PaperPlaneTilt } from '@phosphor-icons/react';
 import { Badge, Dialog, DirectoryMore, Empty, ErrorNotice, Field, KeyValues, Notice, PageHeader, Panel, Resource, fmtTime, useAdmin, useDevices, useMutation, useResource } from './shared.jsx';
@@ -26,7 +27,7 @@ export function V3Configuration({node,embedded=false,expectedBoot,onManualGrant,
  const requireCurrent=c=>{const reason=configurationBlockReason(c,node,expectedBoot);if(current.current!==c||reason)throw new Error(reason||'设备状态已刷新，请重新准备和校验策略。');};
  const requirePolicy=(c,p)=>{requireCurrent(c);if(p?.node_id!==node||p?.control?.activation?.boot_id!==c.capabilities.boot_id||!(Date.parse(p?.control?.activation?.expires_at)>Date.now()))throw new Error('策略已过期或启动标识已改变，请重新准备策略。');};
  const refresh=()=>{control.retry();details.retry();setDraft(null);setCheck(null);};
- return <><Resource resource={control}>{c=><>
+ return <>{!expectedBoot&&<OnlineBinding key={node} node={node} control={control.data} onChange={refresh}/>}<Resource resource={control}>{c=><>
   <Panel title="V3 能力与应用状态" action={<button className="cp-admin-button" onClick={refresh}><ArrowClockwise/>刷新设备状态</button>}>
    <KeyValues entries={[[ '当前状态',<Badge state={c.state}/> ],['设备能力来源','设备声明；不是硬件验收'],['能力登记',fmtTime(c.registered_at)],['能力有效截止',fmtTime(c.capabilities?.expires_at)],['固件生产者',c.capabilities?.producer_version],['期望 generation',c.desired?.policy.assignment_generation],['已应用 generation',c.applied_generation],['期望策略',c.desired?.policy.policy_id],['设备启动标识',c.capabilities?.boot_id],['期望不可用原因',c.desired_unavailable_reason||'无']]} />
    {c.acknowledgement&&<details><summary>设备 ACK 回执</summary><pre className="cp-admin-json">{JSON.stringify(c.acknowledgement,null,2)}</pre></details>}

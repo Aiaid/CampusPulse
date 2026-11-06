@@ -28,6 +28,15 @@ async function registerBoard(board:'waveshare'|'tenergy',change?:(caps:DeviceCap
 }
 const validatePolicy=(policy:DeviceConfigV3)=>client.call('/device-v3/validate','POST',{policy,expected_generation:0});
 describe('V3 administrator management',()=>{
+ it('prepares the explicitly declared sustained TE tier without changing legacy or Wave quotas',async()=>{
+  await registerBoard('tenergy',c=>{c.resources!.max_storage_write_bytes_per_day=201326592;});
+  const {policy}=await json(await prepare()),p=policy as DeviceConfigV3;
+  expect(p.resources.storage_write_bytes_per_day).toBe(201326592);
+  expect(p.custody.max_upload_bytes_per_day).toBe(8388608);
+  expect(await json(await validatePolicy(p))).toMatchObject({valid:true,issues:[]});
+  p.resources.storage_write_bytes_per_day++;
+  expect((await client.call('/device-v3/assignments','POST',{policy:p,expected_generation:0})).status).toBe(422);
+ });
  it.each(['waveshare','tenergy'] as const)('prepares and negotiates the actual %s queue geometry without fabricating an applied ACK',async board=>{
   const caps=await registerBoard(board),wave=board==='waveshare';
   const result=await json(await prepare()),p=result.policy as DeviceConfigV3;

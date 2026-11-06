@@ -36,6 +36,30 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); state.db.close(); });
 
 describe('explicit renewable startup authority', () => {
+  it('allows an initial lease heartbeat during approval without changing startup authority',async()=>{
+    await prepare();const ack=await v3Ack(policy),batch=env.DB.batch.bind(env.DB);let raced=false;
+    vi.spyOn(env.DB,'batch').mockImplementation(async statements=>{
+      if(!raced){raced=true;await json(await device('/lease',{protocol:'campuspulse/3',
+        boot_id:policy.control.activation.boot_id,policy_id:policy.policy_id,policy_sha256:ack.policy_sha256,
+        assignment_generation:1,contact_seq:1,uptime_ms:2000}));}
+      return batch(statements);
+    });
+    expect(await json(await grant(approval()))).toMatchObject({startup_grant:{enabled:1,revision:1,source_generation:1}});
+    expect(state.db.prepare('SELECT contact_seq FROM device_statistics_authorizations_v3 WHERE generation=1').get()?.contact_seq).toBe(1);
+  });
+  it.each(['new_boot','new_policy','revoke'] as const)('still rejects approval when %s changes authority during the write',async kind=>{
+    await prepare();const batch=env.DB.batch.bind(env.DB);let raced=false;
+    vi.spyOn(env.DB,'batch').mockImplementation(async statements=>{
+      if(!raced){raced=true;
+        if(kind==='new_boot')await reboot();
+        else if(kind==='new_policy')await json(await assign({...policy,policy_id:'synthetic-competing-policy',assignment_generation:2}));
+        else await json(await grant({expected_revision:0,enabled:false}));
+      }
+      return batch(statements);
+    });
+    await json(await grant(approval()),409);
+    expect(state.db.prepare('SELECT COUNT(*) n FROM device_startup_grants_v3 WHERE enabled=1').get()?.n).toBe(0);
+  });
   it('never converts existing manual assignments to automatic authority by default', async () => {
     await prepare(); await reboot();
     expect(await json(await config())).toMatchObject({ config: null, reason: 'boot_changed' });

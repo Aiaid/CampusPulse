@@ -1,4 +1,5 @@
 const DAY=86400000;
+const RULESETS=['unclassified-v1','cp-v3-vehicle-candidates/1'];
 /** UI admission uses actual inspect/GET values. The server revalidates the full
  * policy, placement, capability, ACK and revision in its atomic write. */
 export function startupGrantOffer(control,response,now=Date.now()) {
@@ -9,7 +10,7 @@ export function startupGrantOffer(control,response,now=Date.now()) {
  if(!Number.isSafeInteger(generation)||generation<1||control.applied_generation!==generation||ack?.state!=='applied'||ack.assignment_generation!==generation||ack.durability!=='committed'||ack.evidence!=='device_ack')return denied('先发布策略，并等待本设备明确 applied ACK；当前尚不能批准自动启动。');
  if(control.desired_unavailable_reason||ack.boot_id!==control.capabilities?.boot_id||p.control?.activation?.boot_id!==control.capabilities?.boot_id||!(Date.parse(control.capabilities?.expires_at)>now)||!(Date.parse(p.control?.activation?.expires_at)>now))return denied('当前启动、能力或策略已不可用，请刷新并取得新策略 ACK。');
  const u=p.uplink,s=p.collection?.summary,e=p.evidence;
- if(!p.collection?.enabled||!s?.enabled||!Number.isSafeInteger(s.window_ms)||s.window_ms<=0||!p.temporal||e?.mode!=='statistics'||e.schema!=='window-statistics/1'||e.extractor_version!=='cp-v3-stats/1'||e.ruleset_version!=='unclassified-v1'||u?.enabled!==true||u.transport!=='mqtt_tls'||!Array.isArray(u.streams)||!u.streams.includes('window_statistics')||!u.streams.includes('node_status')||u.streams.some(v=>!['window_statistics','candidate_events','node_status'].includes(v))||u.raw_sample?.mode!=='off'||u.archive?.mode!=='off'||!['off','tf_cpraw'].includes(p.local_raw?.mode)||p.local_queue?.mode!=='durable')return denied('只有当前已确认的原生 MQTT 小统计策略可以作为自动启动来源。');
+ if(!p.collection?.enabled||!s?.enabled||!Number.isSafeInteger(s.window_ms)||s.window_ms<=0||!p.temporal||e?.mode!=='statistics'||e.schema!=='window-statistics/1'||e.extractor_version!=='cp-v3-stats/1'||!RULESETS.includes(e.ruleset_version)||u?.enabled!==true||u.transport!=='mqtt_tls'||!Array.isArray(u.streams)||!u.streams.includes('window_statistics')||!u.streams.includes('node_status')||u.streams.some(v=>!['window_statistics','candidate_events','node_status'].includes(v))||u.raw_sample?.mode!=='off'||u.archive?.mode!=='off'||!['off','tf_cpraw'].includes(p.local_raw?.mode)||p.local_queue?.mode!=='durable')return denied('只有当前已确认的原生 MQTT 小统计策略可以作为自动启动来源。');
  const grace=Date.parse(p.custody?.accept_until)-Date.parse(p.control.activation.expires_at);
  if(!Number.isSafeInteger(grace)||grace<0||Math.max(60000,s.window_ms*2)>1800000)return denied('来源策略的期限或接收宽限无效，不能生成自动启动授权。');
  return {eligible:true,revision:response.startup_grant?.revision??0,source_generation:generation,policy_ttl_ms:1800000,accept_grace_ms:Math.min(grace,DAY)};

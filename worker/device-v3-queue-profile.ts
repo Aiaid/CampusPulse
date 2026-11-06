@@ -14,6 +14,15 @@ export function isTEnergySmallQueue(caps: DeviceCapabilitiesV3, medium: QueueMed
   medium.power_loss_recovery && medium.usable_bytes === 3072 && medium.max_items === 3 && caps.uplink?.max_body_bytes === 1024;
 }
 
+/** Explicit compatibility tiers for the two shipped TE budget declarations.
+ * A larger claim alone never upgrades legacy geometry or a different producer. */
+export function tEnergySmallBudgets(caps: DeviceCapabilitiesV3, medium: QueueMedium) {
+ if(!isTEnergySmallQueue(caps,medium))return null;
+ const sustained=caps.resources?.max_storage_write_bytes_per_day===201326592;
+ return {storage:sustained?201326592:Math.min(1048576,caps.resources?.max_storage_write_bytes_per_day??0),
+  uplink:sustained?8388608:131072};
+}
+
 /** New management policies only; retained assignments keep their original identity. */
 export function fixedV3QueueProfileIssues(p: DeviceConfigV3, caps: DeviceCapabilitiesV3): V3NegotiationResult['issues'] {
  const q=p.local_queue;
@@ -22,6 +31,7 @@ export function fixedV3QueueProfileIssues(p: DeviceConfigV3, caps: DeviceCapabil
  const issues:V3NegotiationResult['issues']=[];
  const require=(ok:boolean,path:string)=>{if(!ok)issues.push({code:'unsupported_capability',path});};
  if(medium && isTEnergySmallQueue(caps,medium)) {
+  const budget=tEnergySmallBudgets(caps,medium)!;
   require(p.uplink.enabled && p.uplink.max_body_bytes === 1024,'uplink.max_body_bytes');
   require(q.max_bytes === 3072,'local_queue.max_bytes');
   require(q.max_items === 3,'local_queue.max_items');
@@ -33,9 +43,9 @@ export function fixedV3QueueProfileIssues(p: DeviceConfigV3, caps: DeviceCapabil
    require(reserve?.bytes === 1024,`local_queue.stream_reserves.${stream}.bytes`);
    require(reserve?.items === 1,`local_queue.stream_reserves.${stream}.items`);
   }
-  require(p.custody.max_upload_bytes_per_day <= 131072,'custody.max_upload_bytes_per_day');
+  require(p.custody.max_upload_bytes_per_day <= budget.uplink,'custody.max_upload_bytes_per_day');
   require(p.resources.working_bytes <= 4194304,'resources.working_bytes');
-  require(p.resources.storage_write_bytes_per_day <= 1048576,'resources.storage_write_bytes_per_day');
+  require(p.resources.storage_write_bytes_per_day <= budget.storage,'resources.storage_write_bytes_per_day');
   return issues;
  }
  if(q.medium !== 'tf_journal') return [];

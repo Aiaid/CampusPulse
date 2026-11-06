@@ -3,7 +3,7 @@ import { IngestError, parseIngestJson } from './strict-json';
 import { json, readBytes } from './http';
 import { capabilityDigestV3, freezeDeviceConfigV3, negotiateDeviceConfigV3, validateDeviceCapabilitiesV3, type DeviceConfigV3 } from './device-v3-config';
 import { assertV3StatisticsPolicy } from './device-v3-statistics-policy';
-import { fixedV3QueueProfileIssues, isTEnergySmallQueue, isWaveshareSmallQueue } from './device-v3-queue-profile';
+import { fixedV3QueueProfileIssues, isTEnergySmallQueue, isWaveshareSmallQueue, tEnergySmallBudgets } from './device-v3-queue-profile';
 
 function invalid(code: string, message: string): never { throw new IngestError(422, code, message); }
 const body = async (request: Request) => {
@@ -65,6 +65,7 @@ export async function handleAdminV3(request: Request, env: Env, route: string): 
   invalid('v3_policy_incompatible','The registered device does not support the native MQTT small-statistics profile.');
  const wave=isWaveshareSmallQueue(c,medium);
  const te=isTEnergySmallQueue(c,medium);
+ const teBudget=te?tEnergySmallBudgets(c,medium):null;
  if(c.producer_version === 'cp-v3-small/1' && medium.medium === 'tf_journal' && !wave)
   invalid('v3_policy_incompatible','The registered TF queue geometry has no supported management profile.');
  const size=Math.min(c.uplink.max_body_bytes,2048), window=c.summary.max_window_ms>=60000&&c.summary.max_bins>=12?60000:30000, generation=state.generation+1;
@@ -76,8 +77,8 @@ export async function handleAdminV3(request: Request, env: Env, route: string): 
  uplink:{enabled:true,transport:'mqtt_tls',streams:['window_statistics','node_status'],max_batch_items:1,max_body_bytes:size,retry:{min_delay_ms:1000,max_delay_ms:60000,max_attempts:10},raw_sample:{mode:'off'},archive:{mode:'off'}},
  local_queue:{mode:'durable',medium:medium.medium,max_bytes:medium.usable_bytes,max_items:medium.max_items,control_reserve_bytes:wave?4096:size,control_reserve_items:wave?2:1,
   stream_reserves:[{stream:'window_statistics',bytes:wave?8192:size,items:wave?4:1},{stream:'node_status',bytes:wave?4096:size,items:wave?2:1}],high_water_percent:80,full_behavior:'pause_collection',recovery:'exact_frozen_batches'},
- resources:{working_bytes:c.resources.max_working_bytes,storage_write_bytes_per_day:Math.min(8388608,c.resources.max_storage_write_bytes_per_day)},
- custody:{dataset:dataset as 'field'|'controlled_test'|'demo',purpose:dataset==='field'?'site_observation':dataset==='demo'?'demonstration':'controlled_test',placement_id:placement,association_scope:'window',source_retention_hours:24,derived_retention_hours:24,accept_until:new Date(now+86400000).toISOString(),max_upload_bytes_per_day:te?131072:8388608},
+ resources:{working_bytes:c.resources.max_working_bytes,storage_write_bytes_per_day:teBudget?teBudget.storage:Math.min(8388608,c.resources.max_storage_write_bytes_per_day)},
+ custody:{dataset:dataset as 'field'|'controlled_test'|'demo',purpose:dataset==='field'?'site_observation':dataset==='demo'?'demonstration':'controlled_test',placement_id:placement,association_scope:'window',source_retention_hours:24,derived_retention_hours:24,accept_until:new Date(now+86400000).toISOString(),max_upload_bytes_per_day:teBudget?teBudget.uplink:8388608},
  control:{capability_sha256:state.capability_sha256,activation:{boot_id:state.boot_id,boundary:'closed_window_and_segment',after_window_seq:0,after_segment_seq:0,not_before:new Date(now).toISOString(),expires_at:c.expires_at},lease:{duration_ms:120000,on_collection_expiry:'pause',on_raw_expiry:'stop_recording',on_uplink_expiry:'drain_frozen_until_accept_until'}}};
  return json(await validate(env,p,state.generation));
 }

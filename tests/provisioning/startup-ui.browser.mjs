@@ -33,6 +33,8 @@ try {
  Object.defineProperty(navigator,'serial',{value:{requestPort:async()=>port},configurable:true});
  window.saveOnly=()=>serialEmit('V3 STARTUP SAVED\\n');window.applyOnly=()=>{applied=true;};
  const api=async(path,options={})=>{
+  if(path==='/places'&&options.method===undefined)return {places:[]};
+  if(path.endsWith('/transitions')&&options.method===undefined)return {protocol:'campuspulse/3',node_id:node,transition:null,transitions:[]};
   if(path.endsWith('/startup-grant')){if(options.method==='POST'){const b=options.body;window.syntheticPosts.push(b);if(window.failNextGrant){window.failNextGrant=false;grant={node_id:node,revision:5,enabled:0,source_generation:null,grant_expires_at_ms:null,policy_ttl_ms:null,accept_grace_ms:null};const error=new Error('Synthetic revision conflict');error.status=409;throw error;}grant={node_id:node,revision:b.expected_revision+1,enabled:b.enabled?1:0,source_generation:b.enabled?b.source_generation:null,grant_expires_at_ms:b.enabled?Date.parse(b.grant_expires_at):null,policy_ttl_ms:b.enabled?b.policy_ttl_ms:null,accept_grace_ms:b.enabled?b.accept_grace_ms:null};return {protocol:'campuspulse/3',node_id:node,startup_grant:{...grant},applied:false,requires_device_ack:true};}return {protocol:'campuspulse/3',node_id:node,startup_grant:grant?{...grant}:null,service_enabled:true,applied:false};}
   if(path==='/device-v3/nodes/'+node){const c=structuredClone(control());window.capabilityDelay=Math.max(0,window.capabilityDelay-1);return c;}
   if(path==='/device-v3/prepare'){window.syntheticPrepares++;return {valid:true,expected_generation:assigned?policy.assignment_generation:0,policy:structuredClone(policy)};}

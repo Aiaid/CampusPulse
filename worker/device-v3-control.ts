@@ -11,18 +11,19 @@ import { assertV3StatisticsPolicy, supportsV3StatisticsPolicy, v3StatisticsEnabl
   type DeviceV3StatisticsEnv, type V3StatisticsPolicy } from './device-v3-statistics-policy';
 import { readAdminDeviceV3Evidence } from './device-v3-admin-evidence';
 import { fixedV3QueueProfileIssues } from './device-v3-queue-profile';
+import { manageTransitions, onlineTransition, readyTransition, transitionAck, transitionAuthority } from './device-v3-transitions';
 
 export type DeviceV3ControlEnv = DeviceV3StatisticsEnv & { DEVICE_V3_STARTUP_ENABLED?: string };
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const HASH = /^[0-9a-f]{64}$/;
 const NOW_SQL = "(CAST(strftime('%s','now') AS INTEGER)*1000+CAST(substr(strftime('%f','now'),4,3) AS INTEGER))";
-interface Control {
+export interface Control {
   node_id: string; boot_id: string; registration_seq: number; uptime_ms: number; registration_sha256: string;
   capability_sha256: string; registered_at: string; state_version: number;
   desired_generation: number | null; applied_generation: number | null; apply_seq: number;
 }
-interface Assignment {
+export interface Assignment {
   node_id: string; generation: number; policy_id: string; revision: number; boot_id: string; capability_sha256: string;
   policy_sha256: string; envelope_json: string; placement_id: string | null; not_before_ms: number; expires_at_ms: number; assigned_at: string;
 }
@@ -36,11 +37,12 @@ const startupGrant = (env: Env, node: string) => env.DB.prepare(`SELECT g.* FROM
   JOIN device_startup_grants_v3 g ON g.node_id=s.node_id AND g.revision=s.revision WHERE s.node_id=?`).bind(node).first<StartupGrant>();
 const startupVersion = (node: string, revision: number): AuthAssertion => ({ sql: 'COALESCE((SELECT revision FROM device_startup_state_v3 WHERE node_id=?),0)=?', bindings: [node, revision] });
 function startupAuthority(env: DeviceV3ControlEnv, node: string, generation: number): AuthAssertion {
-  return { sql: `NOT EXISTS(SELECT 1 FROM device_startup_assignments_v3 WHERE node_id=? AND generation=?) OR
+  const transition = transitionAuthority(node, generation);
+  return { sql: `(NOT EXISTS(SELECT 1 FROM device_startup_assignments_v3 WHERE node_id=? AND generation=?) OR
     (?='true' AND EXISTS(SELECT 1 FROM device_startup_assignments_v3 a JOIN device_startup_state_v3 s ON s.node_id=a.node_id AND s.revision=a.grant_revision
       JOIN device_startup_grants_v3 g ON g.node_id=s.node_id AND g.revision=s.revision
-      WHERE a.node_id=? AND a.generation=? AND g.enabled=1 AND g.grant_expires_at_ms>${NOW_SQL}))`,
-    bindings: [node, generation, env.DEVICE_V3_STARTUP_ENABLED ?? '', node, generation] };
+      WHERE a.node_id=? AND a.generation=? AND g.enabled=1 AND g.grant_expires_at_ms>${NOW_SQL}))) AND (${transition.sql})`,
+    bindings: [node, generation, env.DEVICE_V3_STARTUP_ENABLED ?? '', node, generation, ...transition.bindings] };
 }
 function conflict(code = 'v3_control_conflict'): never { throw new IngestError(409, code, 'Control state changed or conflicts with immutable evidence. Refresh before retrying.'); }
 function bad(code: string): never { throw new IngestError(422, code, 'The requested v3 control operation is not supported or compatible.'); }
@@ -59,9 +61,9 @@ function assertControlUplink(p: DeviceConfigV3, env: DeviceV3ControlEnv, produce
   if (p.evidence.mode === 'statistics') assertV3StatisticsPolicy(p, env, producer);
   else assertV3IngestPolicy(p, env, producer);
 }
-function endStatisticsSpans(env: Env, node: string): D1PreparedStatement[] {
-  return [env.DB.prepare(`UPDATE device_statistics_lease_spans_v3 SET end_ms=MAX(start_ms,${NOW_SQL}) WHERE node_id=? AND end_ms>${NOW_SQL}`).bind(node),
-    env.DB.prepare(`UPDATE device_statistics_authorizations_v3 SET lease_until_ms=${NOW_SQL},state_version=state_version+1 WHERE node_id=? AND lease_until_ms>${NOW_SQL}`).bind(node)];
+function endStatisticsSpans(env: Env, node: string, cutoff: AuthAssertion = { sql: NOW_SQL, bindings: [] }): D1PreparedStatement[] {
+  return [env.DB.prepare(`UPDATE device_statistics_lease_spans_v3 SET end_ms=MAX(start_ms,${cutoff.sql}) WHERE node_id=? AND end_ms>${cutoff.sql}`).bind(...cutoff.bindings, node, ...cutoff.bindings),
+    env.DB.prepare(`UPDATE device_statistics_authorizations_v3 SET lease_until_ms=${cutoff.sql},state_version=state_version+1 WHERE node_id=? AND lease_until_ms>${cutoff.sql}`).bind(...cutoff.bindings, node, ...cutoff.bindings)];
 }
 function leaseDeadline(p: V3StatisticsPolicy, capabilityExpires: number): AuthAssertion {
   return { sql: `MIN(${NOW_SQL}+?,?,?,COALESCE((SELECT COALESCE(c.valid_until_ms,p.valid_until_ms,9223372036854775807)
@@ -203,7 +205,9 @@ async function manageStartupGrant(request: Request, env: DeviceV3ControlEnv, nod
   let row = revokedStartupGrant(node, expected + 1);
   const old = await current(env, node), guards: AuthAssertion[] = [startupVersion(node, expected)], finalGuards: AuthAssertion[] = [];
   if (!old) conflict('v3_current_assignment_required');
-  guards.push(version(node, old));
+  // Approval pins authority below, not lease/contact bookkeeping. The first
+  // lease can legitimately advance state_version while approval is in flight.
+  if (!body.enabled) guards.push(version(node, old));
   if (body.enabled) {
     if (env.DEVICE_V3_STARTUP_ENABLED !== 'true') bad('v3_startup_disabled');
     const sourceGeneration = integer(body.source_generation, 'startup_grant.source_generation', 1);
@@ -223,6 +227,12 @@ async function manageStartupGrant(request: Request, env: DeviceV3ControlEnv, nod
     row = { node_id: node, revision: expected + 1, enabled: 1, source_generation: sourceGeneration, source_policy_sha256: source.policy_sha256,
       grant_expires_at_ms: expiry, policy_ttl_ms: ttl, accept_grace_ms: grace, created_at: new Date(now).toISOString() };
     finalGuards.push(enabled(node), activePlacement(node, p.custody.placement_id),
+      { sql: `EXISTS(SELECT 1 FROM device_control_v3 c JOIN device_acknowledgements_v3 a
+          ON a.node_id=c.node_id AND a.generation=c.applied_generation
+          WHERE c.node_id=? AND c.boot_id=? AND c.capability_sha256=?
+          AND c.desired_generation=? AND c.applied_generation=? AND a.body_sha256=?
+          AND json_extract(a.acknowledgement_json,'$.state')='applied')`,
+        bindings: [node, old.boot_id, old.capability_sha256, sourceGeneration, sourceGeneration, ack.body_sha256] },
       { sql: `?>${NOW_SQL} AND ?<=${NOW_SQL} AND MIN(?,?)>${NOW_SQL}`,
         bindings: [expiry, source.not_before_ms, source.expires_at_ms, Date.parse(caps.expires_at)] });
     guards.push(...finalGuards);
@@ -234,8 +244,8 @@ async function manageStartupGrant(request: Request, env: DeviceV3ControlEnv, nod
       .bind(row.enabled ? 'device_v3.startup_approve' : 'device_v3.startup_revoke', node,
         JSON.stringify({ revision: row.revision, source_generation: row.source_generation, grant_expires_at_ms: row.grant_expires_at_ms }), row.created_at),
   ], [startupVersion(node, row.revision), ...finalGuards,
-    { sql: 'EXISTS(SELECT 1 FROM device_control_v3 WHERE node_id=? AND state_version=? AND boot_id=? AND desired_generation IS ?)',
-      bindings: [node, old.state_version + 1, old.boot_id, old.desired_generation] }]);
+    ...(!body.enabled ? [{ sql: 'EXISTS(SELECT 1 FROM device_control_v3 WHERE node_id=? AND state_version=? AND boot_id=? AND desired_generation IS ?)',
+      bindings: [node, old.state_version + 1, old.boot_id, old.desired_generation] }] : [])]);
   return json({ protocol: 'campuspulse/3', node_id: node, startup_grant: row, applied: false, requires_device_ack: true });
 }
 
@@ -380,11 +390,13 @@ async function getConfig(request: Request, env: DeviceV3ControlEnv, node: string
   const row = old.desired_generation === null ? null : await assignment(env, node, old.desired_generation);
   let config: FrozenDeviceConfigV3 | null = null, reason: string | null = 'unassigned';
   if (row) { config = await trustedEnvelope(row); reason = await unavailableReason(env, row, old, now); if (reason) config = null; }
+  const transition = await onlineTransition(env, old, transitionContext);
   // Recheck the read snapshot and principal after asynchronous integrity checks.
   await assertAuthorized(env, authorization);
   if (!await check(env, version(node, old))) conflict();
   return json({ ...common, config, reason, applied_generation: old.applied_generation,
-    activation_not_before: config?.policy.control.activation.not_before ?? null });
+    activation_not_before: config?.policy.control.activation.not_before ?? null,
+    ...(transition ? { online_transition: transition } : {}) });
 }
 
 function boundary(value: unknown, path: string) {
@@ -476,6 +488,8 @@ async function acknowledge(request: Request, env: DeviceV3ControlEnv, node: stri
   const receivedAt = new Date().toISOString(), ack = { ...body, node_id: node,
     ...(frozen.policy.evidence.mode === 'statistics' ? { body_sha256: hash } : {}) };
   const stored: AckRow = { body_sha256: hash, acknowledgement_json: JSON.stringify(ack), received_at: receivedAt };
+  const transition = await transitionAck(env, node, row, state, transitionContext);
+  checks.push(...transition.checks); finalChecks.push(...transition.finalChecks);
   try {
     await atomic(env, authorization, checks, [
       ...statisticsWrites,
@@ -488,6 +502,7 @@ async function acknowledge(request: Request, env: DeviceV3ControlEnv, node: stri
           VALUES(?,?,?,?,?,?,?,?)`).bind(node, generation, boot, seq, state, hash, stored.acknowledgement_json, receivedAt),
       env.DB.prepare(`UPDATE device_control_v3 SET apply_seq=?,state_version=state_version+1,
         applied_generation=CASE WHEN ?='applied' THEN ? ELSE applied_generation END WHERE node_id=?`).bind(seq, state, generation, node),
+      ...transition.writes,
     ], finalChecks);
   } catch (error) {
     if (error instanceof IngestError && error.status === 409) {
@@ -504,11 +519,11 @@ interface LeaseState {
   state_version: number; span_count: number; body_sha256: string | null; receipt_json: string | null;
 }
 const leaseState = (env: Env, node: string, generation: number) => env.DB.prepare('SELECT * FROM device_statistics_authorizations_v3 WHERE node_id=? AND generation=?').bind(node, generation).first<LeaseState>();
-async function renewStatisticsLease(request: Request, env: DeviceV3ControlEnv, node: string, authorization: AuthAssertion) {
+async function renewStatisticsLease(request: Request, env: DeviceV3ControlEnv, node: string, authorization: AuthAssertion, parsed?: Awaited<ReturnType<typeof readBody>>) {
   if (!v3StatisticsEnabled(env)) throw new IngestError(503, 'v3_statistics_disabled', 'Statistics service is disabled.');
   if (new URL(request.url).search) bad('v3_invalid_lease');
   if (new URL(request.url).protocol !== 'https:') throw new IngestError(403, 'https_required', 'HTTPS is required.');
-  const { value, hash } = await readBody(request);
+  const { value, hash } = parsed ?? await readBody(request);
   const b = object(value, 'lease', ['protocol', 'boot_id', 'policy_id', 'policy_sha256', 'assignment_generation', 'contact_seq', 'uptime_ms']);
   choice(b.protocol, 'lease.protocol', ['campuspulse/3']);
   const boot = string(b.boot_id, 'lease.boot_id', UUID), id = string(b.policy_id, 'lease.policy_id', ID), digest = string(b.policy_sha256, 'lease.policy_sha256', HASH);
@@ -593,16 +608,17 @@ export async function handleDeviceV3Control(request: Request, env: DeviceV3Contr
   const adminNode = /^\/api\/v1\/admin\/device-v3\/nodes\/([a-z0-9][a-z0-9_-]{0,63})$/.exec(path);
   const adminEvidence = /^\/api\/v1\/admin\/device-v3\/nodes\/([a-z0-9][a-z0-9_-]{0,63})\/evidence$/.exec(path);
   const adminStartup = /^\/api\/v1\/admin\/device-v3\/nodes\/([a-z0-9][a-z0-9_-]{0,63})\/startup-grant$/.exec(path);
-  if (!devicePath && !adminAssignment && !adminNode && !adminEvidence && !adminStartup) return null;
+  const adminTransition = /^\/api\/v1\/admin\/device-v3\/nodes\/([a-z0-9][a-z0-9_-]{0,63})\/transitions(?:\/([0-9a-f-]{36})\/cancel)?$/.exec(path);
+  if (!devicePath && !adminAssignment && !adminNode && !adminEvidence && !adminStartup && !adminTransition) return null;
   try {
     if (!adminEvidence && env.DEVICE_V3_CONTROL_ENABLED !== 'true') throw new IngestError(503, 'v3_control_disabled', 'Experimental v3 control is disabled.');
     const receiptOnly = request.headers.get('X-Receipt-Only');
     if (receiptOnly !== null && (receiptOnly !== '1' || !['/api/v3/device/config/ack', '/api/v3/device/lease'].includes(path))) {
       throw new IngestError(422, 'v3_invalid_receipt_only', 'Receipt-only mode is valid only for exact ACK or lease recovery.');
     }
-    const method = adminNode || adminEvidence || (adminStartup && request.method === 'GET') || path === '/api/v3/device/config' ? 'GET' : 'POST';
+    const method = adminNode || adminEvidence || ((adminStartup || adminTransition && !adminTransition[2]) && request.method === 'GET') || path === '/api/v3/device/config' ? 'GET' : 'POST';
     if (request.method !== method) throw new IngestError(405, 'method_not_allowed', `Use ${method}.`);
-    if (adminAssignment || adminNode || adminEvidence || adminStartup) {
+    if (adminAssignment || adminNode || adminEvidence || adminStartup || adminTransition) {
       const secret = adminSecret(env); adminOrigin(request, method !== 'GET');
       const session = await requireAdminSession(request, env, secret), initial = sessionAssertion(session);
       // sessionAssertion also binds the account/auth version. Its JS cutoff is
@@ -610,7 +626,8 @@ export async function handleDeviceV3Control(request: Request, env: DeviceV3Contr
       // the database clock in every final authorization check and transaction.
       const authorization = { sql: `(${initial.sql}) AND EXISTS(SELECT 1 FROM admin_sessions WHERE token_sha256=? AND expires_at_ms>${NOW_SQL})`,
         bindings: [...initial.bindings, session.hash] };
-      return adminStartup ? await manageStartupGrant(request, env, adminStartup[1], authorization) :
+      return adminTransition ? await manageTransitions(request, env, adminTransition[1], authorization, transitionContext, adminTransition[2]) :
+        adminStartup ? await manageStartupGrant(request, env, adminStartup[1], authorization) :
         adminEvidence ? await readAdminDeviceV3Evidence(request, env, adminEvidence[1], authorization) :
         adminNode ? await inspect(env, adminNode[1], authorization) : await assign(request, env, authorization);
     }
@@ -649,9 +666,21 @@ export async function handleAuthenticatedDeviceV3Control(request: Request, env: 
     await assertAuthorized(env, authorization);
     if (path.endsWith('/capabilities')) return await register(request, env, node, authorization);
     if (path.endsWith('/ack')) return await acknowledge(request, env, node, authorization);
-    if (path.endsWith('/lease')) return await renewStatisticsLease(request, env, node, authorization);
+    if (path.endsWith('/lease')) {
+      // Strict bounded parse, keeping ordinary lease semantics and exact bytes.
+      const parsed = await readBody(request), { value } = parsed;
+      if (value && typeof value === 'object' && !Array.isArray(value) && 'schema' in value && value.schema === 'scope-transition-ready/1') {
+        return await readyTransition(request, env, node, authorization, transitionContext, parsed);
+      }
+      return await renewStatisticsLease(request, env, node, authorization, parsed);
+    }
     return await getConfig(request, env, node, authorization);
   } catch (error) {
     return controlError(error);
   }
 }
+
+const transitionContext = { current, assignment, acknowledgement, startupGrant, startupVersion, startupAuthority,
+  enabled, version, activePlacement, endStatisticsSpans, check, assertAuthorized, atomic, readBody,
+  trustedEnvelope, trustedCapabilities, unavailableReason, writeStartupGrant, revokedStartupGrant };
+export type TransitionContext = typeof transitionContext;

@@ -79,6 +79,7 @@ export interface DeviceConfigV3 {
 export interface DeviceCapabilitiesV3 {
   schema: typeof V3_CAPABILITY_SCHEMA; capability_id: string; node_id: string; boot_id: string;
   producer_version: string; policy_schemas: string[]; issued_at: string; expires_at: string;
+  online_control?: { schema: 'online-control/1'; scope_rebind: boolean; capability_renewal: boolean } | null;
   scanner?: { modes: ScanMode[]; phys: Phy[]; duplicate_filter: boolean[];
     min_interval_units: number; max_interval_units: number } | null;
   summary?: { max_addresses: number; max_bins: number; max_window_ms: number } | null;
@@ -338,7 +339,7 @@ export function validateDeviceConfigV3(value: unknown): DeviceConfigV3 {
 
 export function validateDeviceCapabilitiesV3(value: unknown): DeviceCapabilitiesV3 {
   const o = obj(value, 'capabilities', ['schema', 'capability_id', 'node_id', 'boot_id', 'producer_version', 'policy_schemas', 'issued_at', 'expires_at'],
-    ['scanner', 'summary', 'features', 'statistics', 'temporal', 'local_raw', 'uplink', 'queue', 'resources']);
+    ['scanner', 'summary', 'features', 'statistics', 'temporal', 'local_raw', 'uplink', 'queue', 'resources', 'online_control']);
   const result: DeviceCapabilitiesV3 = {
     schema: pick(o.schema, 'capabilities.schema', [V3_CAPABILITY_SCHEMA]), capability_id: str(o.capability_id, 'capabilities.capability_id', ID),
     node_id: str(o.node_id, 'capabilities.node_id', ID), boot_id: str(o.boot_id, 'capabilities.boot_id', UUID),
@@ -346,6 +347,15 @@ export function validateDeviceCapabilitiesV3(value: unknown): DeviceCapabilities
     issued_at: utc(o.issued_at, 'capabilities.issued_at'), expires_at: utc(o.expires_at, 'capabilities.expires_at'),
   };
   if (Date.parse(result.issued_at) >= Date.parse(result.expires_at)) fail('capabilities.expires_at');
+  if (Object.hasOwn(o, 'online_control')) {
+    if (o.online_control === null) result.online_control = null;
+    else {
+      const c = obj(o.online_control, 'capabilities.online_control', ['schema', 'scope_rebind', 'capability_renewal']);
+      result.online_control = { schema: pick(c.schema, 'capabilities.online_control.schema', ['online-control/1']),
+        scope_rebind: bool(c.scope_rebind, 'capabilities.online_control.scope_rebind'),
+        capability_renewal: bool(c.capability_renewal, 'capabilities.online_control.capability_renewal') };
+    }
+  }
   if (Object.hasOwn(o, 'scanner')) {
     if (o.scanner === null) result.scanner = null;
     else {

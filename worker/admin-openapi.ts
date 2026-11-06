@@ -85,6 +85,22 @@ export function createAdminOpenApi() {
       },
       '/api/v1/admin/device-v3/prepare': { post: operation('prepareAdminV3Policy', 'Prepare a capability-bound native MQTT small-statistics policy', 'post', entity({node_id:id,placement_id:id,dataset:{type:'string',enum:['controlled_test','field','demo']}},['node_id','placement_id']), 'Read-only preparation from the actual registered capability snapshot. Default controlled_test, unclassified-v1, raw off. Returns valid, issues, policy, policy_sha256, expected_generation, applied:false and requires_device_ack:true. No assignment is created.') },
       '/api/v1/admin/device-v3/validate': { post: operation('validateAdminV3Policy', 'Validate V3 generation, capability, placement and policy', 'post', entity({policy:object,expected_generation:{type:'integer',minimum:0}}), 'Read-only capability negotiation. The assignment endpoint independently repeats all compatibility and transactional authorization checks. Compatible is never an applied ACK.') },
+      '/api/v1/admin/device-v3/nodes/{id}/transitions': {
+        parameters: [pathId],
+        get: operation('getAdminV3Transitions', 'Read the latest bounded online scope transition and retained history', 'get', undefined,
+          'Returns protocol, node_id, transition (latest or null), and up to 64 transitions. State distinguishes pending, assigned, applied, failed, cancelled, expired and conflicted. An assigned policy is not a device ACK.'),
+        post: operation('createAdminV3Transition', 'Approve one bounded same-boot scope transition', 'post', entity({
+          request_id: { type: 'string', format: 'uuid' }, expected_boot_id: { type: 'string', format: 'uuid' },
+          expected_capability_sha256: { type: 'string', pattern: '^[0-9a-f]{64}$' }, expected_generation: integer, expected_startup_revision: integer,
+          target_place_id: id, target_dataset: { type: 'string', enum: ['field','controlled_test','demo'] }, target_ruleset: string,
+          migrate_startup: { type: 'boolean', const: true },
+        }), 'Requires a real applied normal MQTT statistics source, declared online_control.scope_rebind, and an enabled exact startup approval. Creates intent only, expiring within five minutes. Device readiness closes the old placement and span atomically; only its committed applied ACK migrates startup approval, preserving expiry, TTL and grace. Exact request_id/body retry returns 200; first creation returns 201.', '201'),
+      },
+      '/api/v1/admin/device-v3/nodes/{id}/transitions/{transition_id}/cancel': {
+        parameters: [pathId, { name: 'transition_id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        post: operation('cancelAdminV3Transition', 'Cancel an unconsumed pending online scope intent', 'post', entity({}),
+          'Pending-only compare-and-swap. Once Ready has committed an assignment, cancellation returns 409. Cancellation preserves the old placement, lease, grant and historical evidence.'),
+      },
       '/api/v1/admin/settings': {
         get: operation('getAdminSettings', 'Read runtime settings and revision', 'get'),
         put: operation('updateAdminSettings', 'Save validated runtime settings using the current revision', 'put', entity({ settings: ref('AdminRuntimeSettings'), revision: integer }), 'Affects public defaults, contact freshness and new manual records. Does not rewrite historical observation expiry or retention.'),
