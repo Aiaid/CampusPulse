@@ -112,6 +112,8 @@ static const char *phase_text(edge_ui_phase_t phase) {
     case EDGE_UI_PAUSED: return "已暂停";
     case EDGE_UI_STOPPING: return "停止中";
     case EDGE_UI_STOPPED_SAFE: return "安全停止";
+    case EDGE_UI_WAIT_POLICY: return "等待自动配置";
+    case EDGE_UI_POLICY_EXPIRED: return "配置过期";
     default: return "错误";
     }
 }
@@ -288,6 +290,14 @@ void raw_ui_update(const raw_display_snapshot_t *s) {
         case EDGE_UI_WAIT_USB:
             title = "等待电脑配置"; help = "连接电脑USB调试口";
             detail = m.startup_saved ? "已保存配置，可重新配置" : "首次配置后可保存"; safety = "请使用V3调试工具"; mode = "配置完成后开始采集"; break;
+        case EDGE_UI_WAIT_POLICY:
+            title = "等待自动配置"; help = "未开始采集";
+            detail = "正在等待采集配置"; safety = "请保持供电";
+            mode = "长按BOOT可安全停止"; break;
+        case EDGE_UI_POLICY_EXPIRED:
+            title = "本次配置已过期"; help = "已安全停止";
+            detail = "需重启后重新配置"; safety = "可安全关机";
+            mode = m.startup_saved ? "重启后自动联网" : "请连接电脑重新配置"; break;
         case EDGE_UI_STOPPING:
             title = "正在安全停止"; help = "正在排空队列并同步TF";
             detail = "请保持供电"; safety = "完成后才可关机或重启"; mode = "停止中不能重新配置"; break;

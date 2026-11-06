@@ -287,8 +287,10 @@ async function resumeStartup(env: DeviceV3ControlEnv, node: string, old: Control
 
 async function assign(request: Request, env: DeviceV3ControlEnv, authorization: AuthAssertion) {
   const { value } = await readBody(request);
-  const body = object(value, 'assignment', ['policy', 'expected_generation']);
+  const body = object(value, 'assignment', ['policy', 'expected_generation'], ['expected_startup_revision']);
   const expected = integer(body.expected_generation, 'assignment.expected_generation', 0, Number.MAX_SAFE_INTEGER - 1);
+  const expectedStartup = body.expected_startup_revision === undefined ? null :
+    integer(body.expected_startup_revision,'assignment.expected_startup_revision',0,Number.MAX_SAFE_INTEGER-1);
   const frozen = await freezeDeviceConfigV3(body.policy), p = frozen.policy, node = p.node_id;
   if (p.assignment_generation !== expected + 1) bad('v3_generation_mismatch');
   if (p.uplink.enabled) assertControlUplink(p, env);
@@ -320,6 +322,7 @@ async function assign(request: Request, env: DeviceV3ControlEnv, authorization: 
   if (!await check(env, activePlacement(node, p.custody.placement_id))) bad('v3_placement_inactive');
   const assignedAt = new Date().toISOString();
   const startup = await startupGrant(env, node);
+  if(expectedStartup !== null && (startup?.revision??0) !== expectedStartup) conflict('v3_startup_revision_conflict');
   const row: Assignment = { node_id: node, generation: p.assignment_generation, policy_id: p.policy_id, revision: p.revision,
     boot_id: old.boot_id, capability_sha256: old.capability_sha256, policy_sha256: frozen.policy_sha256,
     envelope_json: JSON.stringify(frozen), placement_id: p.custody.placement_id, not_before_ms: Date.parse(p.control.activation.not_before),
@@ -347,7 +350,13 @@ async function assign(request: Request, env: DeviceV3ControlEnv, authorization: 
     }
     throw error;
   }
-  return json(assignmentReceipt(row));
+  // This transition is known only for the transaction this request committed.
+  // Retained retries above never invent historic grant revision metadata.
+  const response=json(assignmentReceipt(row));
+  response.headers.set('X-CP-Startup-Revision-Before',String(startup?.revision??0));
+  response.headers.set('X-CP-Startup-Revision-After',String(startup?(startup.revision+(startup.enabled?1:0)):0));
+  response.headers.set('X-CP-Startup-Revoked',startup?.enabled===1?'1':'0');
+  return response;
 }
 
 async function unavailableReason(env: DeviceV3ControlEnv, row: Assignment, control: Control, now: number) {

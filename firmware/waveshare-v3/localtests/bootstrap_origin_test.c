@@ -128,6 +128,15 @@ static void wifi_modes(const char *ca,const char *leaf){
     assert(send_input(peap_input(mqtt_input(),ca)));
     r=peap_input(mqtt_input(),ca);cJSON_AddStringToObject(r,"server_ca_pem",ca);assert(!send_input(r));
     assert(!send_named(peap_input(saved_input(),ca),"cp_aabbccddeeff"));
+    r=peap_input(saved_input(),ca);cJSON_AddStringToObject(r,"eap_server_verification","ca");
+    assert(!send_named(r,"cp_aabbccddeeff"));
+    r=peap_input(saved_input(),ca);cJSON_DeleteItemFromObject(r,"eap_ca_pem");cJSON_DeleteItemFromObject(r,"eap_domain");
+    assert(!send_named(cJSON_Duplicate(r,true),"cp_aabbccddeeff")); /* absent trust is never inferred by firmware */
+    cJSON_AddStringToObject(r,"eap_server_verification","none");
+    char *saved_json=cJSON_PrintUnformatted(r);assert(saved_json);cJSON_Delete(r);
+    assert(parse(saved_json,"cp_aabbccddeeff","12345678-1234-4123-8123-123456789abc",&out));free(saved_json);
+    assert(out.save_startup&&out.eap_verification==CP_V3_EAP_VERIFY_NONE&&!out.eap_ca_pem[0]&&!out.eap_domain[0]);
+    trial_bootstrap_clear(&out);
     r=saved_input();cJSON_SetValuestring(cJSON_GetObjectItem(r,"security"),"open");cJSON_SetValuestring(cJSON_GetObjectItem(r,"password"),"");assert(send_named(r,"cp_aabbccddeeff"));
 #endif
 }

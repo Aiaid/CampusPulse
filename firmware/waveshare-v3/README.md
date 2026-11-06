@@ -2,12 +2,17 @@
 
 This separate ESP-IDF5.5.3 application targets the verified Waveshare
 ESP32-S3-ePaper-1.54 V2 through the existing board/power/display adapters.
-Version0.4.0 supports explicitly saved autonomous startup. First USB setup uses
+Version0.4.1 adds default saved startup and explicit PEAP-NONE restoration. First USB setup uses
 fresh nonce-bound identity/time; optional saving occurs only after a real matched
-applied ACK. START ACCEPTED alone is not save confirmation. A saved open/personal
+applied ACK. START ACCEPTED alone is not save confirmation. A saved open/personal/PEAP-NONE
 Wi-Fi profile recovers signed time, connects native MQTT/TLS and obtains an
 administrator-approved fresh policy before capture. Without a saved profile,
 the app waits for USB. See [persistent startup](../../docs/specs/v3-startup.md).
+The updated administrator wizard automatically prepares the first policy only
+from confirmed deployment/template scope and then completes a seven-day renewal
+grant after SAVED plus the matching applied ACK. CA-verified PEAP remains manual;
+no certificate-date check is weakened. Earlier PEAP-persistence restrictions below
+describe the preceding image and are superseded by the linked startup contract.
 
 The formal production path is native MQTT/TLS to the fixed Hangzhou EMQX broker
 and the Cloudflare gateway bound to the real Worker/D1 service. No computer relay,

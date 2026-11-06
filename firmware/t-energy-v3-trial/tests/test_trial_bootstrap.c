@@ -7,6 +7,8 @@
 static const char base[] = "{\"node_id\":\"cp_001122334455\",\"boot_id\":\"boot-test\",\"origin\":\"https://trial.invalid\",\"uplink_transport\":\"https\",\"device_token\":\"synthetic-token-at-least-thirty-two-bytes\",\"ssid\":\"test-net\",\"password\":\"test-pass\",\"utc_ms\":1800000000000,\"uncertainty_ms\":10,\"max_windows\":1,\"security\":\"personal\",\"anchor_mono_ms\":1000}";
 static unsigned checks;
 static char *peap(const char *input,const char *ca);
+static char *replace(const char *input,const char *from,const char *to);
+static char *field(const char *input,const char *name,const char *value);
 static void startup_profiles(const char *ca){
     const char *production="{\"node_id\":\"cp_001122334455\",\"boot_id\":\"boot-test\",\"origin\":\"" CP_API_ORIGIN "\",\"uplink_transport\":\"mqtt_tls\",\"device_token\":\"synthetic_device_credential_32_bytes\",\"ssid\":\"test-net\",\"password\":\"test-pass\",\"utc_ms\":1800000000000,\"uncertainty_ms\":10,\"max_windows\":0,\"security\":\"personal\",\"anchor_mono_ms\":1000,\"mqtt_uri\":\"" CP_MQTT_PRODUCTION_URI "\",\"mqtt_username\":\"synthetic-user\",\"mqtt_password\":\"synthetic-password\",\"mqtt_namespace\":\"synthetic-node\",\"save_startup\":true,\"startup_reconfigure\":false,\"clock_key_id\":\"synthetic-key-1\",\"clock_public_spki\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP40Li_hp_m47n60p8D54WK84zV2sxXs7LtkBoN79R9Q\"}";
     trial_bootstrap_t out;
@@ -14,7 +16,17 @@ static void startup_profiles(const char *ca){
     assert(out.save_startup&&!out.startup_reconfigure&&!out.max_windows&&out.clock_public_spki[0]==0x30);
     char *enterprise=peap(production,ca);assert(!trial_bootstrap_parse(enterprise,"cp_001122334455","boot-test",1100,&out));
     for(size_t i=0;i<sizeof out;i++)assert(!((unsigned char *)&out)[i]);
+    char *explicit_ca=field(enterprise,"eap_server_verification","ca");
+    assert(!trial_bootstrap_parse(explicit_ca,"cp_001122334455","boot-test",1100,&out));free(explicit_ca);
     free(enterprise);
+    enterprise=peap(production,"");
+    char *no_ca=replace(enterprise,",\"eap_ca_pem\":\"\"","");free(enterprise);
+    char *no_trust=replace(no_ca,",\"eap_domain\":\"radius.example\"","");free(no_ca);
+    assert(!trial_bootstrap_parse(no_trust,"cp_001122334455","boot-test",1100,&out));
+    char *explicit_none=field(no_trust,"eap_server_verification","none");free(no_trust);
+    assert(trial_bootstrap_parse(explicit_none,"cp_001122334455","boot-test",1100,&out));free(explicit_none);
+    assert(out.save_startup&&out.eap_verification==CP_V3_EAP_VERIFY_NONE&&!out.eap_ca_pem[0]&&!out.eap_domain[0]);
+    trial_bootstrap_clear(&out);
     char input[4096];
     static const struct{const char *old,*replacement;} bad[]={
         {"\"save_startup\":true","\"save_startup\":false"},

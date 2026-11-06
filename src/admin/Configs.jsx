@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import StartupGrant from './StartupGrant.jsx';
+import {configurationBlockReason} from './provisioning/setup-startup.js';
 import { ArrowClockwise, CheckCircle, PaperPlaneTilt } from '@phosphor-icons/react';
 import { Badge, Dialog, DirectoryMore, Empty, ErrorNotice, Field, KeyValues, Notice, PageHeader, Panel, Resource, fmtTime, useAdmin, useDevices, useMutation, useResource } from './shared.jsx';
 
@@ -12,11 +13,18 @@ export default function Configs() {
   <ErrorNotice error={devices.error} retry={devices.retry}/><DirectoryMore resource={devices}/>{node?<V3Configuration key={node} node={node}/>:<Empty title="先选择设备">设备必须先自行登记 V3 capabilities，才能准备策略。</Empty>}</>;
 }
 
-export function V3Configuration({node,embedded=false}) {
+export function V3Configuration({node,embedded=false,expectedBoot,onManualGrant,onPolicyPublish,grantVersion=0}) {
  const {api,version,notify}=useAdmin();
- const control=useResource(`/device-v3/nodes/${encodeURIComponent(node)}`,version), details=useResource(`/devices/${encodeURIComponent(node)}`,version);
+ const control=useResource(`/device-v3/nodes/${encodeURIComponent(node)}`,`${version}:${grantVersion}`), details=useResource(`/devices/${encodeURIComponent(node)}`,version);
  const [placement,setPlacement]=useState(''),[dataset,setDataset]=useState('controlled_test'),[draft,setDraft]=useState(null),[check,setCheck]=useState(null),[view,setView]=useState(false);
  const mutation=useMutation();
+ const current=useRef(control.data);current.current=control.data;
+ const [now,setNow]=useState(Date.now());
+ useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[]);
+ useEffect(()=>{setDraft(null);setCheck(null);},[control.data,expectedBoot]);
+ const blocked=configurationBlockReason(control.data,node,expectedBoot,now);
+ const requireCurrent=c=>{const reason=configurationBlockReason(c,node,expectedBoot);if(current.current!==c||reason)throw new Error(reason||'设备状态已刷新，请重新准备和校验策略。');};
+ const requirePolicy=(c,p)=>{requireCurrent(c);if(p?.node_id!==node||p?.control?.activation?.boot_id!==c.capabilities.boot_id||!(Date.parse(p?.control?.activation?.expires_at)>Date.now()))throw new Error('策略已过期或启动标识已改变，请重新准备策略。');};
  const refresh=()=>{control.retry();details.retry();setDraft(null);setCheck(null);};
  return <><Resource resource={control}>{c=><>
   <Panel title="V3 能力与应用状态" action={<button className="cp-admin-button" onClick={refresh}><ArrowClockwise/>刷新设备状态</button>}>
@@ -26,16 +34,17 @@ export function V3Configuration({node,embedded=false}) {
    {!c.capabilities&&<Notice>尚无 V3 能力登记。连接 USB 并启动 V3 固件后，刷新此页。</Notice>}
   </Panel>
   {c.capabilities&&<Panel title="准备下一代策略" description="策略绑定本次能力摘要与启动标识；设备重启或能力刷新后需要重新准备。">
+   {blocked&&<Notice>{blocked}</Notice>}
    <div className="cp-admin-form-grid"><Field label="部署位置"><Resource resource={details}>{d=><select value={placement} onChange={e=>{setPlacement(e.target.value);setDraft(null);setCheck(null);}}><option value="">选择有效部署</option>{d.placements.filter(p=>p.valid_from_ms<=Date.now()&&(p.effective_valid_until_ms===null||p.effective_valid_until_ms>Date.now())).map(p=><option key={p.id} value={p.id}>{p.place_name||p.place_id||'未定位'}（{p.id}）</option>)}</select>}</Resource></Field>
     <Field label="数据集"><select value={dataset} onChange={e=>{setDataset(e.target.value);setDraft(null);setCheck(null);}}><option value="controlled_test">受控测试</option><option value="field">现场观测</option><option value="demo">演示</option></select></Field></div>
-   <button className="cp-admin-button" disabled={!placement||mutation.pending} onClick={()=>mutation.run(async()=>{const r=await api('/device-v3/prepare',{method:'POST',body:{node_id:node,placement_id:placement,dataset}});setDraft(JSON.stringify(r.policy,null,2));setCheck(null);})}>根据当前能力准备 V3 策略</button>
+   <button className="cp-admin-button" disabled={!placement||mutation.pending||!!blocked} onClick={()=>mutation.run(async()=>{requireCurrent(c);onPolicyPublish?.();const r=await api('/device-v3/prepare',{method:'POST',body:{node_id:node,placement_id:placement,dataset}});requirePolicy(c,r.policy);setDraft(JSON.stringify(r.policy,null,2));setCheck(null);})}>根据当前能力准备 V3 策略</button>
    {draft!==null&&<><Field label="V3 策略 JSON" hint="可调整窗口、容量和资源预算；必须通过服务端校验。已发布策略不可改写。"><textarea rows={18} value={draft} spellCheck={false} onChange={e=>{setDraft(e.target.value);setCheck(null);}}/></Field>
-    <div className="cp-admin-row-actions"><button className="cp-admin-button" disabled={mutation.pending} onClick={()=>mutation.run(async()=>{const r=await api('/device-v3/validate',{method:'POST',body:{policy:JSON.parse(draft),expected_generation:c.desired?.policy.assignment_generation||0}});setCheck(r);})}><CheckCircle/>校验能力与策略</button>
-     <button className="cp-admin-button cp-admin-primary" disabled={mutation.pending||!check?.valid} onClick={()=>mutation.run(async()=>{await api('/device-v3/assignments',{method:'POST',body:{policy:check.policy,expected_generation:check.expected_generation}});setDraft(null);setCheck(null);if(!embedded)notify('V3 assignment 已发布，等待设备明确 ACK；发布不等于已应用。');control.retry();})}><PaperPlaneTilt/>发布不可变 V3 assignment</button></div>
+    <div className="cp-admin-row-actions"><button className="cp-admin-button" disabled={mutation.pending||!!blocked} onClick={()=>mutation.run(async()=>{const p=JSON.parse(draft);requirePolicy(c,p);onPolicyPublish?.();const r=await api('/device-v3/validate',{method:'POST',body:{policy:p,expected_generation:c.desired?.policy.assignment_generation||0}});requireCurrent(c);setCheck(r);})}><CheckCircle/>校验能力与策略</button>
+     <button className="cp-admin-button cp-admin-primary" disabled={mutation.pending||!!blocked||!check?.valid||!(Date.parse(check?.policy?.control?.activation?.expires_at)>now)} onClick={()=>mutation.run(async()=>{requirePolicy(c,check.policy);onPolicyPublish?.();await api('/device-v3/assignments',{method:'POST',body:{policy:check.policy,expected_generation:check.expected_generation}});setDraft(null);setCheck(null);if(!embedded)notify('V3 assignment 已发布，等待设备明确 ACK；发布不等于已应用。');control.retry();})}><PaperPlaneTilt/>发布不可变 V3 assignment</button></div>
     {check&&<div role="status"><Notice>{check.valid?'静态能力校验通过。发布后仍需设备在关闭窗口边界确认；尚未应用。':'能力或策略不兼容，发布已禁用。'}</Notice>{check.issues.length>0&&<pre className="cp-admin-json">{JSON.stringify(check.issues,null,2)}</pre>}</div>}
    </>}
   </Panel>}
-  <StartupGrant node={node} control={c} onChange={control.retry}/>
+  <StartupGrant node={node} control={c} onChange={control.retry} onManualAction={onManualGrant} refreshVersion={grantVersion}/>
   {view&&<Dialog title="不可变 V3 策略" wide onClose={()=>setView(false)}><pre className="cp-admin-json">{JSON.stringify(c.desired,null,2)}</pre></Dialog>}
  </>}</Resource><ErrorNotice error={mutation.error}/></>;
 }

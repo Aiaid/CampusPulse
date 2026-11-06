@@ -23,22 +23,24 @@ the public pin. Public keys are not secrets, but NVS contains network/device
 credentials under the existing ordinary NVS security model; this component makes
 no encryption-at-rest, secure-boot, hardware anti-rollback or physical-tamper claim.
 
-The USB save/autostart path admits personal PSK/open Wi-Fi only. Manual PEAP
-supports explicit unverified-server (`none`) or strict CA/name/date (`ca`) modes,
-but neither is supported by saved startup: the unchanged profile lacks the
-verification choice/trust material and its boot path is not implemented.
-Verified PEAP additionally needs trusted time before RADIUS authentication;
-that clock requirement does not explain the `none` persistence restriction.
-The historical codec can represent PEAP account fields with `auto_start=false`,
-but this does not establish a supported PEAP save/boot flow. A saved profile
+The USB save/autostart path admits personal PSK/open Wi-Fi and explicitly selected
+PEAP unverified-server (`none`). Schema 2 stores that verification choice;
+PEAP without an explicit `NONE` mode cannot be newly saved, even when automatic
+startup is disabled. Strict CA/name/date (`ca`) PEAP remains manual USB only:
+this bounded profile contains no CA trust material and does not weaken its
+date checks to resolve cold-start clock dependencies. A schema-1 disabled PEAP
+profile can still be read for same-node credential reuse, with verification
+`UNSPECIFIED`; its unknown historical trust choice never becomes `NONE`, and it
+cannot be re-saved unchanged or started automatically. A saved profile
 contains no wall-clock seed, boot UUID, raw capture, batch
 ID, policy/lease authority or bounded-test window limit. Each boot must acquire
 authenticated time and fresh cloud policy authority before collection.
 
-The codec is independent of C padding. Schema 1 uses `CPS3`, a little-endian
+The codec is independent of C padding. Schemas 1 and 2 use `CPS3`, a little-endian
 16-bit version, 16-bit flags (only bit 0 `auto_start`), 32-bit total length and
 32-bit CRC32 in a 16-byte header. CRC32 covers the complete frame with its own
-field zeroed. The payload starts with 32-bit Wi-Fi security, then 16-bit lengths
+field zeroed. The payload starts with 32-bit Wi-Fi security, followed in schema 2
+by a 32-bit EAP verification value (0 `UNSPECIFIED`, 1 `NONE`), then 16-bit lengths
 and bytes for node ID, SSID, PSK, device token, PEAP username/identity/password,
 MQTT username/password/namespace and time-key ID, followed by 16-bit SPKI length
 and SPKI bytes. Production endpoints and settings version are reconstructed by
@@ -47,6 +49,9 @@ unknown flags, lengths, settings and identities are rejected. CRC detects damage
 it provides no authentication or rollback resistance. The frame is bounded at
 1280 bytes; the synthetic personal profile uses less than 420 bytes, with empty
 PEAP fields costing only their length prefixes.
+Non-PEAP records require verification 0; PEAP schema-2 records require 1.
+Only schema 2 is written. Schema-1 personal/open records remain readable with
+their original automatic-start flag; schema-1 PEAP requires that flag to be false.
 
 The provider writes inactive slot `a` or `b`, commits, closes/reopens and compares
 the complete readback before writing and committing the `active` selector. It
@@ -104,4 +109,6 @@ public-point checks, located through `pkg-config`; `CP_TEST_OPENSSL` can select
 its installation prefix instead. ESP-IDF
 builds use the actual SDK mbedTLS headers/library. Host fault tests and S3 builds
 do not establish NVS hardware power-loss, credential security or untethered
-device acceptance.
+device acceptance. Codec tests also reconstruct the actual schema-1 payload,
+exercise each authentication mode, reject CRC-correct invalid schema-2 modes,
+and verify that disabled legacy PEAP credential reuse causes no writes.

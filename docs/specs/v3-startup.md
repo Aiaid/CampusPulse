@@ -6,19 +6,34 @@ restart acceptance are separate. Production telemetry continues to use
 
 ## Operator workflow
 
-The default USB test remains temporary and bounded. The operator may explicitly
-select **save and automatically start**, supply production settings and obtain
-the clock public key over trusted host HTTPS. `V3 START ACCEPTED` means only that
+USB setup now defaults to **save and automatically start**, with continuous
+operation selected. This covers open/personal Wi-Fi and explicitly unverified
+PEAP; cancelling saving retains temporary one-to-three-window runs. Network mode
+changes preserve the operator's preference. Strict CA-verified PEAP remains a
+manual USB flow because its date checks need independent pre-network trusted
+time; automatic startup never silently disables them.
+
+The new submitted setup flow obtains the clock public key over trusted host
+HTTPS and waits for fresh node/USB-boot capabilities. It automatically prepares,
+validates and assigns a compatible policy using a previously applied template
+and valid deployment. Without an approved template, only a sole valid unlocated
+deployment may receive the conservative controlled-test profile. Missing or
+ambiguous deployment and concurrent administrator changes stop automatic writes.
+Ordinary page opening never starts this flow. `V3 START ACCEPTED` means only that
 the frame was accepted. Saving occurs after the real production policy is
 applied, its committed ACK matches, and storage budget admits the write.
 Only `V3 STARTUP SAVED` confirms the selected NVS record's commit/readback.
 Failure or timeout cannot be shown as saved.
 
-The administrator separately approves a renewable startup grant from the
-actual current applied statistics policy. The UI offers explicit1/7/30day
-approval; absence means off. Source generation, policy limits, placement and
-revision are validated by the backend. This does not fabricate an ACK or permit
-the device to increase its own limits. First approve/save, then test restart.
+After SAVED and the matching current durable applied ACK, this submitted flow
+requests one seven-day renewal grant. It pins the pre-submit desired generation,
+digest and grant revision, validates its own assignment transition and uses
+atomic revision checks. Closing, external policy edits, revocation or conflicts
+stop the flow without automatic resubmission. Saving and grant success remain
+separate states; authentication cancellation cannot be reported as success.
+The ordinary configuration page retains explicit 1/7/30-day approval/revocation.
+Source generation, limits, placement and revision are revalidated by the backend.
+No ACK is fabricated and devices cannot expand their own limits.
 
 ```mermaid
 flowchart LR
@@ -58,24 +73,28 @@ production settings, explicit auto-start choice and pinned P256 SPKI/key ID.
 Autonomous startup never implicitly loads/migrates legacy settings or queues.
 UTC seeds, boot/batch identity, test-window limits and isolated CA/origins are not
 saved.
-Open and personal profiles can be provisioned, saved and automatically started.
-Manual USB setup also supports enterprise PEAP, including the administrator
-page's temporary one-to-three-window run. `eap_server_verification:"none"` is the
+Open, personal and explicitly unverified PEAP profiles can be provisioned, saved
+and automatically started. `eap_server_verification:"none"` is the
 default UI choice when no CA is supplied; it leaves the authentication server
 unverified and visibly warns that a fake server may obtain enterprise account
 credentials. `"ca"` requires one real CA, an expected RADIUS DNS hostname and
 certificate-date checks, with fresh trusted physical-USB time before Wi-Fi.
-Invalid supplied trust never silently falls back to `none`. Saving or
-automatically starting PEAP is refused in both modes: the unchanged profile does
-not store verification choice/trust and the boot path does not implement saved
-PEAP. Verified PEAP additionally needs a pre-network trusted clock. See the
+Invalid supplied trust never silently falls back to `none`. CA-verified PEAP
+remains manual USB only, with full certificate-date checking. The signed-clock
+probe itself needs network access, so it cannot provide independent time before
+the first CA-verified RADIUS association. See the
 [USB Wi-Fi authentication contract and evidence](../notes/v3-usb-wifi-auth-2026-11-03.md).
 
 All three modes currently share a printable-ASCII USB/CLI/firmware text contract,
 including SSID; this does not establish support for arbitrary UTF-8 SSIDs.
 EAP trust material is temporary and never replaces the fixed production MQTT
 broker's public CA bundle or the diagnostic HTTPS `server_ca_pem` field. The NVS
-profile format and legacy data are unchanged by the authentication repair.
+profile format v2 adds an explicit PEAP NONE selection without increasing the
+1280-byte limit or changing legacy settings. v1 open/personal profiles remain
+readable. Disabled v1 PEAP profiles retain unknown trust for read-only credential
+reuse; they cannot be promoted to auto-start or re-saved without a new explicit
+selection. New profiles reject unknown/CA PEAP trust. No CA material or time seed
+is persisted.
 
 Variable-length records have version/CRC/node binding and real P256 point
 validation. An inactive blob commits/read backs before selector commit/readback.
@@ -124,6 +143,10 @@ No device token, MQTT credentials, node identity or cookies enter that request.
 Only independent signature/fresh-nonce verification using the physically pinned
 key establishes time. The temporary network is cleaned up before formal
 MQTT/TLS starts. Failed probes clear the anchor and restore the old clock mapping.
+An explicit PEAP-NONE bootstrap entry configures PEAP identity/username/password
+and unverified-server mode, then performs the same strict HTTPS/signed-time
+probe. The original clock entry still rejects PEAP. Cleanup clears EAP state and
+retains network ownership on an unconfirmed stop; CA-mode behavior is unchanged.
 
 `POST /api/v3/clock` accepts exactly `{nonce}`:64lowercase hex characters from
 32fresh random bytes. Its exact response fields are schema, audience, key_id,

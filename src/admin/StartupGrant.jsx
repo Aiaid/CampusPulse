@@ -15,10 +15,11 @@ export function StartupGrantView({node,control,response,days=7,onDays=()=>{},pen
    <button className="cp-admin-button" disabled={pending||!validRow||row.enabled!==1} onClick={onRevoke}>撤销自动启动授权</button></div>
  </Panel>;
 }
-export default function StartupGrant({node,control,onChange}) {
- const {api,version,notify}=useAdmin(),resource=useResource(`/device-v3/nodes/${encodeURIComponent(node)}/startup-grant`,version),mutation=useMutation();
+export default function StartupGrant({node,control,onChange,onManualAction,refreshVersion=0}) {
+ const {api,version,notify}=useAdmin(),resource=useResource(`/device-v3/nodes/${encodeURIComponent(node)}/startup-grant`,`${version}:${refreshVersion}`),mutation=useMutation();
  const [days,setDays]=useState(7);
  const change=enabled=>mutation.run(async()=>{
+  onManualAction?.();
   const body=enabled?startupGrantApproval(control,resource.data,days):startupGrantRevocation(resource.data,node);
   try { const result=await api(`/device-v3/nodes/${encodeURIComponent(node)}/startup-grant`,{method:'POST',body});validateStartupGrantMutation(result,node,body);notify(enabled?'自动启动授权已批准；仍须设备每次启动取得策略并明确 ACK。':'自动启动授权已撤销；历史记录和设备队列保留。');resource.retry();onChange?.(); }
   catch(error){if(error.status===409)resource.retry();throw error;}

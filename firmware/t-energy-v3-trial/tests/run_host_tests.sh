@@ -9,6 +9,7 @@ CC_BIN="${CC:-cc}"
 FLAGS=(-std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -fsanitize=address,undefined)
 bash "$TEST_DIR/run_maintenance_host_test.sh"
 bash "$TEST_DIR/run_requests_host_test.sh"
+bash "$TEST_DIR/run_policy_wait_host_test.sh"
 UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/campuspulse-v3-uv}" uv run --no-project "$FIRMWARE/components/cp_v3_transport/tests/test_mqtt_protocol.py"
 UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/campuspulse-v3-uv}" uv run --no-project "$FIRMWARE/components/cp_v3_transport/tests/test_build_isolation.py"
 "$CC_BIN" "${FLAGS[@]}" -I "$PROJECT/main" -I "$TEST_DIR" \

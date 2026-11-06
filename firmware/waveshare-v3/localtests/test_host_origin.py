@@ -96,6 +96,30 @@ class HostOrigin(unittest.TestCase):
                     runner.main()
                 serial.assert_not_called(); key.assert_not_called()
 
+    def test_saved_peap_none_reaches_actual_frame_only_with_cli_opt_in(self):
+        wifi = self.enterprise(); wifi.pop('eap_ca_pem'); wifi.pop('eap_domain')
+        wifi['eap_server_verification'] = 'none'
+        backend = self.backend() | dict(node_id='cp_aabbccddeeff',device_bearer='synthetic-device-token-at-least-thirty-two-bytes')
+        identity = dict(node_id=backend['node_id'],boot_id='12345678-1234-4123-8123-123456789abc',mono_ms=1000)
+        for save in (False, True):
+            port = MagicMock(); port.__enter__.return_value = port
+            port.readline.return_value = b'V3 STARTUP SAVED\n' if save else b'v3small: phase=SMALL TEST PASSED\n'
+            sent = []; port.write.side_effect = lambda frame: sent.append(bytes(frame))
+            with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()), \
+                    patch.object(runner,'read_private',side_effect=[backend,wifi]), \
+                    patch.object(runner,'hello',return_value=(identity,1800000000000,1000,1800000000100,1100)), \
+                    patch.object(runner,'fetch_clock_key',return_value=self.clock_key()) as key, \
+                    patch.object(runner.serial,'Serial',return_value=port), \
+                    patch('sys.argv',['run_small.py','--port','synthetic','--private-dir',folder,'--allow-production'] +
+                          (['--save-startup','--windows','0'] if save else [])):
+                self.assertEqual(runner.main(),0)
+            self.assertEqual(len(sent),1)
+            body = json.loads(sent[0][8:])
+            self.assertEqual(body['eap_server_verification'],'none')
+            self.assertEqual(body.get('save_startup',False),save)
+            self.assertNotIn('eap_ca_pem',body); self.assertNotIn('eap_domain',body)
+            self.assertEqual(key.call_count,int(save))
+
     def test_saved_reuse_reaches_actual_host_frame_without_credentials(self):
         backend = dict(node_id='cp_aabbccddeeff',endpoint=runner.PRODUCTION_ORIGIN,tls='public_ca_bundle',uplink_transport='mqtt_tls')
         wifi = dict(ssid='synthetic-network',password='synthetic-password')

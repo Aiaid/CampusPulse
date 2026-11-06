@@ -129,10 +129,42 @@ describe('explicit renewable startup authority', () => {
   it('manual assignment revokes startup so an unrelated desired policy is never overwritten', async () => {
     await prepare(); await json(await grant(approval()));
     const manual = { ...policy, policy_id: 'new-manual-approval', assignment_generation: 2 };
-    await json(await assign(manual));
+    const committed=await assign(manual);
+    expect(committed.headers.get('X-CP-Startup-Revision-Before')).toBe('1');
+    expect(committed.headers.get('X-CP-Startup-Revision-After')).toBe('2');
+    expect(committed.headers.get('X-CP-Startup-Revoked')).toBe('1');
+    const committedReceipt=await json(committed), replay=await assign(manual);
+    expect(replay.headers.has('X-CP-Startup-Revision-Before')).toBe(false);
+    expect(replay.headers.has('X-CP-Startup-Revision-After')).toBe(false);
+    expect(await json(replay)).toEqual(committedReceipt);
     expect((await json(await grant())).startup_grant).toMatchObject({ enabled: 0, revision: 2 });
     await reboot(); expect(await json(await config())).toMatchObject({ config: null, reason: 'boot_changed' });
     expect(state.db.prepare('SELECT desired_generation FROM device_control_v3').get()?.desired_generation).toBe(2);
+  });
+  it('does not commit automatic setup assignment after an intervening grant revocation',async()=>{
+    await prepare();await json(await grant(approval()));
+    await json(await grant({expected_revision:1,enabled:false}));
+    const next={...policy,policy_id:'synthetic-new-setup',assignment_generation:2};
+    const response=await request('/api/v1/admin/device-v3/assignments',{
+      policy:next,expected_generation:1,expected_startup_revision:1,
+    },true);
+    expect(await json(response,409)).toMatchObject({error:{code:'v3_startup_revision_conflict'}});
+    expect(state.db.prepare('SELECT COUNT(*) n FROM device_assignments_v3').get()?.n).toBe(1);
+    expect((await json(await grant())).startup_grant).toMatchObject({enabled:0,revision:2});
+  });
+  it('rolls back setup assignment if revocation wins during its transaction',async()=>{
+    await prepare();await json(await grant(approval()));
+    const batch=env.DB.batch.bind(env.DB);let raced=false;
+    vi.spyOn(env.DB,'batch').mockImplementation(async statements=>{
+      if(!raced){raced=true;await json(await grant({expected_revision:1,enabled:false}));}
+      return batch(statements);
+    });
+    const next={...policy,policy_id:'synthetic-racing-setup',assignment_generation:2};
+    await json(await request('/api/v1/admin/device-v3/assignments',{
+      policy:next,expected_generation:1,expected_startup_revision:1,
+    },true),409);
+    expect(state.db.prepare('SELECT COUNT(*) n FROM device_assignments_v3').get()?.n).toBe(1);
+    expect((await json(await grant())).startup_grant).toMatchObject({enabled:0,revision:2});
   });
   it('rolls back issuance if a concurrent revocation wins before its transaction', async () => {
     await prepare(); await json(await grant(approval())); await reboot();

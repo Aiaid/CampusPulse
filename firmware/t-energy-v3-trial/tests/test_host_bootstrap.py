@@ -244,10 +244,24 @@ class BootstrapTests(unittest.TestCase):
         for wifi in invalid:
             with self.assertRaises(host.BootstrapError):
                 host.run_bootstrap(self.production_backend, wifi, "fake", serial_factory=factory, allow_production=True)
-        with self.assertRaisesRegex(host.BootstrapError, "not stored"):
-            host.run_bootstrap(self.production_backend, good, "fake", serial_factory=factory,
-                               allow_production=True, save_startup=True, clock_key=startup_key())
+        for wifi in (good, good | {"eap_server_verification": "ca"}):
+            with self.assertRaisesRegex(host.BootstrapError, "manual USB"):
+                host.run_bootstrap(self.production_backend, wifi, "fake", serial_factory=factory,
+                                   allow_production=True, save_startup=True, clock_key=startup_key())
         factory.assert_not_called()
+
+    def test_saved_peap_none_remains_explicit_and_temporary_default_stays_opt_in(self):
+        none = self.enterprise(); none.pop("eap_ca_pem"); none.pop("eap_domain")
+        for explicit in (False, True):
+            wifi = none | ({"eap_server_verification": "none"} if explicit else {})
+            options = dict(wifi=wifi, backend=self.production_backend, allow_production=True)
+            temporary = json.loads(self.frame(**options)[8:])
+            self.assertNotIn("save_startup", temporary)
+            self.assertEqual(temporary["eap_server_verification"], "none")
+            body = json.loads(self.frame(**options, save_startup=True, clock_key=startup_key(), windows=0)[8:])
+            self.assertTrue(body["save_startup"])
+            self.assertEqual(body["eap_server_verification"], "none")
+            self.assertNotIn("eap_ca_pem", body); self.assertNotIn("eap_domain", body)
 
     def test_optional_ca_is_explicit_without_downgrade(self):
         none = self.enterprise(); none.pop("eap_ca_pem"); none.pop("eap_domain")

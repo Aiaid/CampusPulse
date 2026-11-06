@@ -55,7 +55,7 @@ stored. Responses use `Cache-Control:no-store`.
 | `POST /api/v3/device/capabilities` | Existing enabled-device bearer credential | `{protocol:"campuspulse/3",registration_seq,uptime_ms,capabilities}` |
 | `GET /api/v3/device/config?boot_id=...` | Same device credential | Exactly one current `boot_id`; unknown query parameters fail |
 | `POST /api/v3/device/config/ack` | Same device credential | ACK shape below |
-| `POST /api/v1/admin/device-v3/assignments` | Existing administrator session and same-origin mutation | `{policy,expected_generation}`; `policy.assignment_generation` must equal `expected_generation+1` |
+| `POST /api/v1/admin/device-v3/assignments` | Existing administrator session and same-origin mutation | `{policy,expected_generation,expected_startup_revision?}`; generation must equal `expected_generation+1`; setup callers also atomically bind the startup revision |
 | `GET /api/v1/admin/device-v3/nodes/:node_id` | Existing administrator session | Current claim, desired envelope, last applied policy, desired ACK and availability reason |
 
 Registration sequence is 1–2^32−1 and uptime is a nonnegative safe integer.

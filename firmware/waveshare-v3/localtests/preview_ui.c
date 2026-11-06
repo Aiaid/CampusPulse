@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
     lv_display_set_color_format(d, LV_COLOR_FORMAT_L8);
     lv_display_set_buffers(d, frame, NULL, sizeof(frame), LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(d, flush); raw_ui_init(d);
-    for (unsigned variant = 0; variant < 14; ++variant) {
+    for (unsigned variant = 0; variant < 17; ++variant) {
         edge_ui_metrics_t m = {.phase = EDGE_UI_COLLECTING, .metrics_known = true, .capture_known = true,
             .raw_policy_enabled = true, .raw_active = true, .queue_known = true, .rate_known = true,
             .history_known = true, .last_window_known = true, .tf_mounted = true,
@@ -99,7 +99,7 @@ int main(int argc, char **argv) {
         strcpy(s.wifi_ssid, "Test network"); strcpy(s.ip, "192.0.2.1");
         for (unsigned i = 0; i < 10; ++i) { s.rssi_bins[i] = -88 + i * 4; s.rssi_bin_known[i] = true; }
         for (unsigned i = 0; i < 10; ++i) s.report_bins[i] = (uint32_t[]) {40,55,80,128,100,80,70,55,75,95}[i];
-        const char *name = (const char *[]) {"normal", "unknown", "large", "error", "waiting", "starting", "stopping", "safe", "raw-disabled", "known-zero", "safe-error", "saved-waiting", "saved-safe", "auto-starting"}[variant];
+        const char *name = (const char *[]) {"normal", "unknown", "large", "error", "waiting", "starting", "stopping", "safe", "raw-disabled", "known-zero", "safe-error", "saved-waiting", "saved-safe", "auto-starting", "policy-waiting", "policy-expired", "saved-policy-expired"}[variant];
         if (variant == 1) { m = (edge_ui_metrics_t) {.phase = EDGE_UI_PAUSED}; s = (raw_display_snapshot_t) {0}; }
         if (variant == 2) {
             m.windows = m.confirmed_windows = m.current_pending = m.historical_pending = m.upload_failures = m.retries = UINT32_MAX;
@@ -121,6 +121,8 @@ int main(int argc, char **argv) {
         if(variant==11){m=(edge_ui_metrics_t){.phase=EDGE_UI_WAIT_USB,.startup_saved=true};s=(raw_display_snapshot_t){0};}
         if(variant==12){m.phase=EDGE_UI_STOPPED_SAFE;m.startup_saved=true;m.raw_active=m.tf_mounted=false;}
         if(variant==13){m=(edge_ui_metrics_t){.phase=EDGE_UI_STARTING,.startup_saved=true,.auto_starting=true};s=(raw_display_snapshot_t){0};}
+        if(variant==14){m=(edge_ui_metrics_t){.phase=EDGE_UI_WAIT_POLICY,.tf_mounted=true};s=(raw_display_snapshot_t){.wifi_enabled=true,.wifi_connected=true};}
+        if(variant==15||variant==16){m=(edge_ui_metrics_t){.phase=EDGE_UI_POLICY_EXPIRED,.startup_saved=variant==16};s=(raw_display_snapshot_t){.setup_available=true};}
         m.transport_known=m.phase!=EDGE_UI_WAIT_USB;m.mqtt_tls=(variant%2)==0;
         edge_ui_state(&m);
         for (unsigned page = 0; page < 5; ++page) {
@@ -130,6 +132,7 @@ int main(int argc, char **argv) {
             if (page == 0 && !has_label(screen, "ETA -- 待标定")) return 1;
             if (page == 0 && variant == 7 && !has_label(screen, "TF 未挂载")) return 1;
             if (page == 0 && !has_label(screen, "设备诊断")) return 1;
+            if(page==0&&variant==14&&!has_label(screen,"等待自动配置"))return 1;
             if(page==0&&m.transport_known){char uplink[64];snprintf(uplink,sizeof uplink,"%s%s",m.mqtt_tls?"MQTT ":"HTTPS ",!s.wifi_enabled?"Wi-Fi 关闭":s.wifi_connected?"Wi-Fi 已连接":"Wi-Fi 未连接");if(!has_label(screen,uplink))return 1;}
             if (page == 1 && (!has_label(screen, "上一窗接收") || !has_label(screen, "已确认窗") || !has_label(screen, "接收趋势"))) return 1;
             if (page == 2 && (!has_label(screen, "车辆候选 / 未分析") || !has_label(screen, "品牌名称  --"))) return 1;
@@ -140,6 +143,9 @@ int main(int argc, char **argv) {
             if(page==4&&variant==11&&!has_label(screen,"已保存配置，可重新配置"))return 1;
             if(page==4&&variant==12&&(!has_label(screen,"上电后自动联网采集")||has_label(screen,"重启后连接电脑USB")))return 1;
             if(page==4&&variant==13&&!has_label(screen,"已保存配置，正在自动启动"))return 1;
+            if(page==4&&variant==14&&(!has_label(screen,"等待自动配置")||!has_label(screen,"未开始采集")||has_label(screen,"启动或运行错误")))return 1;
+            if(page==4&&(variant==15||variant==16)&&(!has_label(screen,"配置过期")||!has_label(screen,"本次配置已过期")||!has_label(screen,"已安全停止")||!has_label(screen,"可安全关机")||has_label(screen,"启动或运行错误")))return 1;
+            if(page==4&&variant==16&&!has_label(screen,"重启后自动联网"))return 1;
             if (page == 1 && variant == 1 && !has_label(screen, "--")) return 1;
             if (page == 1 && variant == 7 && !has_label(screen, "--")) return 1;
             if (page == 1 && variant == 9 && !has_label(screen, "0")) return 1;

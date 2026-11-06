@@ -104,16 +104,14 @@ export async function runAdminV3Browser(focus='all') {
     const before=await page.evaluate(()=>window.syntheticV3Usb.filter(s=>s.startsWith('V3START ')).length);
     await d.getByLabel('设备凭证',{exact:true}).fill(token);await d.getByLabel('Wi-Fi SSID',{exact:true}).fill('Synthetic WiFi');
     await d.getByLabel('个人 Wi-Fi 密码',{exact:true}).fill('synthetic-wifi-password');
-    if(security==='enterprise_peap'){
-     await d.getByLabel('保存并自动启动',{exact:true}).check();await d.getByLabel('本次统计窗口数',{exact:true}).selectOption('0');
-    }
+    await expect(d.getByLabel('保存并自动启动',{exact:true})).toBeChecked();await expect(d.getByLabel('本次统计窗口数',{exact:true})).toHaveValue('0');
+    await d.getByLabel('保存并自动启动',{exact:true}).uncheck();
     await d.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption(security);
     if(security==='personal')await d.getByLabel('个人 Wi-Fi 密码',{exact:true}).fill('synthetic-wifi-password');
     if(security==='open')await expect(d.getByLabel('个人 Wi-Fi 密码',{exact:true})).toHaveCount(0);
     if(security==='enterprise_peap'){
-     const save=d.getByLabel('保存并自动启动',{exact:true});await expect(save).not.toBeChecked();await expect(save).toBeDisabled();
+     const save=d.getByLabel('保存并自动启动',{exact:true});await expect(save).not.toBeChecked();await expect(save).toBeEnabled();
      await expect(d.getByLabel('本次统计窗口数',{exact:true})).toHaveValue('1');await expect(d.getByLabel('本次统计窗口数',{exact:true}).locator('option[value="0"]')).toHaveCount(0);
-     await d.getByText(/当前持久启动配置尚未保存 PEAP 验证选择/).waitFor();
      const fillPeap=async()=>{await d.getByLabel('PEAP 认证服务器验证',{exact:true}).selectOption('ca');await d.getByLabel('PEAP 外层身份',{exact:true}).fill('synthetic_outer_identity');await d.getByLabel('PEAP 用户名',{exact:true}).fill('synthetic_eap_username');await d.getByLabel('PEAP 密码',{exact:true}).fill('synthetic_eap_password');await d.getByLabel('PEAP CA 证书 PEM',{exact:true}).fill(caPem);await d.getByLabel('PEAP 预期服务器域名',{exact:true}).fill('radius.example.test');};
      await fillPeap();await d.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption('personal');await expect(d.getByLabel('个人 Wi-Fi 密码',{exact:true})).toHaveValue('');
      await d.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption('enterprise_peap');for(const label of ['PEAP 外层身份','PEAP 用户名','PEAP 密码'])await expect(d.getByLabel(label,{exact:true})).toHaveValue('');
@@ -129,6 +127,7 @@ export async function runAdminV3Browser(focus='all') {
     await page.getByRole('button',{name:'连接 V3 USB',exact:true}).click();const invalid=page.getByRole('dialog',{name:'连接并部署 V3 设备',exact:true});
     await invalid.getByRole('button',{name:'选择 USB 串口并核对 V3 身份',exact:true}).click();await invalid.getByText('已登记',{exact:true}).waitFor();
     await expect(invalid.getByText(/当前 USB 的 SSID、个人密码、PEAP 用户名、外层身份和密码仅支持可打印 ASCII/)).toBeVisible();
+    await invalid.getByLabel('保存并自动启动',{exact:true}).uncheck();
     await invalid.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption(security);await invalid.getByLabel('设备凭证',{exact:true}).fill(token);await invalid.getByLabel('Wi-Fi SSID',{exact:true}).fill(security==='open'?'Synthetic中文':'Synthetic WiFi');
     if(security==='personal')await invalid.getByLabel('个人 Wi-Fi 密码',{exact:true}).fill('synthetic_中文_password');
     if(security==='enterprise_peap'){
@@ -156,7 +155,7 @@ export async function runAdminV3Browser(focus='all') {
    for(const label of ['设备凭证','PEAP 外层身份','PEAP 用户名','PEAP 密码'])await expect(rejected.getByLabel(label,{exact:true})).toHaveValue('');
    await rejected.getByRole('button',{name:'关闭对话框',exact:true}).click();
    assert.equal(clockRequests,0,'Manual modes must never fetch startup clock keys');
-   const openSaved=async state=>{await page.evaluate(value=>{window.syntheticV3State=value;},state);await page.getByRole('button',{name:'连接 V3 USB',exact:true}).click();const d=page.getByRole('dialog',{name:'连接并部署 V3 设备',exact:true});await d.getByRole('button',{name:'选择 USB 串口并核对 V3 身份',exact:true}).click();await d.getByText('已登记',{exact:true}).waitFor();await d.getByLabel('Wi-Fi SSID',{exact:true}).fill('Synthetic WiFi');await d.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption('open');return d;};
+   const openSaved=async state=>{await page.evaluate(value=>{window.syntheticV3State=value;},state);await page.getByRole('button',{name:'连接 V3 USB',exact:true}).click();const d=page.getByRole('dialog',{name:'连接并部署 V3 设备',exact:true});await d.getByRole('button',{name:'选择 USB 串口并核对 V3 身份',exact:true}).click();await d.getByText('已登记',{exact:true}).waitFor();await d.getByLabel('Wi-Fi SSID',{exact:true}).fill('Synthetic WiFi');await d.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption('open');await d.getByLabel('保存并自动启动',{exact:true}).uncheck();return d;};
    const closeSaved=async d=>d.getByRole('button',{name:'关闭对话框',exact:true}).click();
    const startCount=()=>page.evaluate(()=>window.syntheticV3Usb.filter(s=>s.startsWith('V3START ')).length);
    let mqttReads=0;const countMqtt=request=>{if(new URL(request.url()).pathname===`/api/v1/admin/devices/${node}/mqtt`)mqttReads++;};page.on('request',countMqtt);
@@ -188,7 +187,7 @@ export async function runAdminV3Browser(focus='all') {
    const deviceUrl=`${base}/api/v1/admin/devices/${node}`,devicesUrl=`${base}/api/v1/admin/devices`;
    await page.route(deviceUrl,route=>route.fulfill({status:404,contentType:'application/json',body:JSON.stringify({error:'not_found'})}));
    await page.route(devicesUrl,route=>route.request().method()==='POST'?route.fulfill({contentType:'application/json',body:JSON.stringify({device:{id:node},credential:newToken,mqtt:mockMqtt})}):route.continue());
-   const enroll=async()=>{await page.evaluate(()=>{window.syntheticV3State={credential_state:'ready',mqtt_state:'ready'};});await page.getByRole('button',{name:'连接 V3 USB',exact:true}).click();const d=page.getByRole('dialog',{name:'连接并部署 V3 设备',exact:true});await d.getByRole('button',{name:'选择 USB 串口并核对 V3 身份',exact:true}).click();await d.getByRole('button',{name:'登记此设备并分配 MQTT 授权',exact:true}).click();await d.getByLabel('Wi-Fi SSID',{exact:true}).waitFor();return d;};
+   const enroll=async()=>{await page.evaluate(()=>{window.syntheticV3State={credential_state:'ready',mqtt_state:'ready'};});await page.getByRole('button',{name:'连接 V3 USB',exact:true}).click();const d=page.getByRole('dialog',{name:'连接并部署 V3 设备',exact:true});await d.getByRole('button',{name:'选择 USB 串口并核对 V3 身份',exact:true}).click();await d.getByRole('button',{name:'登记此设备并分配 MQTT 授权',exact:true}).click();await d.getByLabel('Wi-Fi SSID',{exact:true}).waitFor();await d.getByLabel('保存并自动启动',{exact:true}).uncheck();return d;};
    const failedEnrollment=await enroll();await failedEnrollment.getByLabel('Wi-Fi SSID',{exact:true}).fill('Synthetic中文');await failedEnrollment.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption('open');const beforeEnrollment=await startCount();await failedEnrollment.getByRole('button',{name:'发送并启动有界 V3 采集',exact:true}).click();await expect(failedEnrollment.getByRole('alert')).toContainText('ASCII');await expect(failedEnrollment.getByLabel('设备凭证',{exact:true})).toHaveValue('');await expect(failedEnrollment.getByRole('button',{name:'读取本设备已验证 MQTT 授权',exact:true})).toBeVisible();await expect(failedEnrollment.getByRole('button',{name:'发送并启动有界 V3 采集',exact:true})).toBeDisabled();assert.equal(await startCount(),beforeEnrollment);await closeSaved(failedEnrollment);
    const enrollment=await enroll();await enrollment.getByLabel('Wi-Fi SSID',{exact:true}).fill('Synthetic WiFi');await enrollment.getByLabel('Wi-Fi 认证方式',{exact:true}).selectOption('open');await enrollment.getByRole('button',{name:'发送并启动有界 V3 采集',exact:true}).click();await enrollment.getByText(/已收到 V3 START ACCEPTED/).waitFor();assert.deepEqual(await page.evaluate(({newToken,mockMqtt})=>{const b=JSON.parse(window.syntheticV3Usb.filter(s=>s.startsWith('V3START ')).at(-1).slice(8));return{token:b.device_token===newToken,mqtt:b.mqtt_password===mockMqtt.password,reuse:Object.hasOwn(b,'reuse_saved_credential')||Object.hasOwn(b,'reuse_saved_mqtt')};},{newToken,mockMqtt}),{token:true,mqtt:true,reuse:false});await closeSaved(enrollment);await page.unroute(deviceUrl);await page.unroute(devicesUrl);page.off('request',countMqtt);
    // Reproduce the blocked form with synthetic inputs only: a legacy HELLO

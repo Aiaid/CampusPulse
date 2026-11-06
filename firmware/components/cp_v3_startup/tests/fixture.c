@@ -156,10 +156,68 @@ static void old_profile(void) {
     assert(!strcmp(out.settings.ssid, "synthetic-ap")); cp_v3_startup_clear(&out);
     assert(!memcmp(legacy, unrelated, sizeof legacy));
 }
+static void frame_crc(uint8_t *bytes, size_t size) {
+    memset(bytes + 12, 0, 4);
+    uint32_t crc = UINT32_MAX;
+    for (size_t i = 0; i < size; ++i) {
+        crc ^= bytes[i];
+        for (unsigned bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
+    }
+    crc = ~crc;
+    for (unsigned i = 0; i < 4; ++i) bytes[12 + i] = (uint8_t)(crc >> (i * 8));
+}
+static size_t legacy_frame(uint8_t *bytes, size_t size) {
+    /* Actual v1 payload has no EAP mode, rather than a guessed default. */
+    memmove(bytes + 20, bytes + 24, size - 24); size -= 4;
+    bytes[4] = 1;
+    for (unsigned i = 0; i < 4; ++i) bytes[8 + i] = (uint8_t)(size >> (i * 8));
+    frame_crc(bytes, size); return size;
+}
+static void version_compatibility(void) {
+    cp_v3_startup_profile_t p = profile(), out;
+    uint8_t bytes[CP_V3_STARTUP_MAX_BYTES], changed[sizeof bytes]; size_t n, ignored;
+    for (unsigned security = CP_WIFI_PERSONAL; security <= CP_WIFI_ENTERPRISE_PEAP; ++security) {
+        p = profile(); p.settings.wifi_security = security;
+        if (security != CP_WIFI_PERSONAL) memset(p.settings.password, 0, sizeof p.settings.password);
+        if (security == CP_WIFI_ENTERPRISE_PEAP) {
+            strcpy(p.settings.eap_username, "synthetic-user"); strcpy(p.settings.eap_identity, "synthetic-identity");
+            strcpy(p.settings.eap_password, "synthetic-eap-password"); p.eap_verification = CP_V3_STARTUP_EAP_NONE;
+        }
+        assert(cp_v3_startup_encode(&p, bytes, sizeof bytes, &n));
+        assert(cp_v3_startup_decode(bytes, n, p.settings.node_id, &out) && !memcmp(&p, &out, sizeof p));
+        /* CRC-valid wrong modes must fail semantically, not merely on CRC. */
+        for (unsigned mode = 0; mode < 4; ++mode) {
+            memcpy(changed, bytes, n); changed[20] = (uint8_t)mode; frame_crc(changed, n);
+            bool valid = security == CP_WIFI_ENTERPRISE_PEAP ? mode == CP_V3_STARTUP_EAP_NONE : mode == CP_V3_STARTUP_EAP_UNSPECIFIED;
+            assert(cp_v3_startup_decode(changed, n, p.settings.node_id, &out) == valid);
+            if (!valid) cleared(&out);
+        }
+        n = legacy_frame(bytes, n);
+        if (security == CP_WIFI_ENTERPRISE_PEAP) {
+            assert(!cp_v3_startup_decode(bytes, n, p.settings.node_id, &out)); cleared(&out);
+            bytes[6] = 0; frame_crc(bytes, n);
+        }
+        assert(cp_v3_startup_decode(bytes, n, p.settings.node_id, &out));
+        assert(out.eap_verification == CP_V3_STARTUP_EAP_UNSPECIFIED);
+        if (security == CP_WIFI_ENTERPRISE_PEAP) {
+            assert(!out.auto_start && !cp_v3_startup_validate(&out, NULL));
+            assert(!cp_v3_startup_encode(&out, changed, sizeof changed, &ignored));
+            assert(cp_v3_startup_save(&out) == ESP_ERR_INVALID_ARG);
+            /* Selected v1 PEAP still supplies same-node credentials read-only. */
+            fresh(); durable.exists = durable.selected = durable.have[0] = true; durable.sizes[0] = n;
+            memcpy(durable.bytes[0], bytes, n); cp_v3_saved_credentials_t saved; legacy_reads = 0;
+            assert(cp_v3_startup_load(p.settings.node_id, &out) == ESP_OK && !out.auto_start);
+            cp_v3_saved_credentials_load(p.settings.node_id, &saved);
+            assert(saved.credential_state == CP_V3_SAVED_READY && !legacy_reads && !mutations);
+            cp_v3_saved_credentials_clear(&saved);
+        } else assert(cp_v3_startup_validate(&out, NULL));
+    }
+    cp_v3_startup_clear(&out); fresh();
+}
 static void codec(void) {
     cp_v3_startup_profile_t p = profile(), out; uint8_t bytes[CP_V3_STARTUP_MAX_BYTES], changed[sizeof bytes]; size_t n;
     assert(cp_v3_startup_encode(&p, bytes, sizeof bytes, &n));
-    assert(n < 420 && !memcmp(bytes, "CPS3\1\0\1\0", 8));
+    assert(n < 420 && !memcmp(bytes, "CPS3\2\0\1\0", 8));
     assert(cp_v3_startup_decode(bytes, n, p.settings.node_id, &out)); assert(!memcmp(&p, &out, sizeof p));
     for (size_t cut = 0; cut < n; ++cut) { memset(&out, 0xab, sizeof out); assert(!cp_v3_startup_decode(bytes, cut, p.settings.node_id, &out)); cleared(&out); }
     for (size_t i = 0; i < n; ++i) { memcpy(changed, bytes, n); changed[i] ^= 1; assert(!cp_v3_startup_decode(changed, n, p.settings.node_id, &out)); cleared(&out); }
@@ -167,9 +225,13 @@ static void codec(void) {
     assert(!cp_v3_startup_encode(&p, changed, n - 1, &n) && n == 0);
     p.auto_start = false; p.settings.wifi_security = CP_WIFI_ENTERPRISE_PEAP; p.settings.password[0] = 0;
     memset(p.settings.eap_username, 'u', 128); memset(p.settings.eap_identity, 'i', 128); memset(p.settings.eap_password, 'p', 128);
+    assert(!cp_v3_startup_encode(&p, bytes, sizeof bytes, &n));
+    p.eap_verification = CP_V3_STARTUP_EAP_NONE;
     assert(cp_v3_startup_encode(&p, bytes, sizeof bytes, &n)); assert(n < CP_V3_STARTUP_MAX_BYTES);
     assert(cp_v3_startup_decode(bytes, n, p.settings.node_id, &out));
-    p.auto_start = true; assert(!cp_v3_startup_validate(&p, NULL));
+    p.auto_start = true; assert(cp_v3_startup_validate(&p, NULL));
+    assert(cp_v3_startup_encode(&p, bytes, sizeof bytes, &n));
+    assert(cp_v3_startup_decode(bytes, n, p.settings.node_id, &out) && out.auto_start);
     p = profile(); strcpy(p.settings.mqtt_uri, "mqtts://fixture.invalid:8883"); assert(!cp_v3_startup_validate(&p, NULL));
     p = profile(); strcpy(p.settings.api_origin, "https://fixture.invalid"); assert(!cp_v3_startup_validate(&p, NULL));
     p = profile(); p.settings.mqtt_password[0] = 0; assert(!cp_v3_startup_validate(&p, NULL));
@@ -185,7 +247,7 @@ static void codec(void) {
 
 }
 int main(void) {
-    fresh(); assert(cp_v3_startup_init() == ESP_OK); codec();saved_credentials();
+    fresh(); assert(cp_v3_startup_init() == ESP_OK); codec();version_compatibility();saved_credentials();
     cp_v3_startup_profile_t p = profile(), candidate = p, out;
     strcpy(candidate.settings.ssid, "candidate-ap");
     fresh(); assert(cp_v3_startup_load(p.settings.node_id, &out) == ESP_ERR_NOT_FOUND); cleared(&out);

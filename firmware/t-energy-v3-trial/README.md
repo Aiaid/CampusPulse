@@ -1,6 +1,6 @@
 # T-Energy-S3 V3 startup and small-statistics runtime
 
-The compiled entry remains `main/small_runtime.c`, version `0.3.3-te-autostart`.
+The compiled entry remains `main/small_runtime.c`, version `0.3.4-te-autostart`.
 The default USB flow still runs **one to three 30/60-second windows**. A separate
 explicit production save option stores a startup profile only after a real
 applied ACK, then supports authenticated-time recovery and fresh real-boot
@@ -100,12 +100,13 @@ origin, complete native MQTT credentials and the existing public CA bundle;
 diagnostic endpoints and their custom HTTPS CAs cannot be persisted. `max_windows:0` is
 allowed only with explicit save. Values 1–3 can also save a profile while keeping
 this boot bounded; the saved profile never contains that test limit. Both open
-and personal Wi-Fi can be provisioned and saved. Manual USB PEAP supports the
-same one-to-three-window run but refuses saving/autostart in both verification
-modes: the unchanged profile lacks verification choice/trust material and the
-saved PEAP boot path is not implemented. Verified PEAP additionally needs a
-trusted clock before RADIUS authentication. That clock requirement does not
-explain the `none` persistence restriction.
+and personal Wi-Fi, plus explicitly unverified PEAP, can be provisioned and saved.
+Profile v2 stores the explicit NONE choice; v1 disabled PEAP remains read-only
+for credential reuse and cannot become automatic by inference. CA-verified PEAP
+retains the temporary manual USB flow and full date checks, requiring trusted
+time before RADIUS authentication. The administrator wizard defaults saving on
+and completes initial policy delivery plus the seven-day renewal grant only
+within a newly submitted setup flow and after real ACK/SAVED evidence.
 
 USB Wi-Fi selects `security:"open"`, `"personal"` or `"enterprise_peap"`.
 Open requires an empty `password`; personal requires an 8–63 printable-ASCII

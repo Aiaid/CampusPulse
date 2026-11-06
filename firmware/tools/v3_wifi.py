@@ -84,8 +84,6 @@ def validate_wifi(wifi, *, save_startup=False):
     elif payload["password"]:
         raise WifiValidationError("open and PEAP Wi-Fi require an empty personal password")
     if mode == "enterprise_peap":
-        if save_startup:
-            raise WifiValidationError("PEAP startup verification selection is not stored; use manual USB setup")
         if not {"eap_username", "eap_password"}.issubset(wifi):
             raise WifiValidationError("PEAP credentials are required")
         # Empty form/JSON strings mean no trust material was supplied. Reject
@@ -97,6 +95,8 @@ def validate_wifi(wifi, *, save_startup=False):
         verification = wifi.get("eap_server_verification", "ca" if wifi.get("eap_ca_pem", "") else "none")
         if verification not in ("ca", "none"):
             raise WifiValidationError("invalid EAP server verification selection")
+        if save_startup and verification != "none":
+            raise WifiValidationError("CA-verified PEAP requires manual USB setup; saved startup supports none only")
         payload["eap_server_verification"] = verification
         if verification == "none":
             if wifi.get("eap_ca_pem", "") or wifi.get("eap_domain", ""):

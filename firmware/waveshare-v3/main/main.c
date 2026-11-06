@@ -18,6 +18,7 @@
 #include "runtime_budget.h"
 #include "runtime_upload.h"
 #include "runtime_registration.h"
+#include "runtime_policy_wait.h"
 #include <sys/stat.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -66,6 +67,7 @@ static trial_bootstrap_t s_bootstrap;
 static cp_v3_startup_profile_t *s_startup_profile;
 static bool s_autonomous,s_signed_time,s_cycle_ready,s_auto_retry=true;
 static _Atomic bool s_startup_saved,s_auto_starting;
+static _Atomic bool s_policy_wait_expired,s_policy_wait_cancelled;
 static RTC_NOINIT_ATTR uint32_t s_force_usb_magic,s_force_usb_inverse;
 static cp_v3_control_t *s_control;
 static cp_v3_control_workspace_t *s_workspace;
@@ -235,11 +237,16 @@ static bool automatic_bootstrap(void) {
     phase("AUTO CLOCK");s_auto_starting=true;s_selected_mqtt=true;s_bootstrapped=true;
     for(unsigned attempt=0;!s_usb_stop&&!s_power_stop;attempt++){
         cp_v3_time_t trusted;
-        esp_err_t result=cp_v3_clock_bootstrap(&s_startup_profile->settings,s_startup_profile->time_public_spki,s_startup_profile->time_key_id,cancelled,&trusted);
+        bool peap_none=s_startup_profile->settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP&&
+            s_startup_profile->eap_verification==CP_V3_STARTUP_EAP_NONE;
+        esp_err_t result=peap_none?
+            cp_v3_clock_bootstrap_peap_none(&s_startup_profile->settings,s_startup_profile->time_public_spki,s_startup_profile->time_key_id,cancelled,&trusted):
+            cp_v3_clock_bootstrap(&s_startup_profile->settings,s_startup_profile->time_public_spki,s_startup_profile->time_key_id,cancelled,&trusted);
         esp_err_t stopped=cp_v3_clock_stop();
         if(stopped!=ESP_OK)fault("clock_cleanup");
         if(result==ESP_OK&&!s_stop&&!s_usb_stop){
             trial_bootstrap_clear(&s_bootstrap);s_bootstrap.settings=s_startup_profile->settings;
+            if(peap_none)s_bootstrap.eap_verification=CP_V3_EAP_VERIFY_NONE;
             snprintf(s_bootstrap.origin,sizeof s_bootstrap.origin,"%s",CP_API_ORIGIN);
             s_bootstrap.transport=CP_V3_TRANSPORT_MQTT_TLS;s_bootstrap.clock_seed=trusted;s_bootstrap.max_windows=0;
             s_signed_time=true;s_autonomous=true;s_cycle_ready=true;s_auto_starting=false;
@@ -256,6 +263,8 @@ static bool automatic_bootstrap(void) {
 static bool save_startup_profile(void) {
     if(!s_bootstrap.save_startup)return true;
     cp_v3_startup_clear(s_startup_profile);s_startup_profile->settings=s_bootstrap.settings;s_startup_profile->auto_start=true;
+    s_startup_profile->eap_verification=s_bootstrap.settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP&&
+        s_bootstrap.eap_verification==CP_V3_EAP_VERIFY_NONE?CP_V3_STARTUP_EAP_NONE:CP_V3_STARTUP_EAP_UNSPECIFIED;
     memcpy(s_startup_profile->time_key_id,s_bootstrap.clock_key_id,sizeof s_startup_profile->time_key_id);
     memcpy(s_startup_profile->time_public_spki,s_bootstrap.clock_public_spki,91);s_startup_profile->time_public_spki_len=91;
     xSemaphoreTake(s_tf,portMAX_DELAY);
@@ -287,10 +296,12 @@ static void ui_network_snapshot(void) {
 }
 static uint32_t ui_count(uint64_t n){return n>UINT32_MAX?UINT32_MAX:(uint32_t)n;}
 static edge_ui_phase_t ui_phase(const char *name,const cp_v3_capture_status_t *capture) {
+    if(s_policy_wait_expired&&s_safe&&!s_run_failed)return EDGE_UI_POLICY_EXPIRED;
     if(s_run_failed||capture->failed||strstr(name,"ERROR")||strstr(name,"FAILED"))return EDGE_UI_ERROR;
     if(s_stop&&!s_safe)return EDGE_UI_STOPPING;
     if(s_safe)return EDGE_UI_STOPPED_SAFE;
     if(!strcmp(name,"WAIT USB"))return EDGE_UI_WAIT_USB;
+    if(!strcmp(name,"WAIT POLICY"))return EDGE_UI_WAIT_POLICY;
     if(capture->running)return EDGE_UI_COLLECTING;
     if(!strcmp(name,"LEASE PAUSED")||(s_storage_gate&&capture->paused))return EDGE_UI_PAUSED;
     return EDGE_UI_STARTING;
@@ -512,6 +523,20 @@ static bool registration_wait(void *ctx,uint32_t delay_ms) {
     while(delay_ms&&!s_stop){uint32_t step=delay_ms<100?delay_ms:100;vTaskDelay(pdMS_TO_TICKS(step));delay_ms-=step;}
     return !s_stop;
 }
+typedef struct { cp_v3_transport_response_t *response; const char *path; bool terminal; } edge_policy_poll_t;
+static bool policy_poll_denied(void *ctx) { return !s_auto_retry||((edge_policy_poll_t *)ctx)->terminal; }
+static bool policy_poll_clock(void *ctx,cp_v3_time_t *now) { (void)ctx;return current(now); }
+static edge_policy_poll_result_t policy_poll_attempt(void *ctx) {
+    edge_policy_poll_t *poll=ctx;
+    if(!request(CP_V3_HTTP_GET,poll->path,NULL,0,poll->response)){
+        if(!s_error_retryable)poll->terminal=true;
+        return EDGE_POLICY_POLL_RETRY;
+    }
+    cp_v3_time_t now;if(!current(&now))return EDGE_POLICY_POLL_RETRY;
+    cp_v3_control_result_t offered=cp_v3_control_offer(s_control,s_reply,poll->response->body_bytes,now);
+    return offered==CP_V3_CONTROL_OK?EDGE_POLICY_POLL_READY:
+        offered==CP_V3_CONTROL_WAIT?EDGE_POLICY_POLL_WAIT:EDGE_POLICY_POLL_RETRY;
+}
 static bool control_match(void *ctx,const cp_v3_expected_t *e,const void *body,size_t bytes,const void *receipt,size_t length) {
     (void)ctx;return cp_v3_control_match_frozen_receipt(s_workspace,&e->scope,body,bytes,receipt,length,cp_v3_transport_sha256,NULL)==CP_V3_CONTROL_OK;
 }
@@ -713,12 +738,19 @@ static bool run(void) {
     edge_registration_io_t registration={&r,registration_stopped,registration_attempt,registration_wait};
     if(!edge_registration_exchange(&registration,body,bytes)||!current(&t)||cp_v3_control_registration_receipt(s_control,s_reply,r.body_bytes,t)!=CP_V3_CONTROL_OK)return false;
     if(!replay_historical_controls())return false;
-    char path[128];snprintf(path,sizeof path,"/api/v3/device/config?boot_id=%s",s_boot);phase("WAIT POLICY");bool offered=false;
-    for(unsigned i=0;i<180&&!s_stop;i++){
-        if(request(CP_V3_HTTP_GET,path,NULL,0,&r)&&current(&t)&&cp_v3_control_offer(s_control,s_reply,r.body_bytes,t)==CP_V3_CONTROL_OK){offered=true;break;}
-        vTaskDelay(pdMS_TO_TICKS(1000));
+    char path[128];snprintf(path,sizeof path,"/api/v3/device/config?boot_id=%s",s_boot);phase("WAIT POLICY");
+    edge_policy_poll_t poll={.response=&r,.path=path};
+    edge_policy_wait_io_t policy_io={&poll,registration_stopped,policy_poll_denied,policy_poll_clock,policy_poll_attempt,registration_wait};
+    edge_policy_wait_limits_t policy_limits={s_control->capability_issued_utc_ms,s_control->capability_expires_utc_ms,s_control->last_mono_ms,s_control->clock_epoch};
+    edge_policy_wait_result_t waited=edge_policy_wait_exchange(&policy_io,&policy_limits);
+    if(waited!=EDGE_POLICY_WAIT_READY){
+        s_policy_wait_expired=waited==EDGE_POLICY_WAIT_EXPIRED;
+        s_policy_wait_cancelled=waited==EDGE_POLICY_WAIT_CANCELLED;
+        ESP_LOGW(TAG,"policy_wait_ended reason=%u",(unsigned)waited);return false;
     }
-    if(!offered||!current(&t))return false;
+    bool policy_clock_ready=current(&t);
+    if(s_stop){s_policy_wait_cancelled=true;return false;}
+    if(!s_auto_retry||!policy_clock_ready)return false;
     cp_v3_boundary_t boundary={0};if(cp_v3_control_apply(s_control,t,boundary,++s_control_seq,actual_apply,NULL)!=CP_V3_CONTROL_OK)return false;
     body=cp_v3_control_ack_bytes(s_control,&bytes);phase("ACK DURABLE");
     if(!body||!control_exchange("config_ack","/api/v3/device/config/ack",body,bytes,s_control_seq,false))return false;
@@ -895,11 +927,13 @@ static void main_task(void *unused) {
     if(writers_safe&&s_mounted){xSemaphoreTake(s_tf,portMAX_DELAY);bool sync=media_sync(NULL);unmount=sync?raw_storage_unmount():ESP_FAIL;if(unmount==ESP_OK)s_mounted=false;xSemaphoreGive(s_tf);}
     else if(!s_mounted)unmount=ESP_OK;
     bool safe=writers_safe&&network_stop==ESP_OK&&unmount==ESP_OK;
-    s_run_failed=!(okay&&safe);
+    bool policy_wait_closed=safe&&(s_policy_wait_expired||s_policy_wait_cancelled);
+    s_run_failed=!policy_wait_closed&&!(okay&&safe);
     budget_log();
     ESP_LOGI(TAG,"lifecycle_cleanup covered=%llu completed=%llu general_credit_granted=0",(unsigned long long)s_cleanup_covered,(unsigned long long)s_cleanup_completed);
     ESP_LOGI(TAG,"cleanup safe=%u storage=%ld raw=%ld network=%ld",(unsigned)safe,(long)unmount,(long)raw_stop,(long)network_stop);
-    phase(okay&&safe?"SMALL TEST PASSED":"SMALL STOPPED ERROR");
+    phase(policy_wait_closed?(s_policy_wait_expired?"POLICY EXPIRED":"POLICY WAIT STOPPED"):
+          okay&&safe?"SMALL TEST PASSED":"SMALL STOPPED ERROR");
     s_safe=safe;
     cp_v3_startup_clear(s_startup_profile);
     if(s_safe&&s_autonomous&&s_cycle_ready&&s_auto_retry&&!s_usb_stop&&!s_power_stop){

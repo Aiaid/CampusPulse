@@ -12,7 +12,7 @@ typedef struct {
     char origin[128];
     /* Empty selects the existing public bundle. Never persisted or logged. */
     char server_ca_pem[TRIAL_BOOTSTRAP_CA_MAX + 1u];
-    /* Manual USB PEAP trust only; never stored in the startup profile. */
+    /* CA/domain remain manual USB only. Explicit NONE may be saved separately. */
     char eap_ca_pem[TRIAL_BOOTSTRAP_CA_MAX + 1u], eap_domain[254];
     cp_v3_time_t clock_seed;
     unsigned max_windows;
@@ -40,7 +40,7 @@ void trial_bootstrap_clear(trial_bootstrap_t *);
  * three EAP credentials and an explicit none/ca server-verification selection.
  * CA mode requires its separate CA/domain binding; none forbids those fields.
  * Legacy frames with a CA/domain pair imply ca. PEAP has an empty password.
- * PEAP cannot be saved for autonomous startup. Other modes forbid EAP fields,
+ * Only explicit none PEAP can be saved for autonomous startup. Other modes forbid EAP fields,
  * including empty ones. API server trust and EAP trust remain separate.
  * Any failure clears the complete output. Caller owns/wipes the input JSON.
  * Parsing a CA does not validate a server, hostname, date or isolated origin. */

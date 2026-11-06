@@ -266,6 +266,10 @@ bool trial_bootstrap_parse_with_credentials(const char *json, const char *node, 
         if(!out->save_startup||!seen[19]||!seen[20]||out->transport!=CP_V3_TRANSPORT_MQTT_TLS||
            !public_key_decode(public_key,out->clock_public_spki))goto done;
         cp_v3_startup_profile_t candidate={.settings=out->settings,.auto_start=true,.time_public_spki_len=91};
+        if(out->settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP){
+            if(out->eap_verification!=CP_V3_EAP_VERIFY_NONE){cp_v3_startup_clear(&candidate);goto done;}
+            candidate.eap_verification=CP_V3_STARTUP_EAP_NONE;
+        }
         memcpy(candidate.time_key_id,out->clock_key_id,sizeof candidate.time_key_id);memcpy(candidate.time_public_spki,out->clock_public_spki,91);
         bool valid=cp_v3_startup_validate(&candidate,node);cp_v3_startup_clear(&candidate);if(!valid)goto done;
     }

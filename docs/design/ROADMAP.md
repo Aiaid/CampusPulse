@@ -25,6 +25,18 @@ publication/deployment is checked against the actual main workflow run.
 
 ## P0 — Deliver the core MVP
 
+- [ ] Make saved automatic startup the default USB setup behavior (2026-11-06
+      user request): support open/personal and explicitly unverified PEAP through
+      saved profile, signed-clock bootstrap and both S3 runtimes; preserve old
+      profiles and make trust selection explicit. Complete the existing seven-day
+      renewal grant only within the newly submitted setup flow after SAVED and
+      the matching real applied ACK. Retain temporary runs and explicit revoke.
+      CA-verified PEAP retains full date checks/manual USB until independent
+      pre-network trusted time is available; never silently weaken verification.
+      Match the generated T-Energy profile to its 128 KiB/day uplink ceiling,
+      and block policy preparation on expired or mismatched USB capabilities.
+      Verify host/browser/build coverage and separately validate real reboot.
+
 - [ ] Repair administrator V3 policy preparation after the real 2026-11-03
       Waveshare failure: recognize its fixed TF queue geometry and generate
       window/status/control reserves of 4/2/2 slots (8192/4096/4096 bytes),

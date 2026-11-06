@@ -78,12 +78,14 @@ describe('native V3 USB bootstrap',()=>{
   expect(new TextEncoder().encode(eapCaPem).length).toBeLessThanOrEqual(4096);
   expect(()=>buildV3Start({...input,...peap,eapCaPem})).toThrow('固件上限');
  });
- it('blocks only PEAP startup persistence while allowing open/personal saved and bounded profiles',()=>{
-  for(const windows of [0,1,2,3])expect(()=>buildV3Start({...input,...peap,windows,saveStartup:true,clockKey})).toThrow('持久启动配置');
+ it('allows explicit PEAP NONE persistence while keeping CA manual and fully validated',()=>{
+  for(const windows of [0,1,2,3])expect(()=>buildV3Start({...input,...peap,windows,saveStartup:true,clockKey})).toThrow('PEAP CA 验证');
   expect(()=>buildV3Start({...input,...peap,windows:0})).toThrow('1–3');
   expect(()=>buildV3Start({...input,...peap,startupReconfigure:true})).toThrow();
   expect(()=>buildV3Start({...input,...peap,clockKey})).toThrow();
   expect(JSON.parse(buildV3Start({...input,security:'open',password:'',saveStartup:true,clockKey,windows:0}).slice(8))).toMatchObject({security:'open',password:'',save_startup:true,max_windows:0});
+  const unverified={...peap,eapServerVerification:'none',eapCaPem:undefined,eapDomain:undefined};
+  for(const windows of [0,1,2,3])expect(JSON.parse(buildV3Start({...input,...unverified,windows,saveStartup:true,clockKey}).slice(8))).toMatchObject({security:'enterprise_peap',eap_server_verification:'none',save_startup:true,max_windows:windows});
  });
  it('uses the fresh identity and bounded USB host clock exchange for PEAP as for personal',()=>{
   expect(()=>buildV3Start({...input,...peap,receivedMono:2201})).toThrow('超时');expect(()=>buildV3Start({...input,...peap,receivedWall:1800000000100})).toThrow('跳变');expect(()=>buildV3Start({...input,...peap,nonce:'b'.repeat(32)})).toThrow('nonce');

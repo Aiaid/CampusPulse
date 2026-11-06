@@ -65,7 +65,7 @@ export function buildV3Start({identity,nonce,expectedNode,bootId,token,mqtt,reus
  if(reuseSavedCredential?(token!==undefined||identity.credential_state!=='ready'):(typeof token!=='string'||!/^[A-Za-z0-9_-]{32,192}$/.test(token)))throw new Error('请输入本设备有效的设备凭证，或核对设备已保存且可用的凭证；不能混用。');
  if(reuseSavedMqtt&&(mqtt!==undefined||identity.mqtt_state!=='ready'))throw new Error('设备未确认已保存可用的 MQTT 授权，或与提供的授权混用。');
  const bytes=utf8Bytes,wifi=validateV3Wifi({ssid,password,security,eapUsername,eapIdentity,eapPassword,eapCaPem,eapDomain,eapServerVerification});
- if(security==='enterprise_peap'&&saveStartup===true)throw new Error('当前持久启动配置尚未保存 PEAP 验证选择或实现其启动流程；PEAP 仅支持 USB 临时运行 1–3 个窗口。');
+ if(security==='enterprise_peap'&&saveStartup===true&&wifi.eap_server_verification!=='none')throw new Error('PEAP CA 验证需要 USB 提供可信时间并完整验证证书链、域名和有效期；当前仅支持 USB 临时运行 1–3 个窗口，不能保存自动启动。');
  if (typeof saveStartup!=='boolean'||typeof startupReconfigure!=='boolean'||startupReconfigure&&!saveStartup||clockKey!==undefined&&!saveStartup) throw new Error('启动保存选项无效。');
  if (![1,2,3].includes(windows)&&!(saveStartup&&windows===0)) throw new Error('临时运行仅支持 1–3 个窗口；保存模式才可选择连续运行。');
  const rtt=receivedMono-sentMono;

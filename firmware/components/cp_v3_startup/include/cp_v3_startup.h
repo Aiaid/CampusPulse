@@ -11,20 +11,27 @@
 #define CP_V3_STARTUP_LOGICAL_WRITE_BYTES 8192u
 #define CP_V3_STARTUP_RECONFIGURE_LOGICAL_WRITE_BYTES 16384u
 
+typedef enum {
+    CP_V3_STARTUP_EAP_UNSPECIFIED = 0,
+    CP_V3_STARTUP_EAP_NONE = 1,
+} cp_v3_startup_eap_verification_t;
+
 typedef struct {
     cp_settings_t settings;
     char time_key_id[CP_V3_STARTUP_TIME_KEY_ID_SIZE];
     uint8_t time_public_spki[CP_V3_STARTUP_TIME_SPKI_CAPACITY];
     uint16_t time_public_spki_len;
     bool auto_start;
+    cp_v3_startup_eap_verification_t eap_verification;
 } cp_v3_startup_profile_t;
 
 /* Portable structural/production-profile validation. expected_node may be NULL
  * for encode/save; callers restoring identity must pass the hardware node ID.
- * This stored format does not encode PEAP verification choice/trust material,
- * and its autonomous boot path does not implement PEAP. auto_start=true rejects
- * it; this is not a claim that unverified EAP needs certificate-date checking.
- * Explicit USB may retain a false PEAP profile.
+ * Schema 2 admits PEAP only with explicit NONE (no EAP-server verification).
+ * Non-PEAP profiles require UNSPECIFIED. CA-verified PEAP is USB-only.
+ * Decode additionally accepts schema-1 PEAP with auto_start=false and leaves
+ * its verification UNSPECIFIED for read-only credential reuse. Such a legacy
+ * profile cannot pass this new-save validator or be re-encoded unchanged.
  * Cryptographic public-point validation is additionally required by NVS load/save.
  * Neither settings migration nor a legacy profile is consulted. */
 bool cp_v3_startup_validate(const cp_v3_startup_profile_t *, const char *expected_node);

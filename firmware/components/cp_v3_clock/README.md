@@ -7,8 +7,13 @@ Wi-Fi/SNTP/HTTP resources and returns an authenticated time anchor for the norma
 native MQTT/TLS transport. Failure clears the output; cleanup errors retain the
 owner so `cp_v3_clock_stop()` can be retried before another owner starts.
 
-Personal/open Wi-Fi is supported. Cold PEAP bootstrap is rejected because RADIUS
-certificate authentication requires trusted time before an IP address exists.
+Personal/open Wi-Fi uses `cp_v3_clock_bootstrap()`, which continues to reject
+PEAP. An explicit `cp_v3_clock_bootstrap_peap_none()` entry supports profiles
+whose caller validated the saved choice of no EAP-server verification. It clears
+CA/domain/default-bundle trust, sets the SDK time-check flag for this explicit
+NONE mode, selects PEAP and configures identity/username/password before starting
+Wi-Fi. The EAP choice never changes cloud HTTPS/MQTT TLS verification. CA-verified
+PEAP remains manual USB only; no CA/date bootstrap exception is introduced.
 The application must retain a deliberate physical USB recovery path. Missing or
 invalid saved keys do not trigger network key discovery or trust-on-first-use.
 
@@ -21,6 +26,9 @@ hostname and certificate-date verification enabled. Redirects are rejected. No
 device token, broker credential, node identity or Wi-Fi credential is put in the
 HTTP request. The previous wall-clock mapping is restored before ownership is
 released; normal transport subsequently installs the returned trusted anchor.
+PEAP credentials and options are cleared only after the temporary radio stops;
+enterprise mode is disabled and its time-check flag reset before Wi-Fi deinit.
+Any failed stop/reset preserves ownership for an explicit cleanup retry.
 
 The first explicitly trusted USB setup pins a P-256 SPKI public key (91 DER
 bytes) and key ID. Boot never replaces this pin from the clock response or the
@@ -71,12 +79,18 @@ With the pinned ESP-IDF 5.5.3 path in `IDF_PATH`:
 
 ```sh
 uv run firmware/components/cp_v3_clock/tests/run.py
+uv run firmware/components/cp_v3_clock/tests/test_bootstrap.py
 ```
 
 The ASan/UBSan host test creates real Node WebCrypto signatures and verifies them
 through OpenSSL, then checks mutations and temporal/parser bounds. SDK compile
-checks are separate from actual SNTP reachability, HTTPS, wrong-key rejection,
-Wi-Fi interruption, cleanup and untethered hardware acceptance.
+checks are separate from the deterministic SDK-double suite, which executes the
+actual bootstrap control flow with sanitizers: EAP setup and teardown ordering,
+strict HTTPS configuration, fresh challenge retries, signature rejection,
+association/SNTP failures, cancellation, partial credential cleanup and retained
+ownership after cleanup failures. These host tests do not establish actual SNTP
+reachability, HTTPS, PEAP interoperability, Wi-Fi interruption recovery or
+untethered hardware acceptance.
 
 Primary references: [Workers Web Crypto](https://developers.cloudflare.com/workers/runtime-apis/web-crypto/),
 [ESP32-S3 entropy requirements](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/api-reference/system/random.html),

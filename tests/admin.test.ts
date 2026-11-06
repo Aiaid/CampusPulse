@@ -36,11 +36,31 @@ describe('V3 administrator management',()=>{
    control_reserve_bytes:wave?4096:1024,control_reserve_items:wave?2:1,
    stream_reserves:[{stream:'window_statistics',bytes:wave?8192:1024,items:wave?4:1},{stream:'node_status',bytes:wave?4096:1024,items:wave?2:1}]});
   expect(p.uplink).toMatchObject({max_body_bytes:wave?2048:1024,streams:['window_statistics','node_status']});
+  expect(p.custody.max_upload_bytes_per_day).toBe(wave?8388608:131072);
+  expect(p.resources.storage_write_bytes_per_day).toBeLessThanOrEqual(wave?67108864:1048576);
   expect(await negotiateDeviceConfigV3(await freezeDeviceConfigV3(p),caps,{node_id:caps.node_id,boot_id:caps.boot_id,now:new Date().toISOString(),
    last_assignment_generation:0,closed_window_seq:0,closed_segment_seq:0,window_open:false,segment_open:false})).toMatchObject({state:'compatible',issues:[],applied:false});
   expect(await json(await validatePolicy(p))).toMatchObject({valid:true,issues:[]});
   expect(state.db.prepare('SELECT COUNT(*) n FROM device_assignments_v3').get()?.n).toBe(0);
   expect(state.db.prepare('SELECT COUNT(*) n FROM device_acknowledgements_v3').get()?.n).toBe(0);
+ });
+ it('rejects an excessive T-Energy uplink budget in management and direct new assignment',async()=>{
+  await registerBoard('tenergy');const {policy}=await json(await prepare()),p=policy as DeviceConfigV3;
+  expect(await json(await validatePolicy(p))).toMatchObject({valid:true,issues:[]});
+  p.custody.max_upload_bytes_per_day=131073;
+  expect(await json(await validatePolicy(p))).toMatchObject({valid:false,issues:expect.arrayContaining([
+   {code:'unsupported_capability',path:'custody.max_upload_bytes_per_day'}])});
+  expect((await client.call('/device-v3/assignments','POST',{policy:p,expected_generation:0})).status).toBe(422);
+  p.custody.max_upload_bytes_per_day=8388608;
+  expect((await client.call('/device-v3/assignments','POST',{policy:p,expected_generation:0})).status).toBe(422);
+  expect(state.db.prepare('SELECT COUNT(*) n FROM device_assignments_v3').get()?.n).toBe(0);
+ });
+ it('reports expired capabilities before constructing invalid activation dates',async()=>{
+  const caps=await registerBoard('waveshare');
+  vi.spyOn(Date,'now').mockReturnValue(Date.parse(caps.expires_at));
+  const response=await prepare();expect(response.status).toBe(409);
+  expect(await json(response,409)).toMatchObject({error:{code:'v3_capabilities_expired'}});
+  expect(state.db.prepare('SELECT COUNT(*) n FROM device_assignments_v3').get()?.n).toBe(0);
  });
  it('rejects the old Waveshare generation-6 reserves and each changed fixed reservation',async()=>{
   await registerBoard('waveshare');const {policy}=await json(await prepare());

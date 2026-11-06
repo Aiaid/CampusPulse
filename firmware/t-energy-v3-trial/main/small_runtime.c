@@ -6,6 +6,7 @@
 #include "small_runtime_logic.h"
 #include "small_runtime_requests.h"
 #include "small_runtime_requests_json.h"
+#include "small_runtime_policy_wait.h"
 #include "trial_bootstrap.h"
 #include "board_budget.h"
 #include "board_small_queue.h"
@@ -61,6 +62,7 @@ static bool retry_verified,window_frozen;
 static _Atomic bool request_stop,manual_stop,usb_reader_owned;
 static bool autonomous,startup_saved,startup_write_uncertain,persist_unconfirmed,budget_denied,identity_denied,refresh_due;
 static bool clock_cleanup_safe=true;
+static size_t policy_response_bytes;
 static cp_v3_startup_profile_t *startup_profile;
 #define TE_FORCE_USB_MAGIC UINT32_C(0x54455553)
 RTC_NOINIT_ATTR static uint32_t force_usb_magic,force_usb_inverse;
@@ -141,12 +143,17 @@ static bool automatic_bootstrap(void){
             if(usb==ESP_OK){autonomous=bootstrap.save_startup&&!bootstrap.max_windows;return true;}
             if(usb!=ESP_ERR_TIMEOUT)return false;
             cp_v3_time_t trusted={0};clock_cleanup_safe=false;
-            esp_err_t result=cp_v3_clock_bootstrap(&startup_profile->settings,startup_profile->time_public_spki,startup_profile->time_key_id,cancelled,&trusted);
+            bool peap_none=startup_profile->settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP&&
+                startup_profile->eap_verification==CP_V3_STARTUP_EAP_NONE;
+            esp_err_t result=peap_none?
+                cp_v3_clock_bootstrap_peap_none(&startup_profile->settings,startup_profile->time_public_spki,startup_profile->time_key_id,cancelled,&trusted):
+                cp_v3_clock_bootstrap(&startup_profile->settings,startup_profile->time_public_spki,startup_profile->time_key_id,cancelled,&trusted);
             clock_cleanup_safe=cp_v3_clock_stop()==ESP_OK;
             if(!clock_cleanup_safe){ESP_LOGE(TAG,"clock_cleanup_unconfirmed=1 no_next_network_owner=1");return false;}
             if(manual_stop)return false;
             if(result==ESP_OK){
                 trial_bootstrap_clear(&bootstrap);bootstrap.settings=startup_profile->settings;
+                if(peap_none)bootstrap.eap_verification=CP_V3_EAP_VERIFY_NONE;
                 snprintf(bootstrap.origin,sizeof bootstrap.origin,"%s",CP_API_ORIGIN);
                 bootstrap.transport=CP_V3_TRANSPORT_MQTT_TLS;bootstrap.clock_seed=trusted;bootstrap.max_windows=0;
                 autonomous=true;startup_saved=true;
@@ -168,6 +175,8 @@ static bool save_startup(void){
     if(!bootstrap.save_startup)return true;
     if(cancelled()){autonomous=false;puts("V3 STARTUP SAVE FAILED");fflush(stdout);return false;}
     cp_v3_startup_clear(startup_profile);startup_profile->settings=bootstrap.settings;startup_profile->auto_start=true;
+    startup_profile->eap_verification=bootstrap.settings.wifi_security==CP_WIFI_ENTERPRISE_PEAP&&
+        bootstrap.eap_verification==CP_V3_EAP_VERIFY_NONE?CP_V3_STARTUP_EAP_NONE:CP_V3_STARTUP_EAP_UNSPECIFIED;
     memcpy(startup_profile->time_key_id,bootstrap.clock_key_id,sizeof startup_profile->time_key_id);
     memcpy(startup_profile->time_public_spki,bootstrap.clock_public_spki,91);startup_profile->time_public_spki_len=91;
     uint64_t cost=bootstrap.startup_reconfigure?CP_V3_STARTUP_RECONFIGURE_LOGICAL_WRITE_BYTES:CP_V3_STARTUP_LOGICAL_WRITE_BYTES;
@@ -281,6 +290,18 @@ static bool registration_wait(void *p,uint32_t delay){
 static void registration_attempt(void *p,unsigned index,size_t n){
     (void)p;if(index)retries++;
     ESP_LOGI(TAG,"registration_attempt=%u frozen_body_bytes=%u",index+1,(unsigned)n);
+}
+static bool policy_current(void *p,cp_v3_time_t *t){(void)p;return current(t);}
+static te_small_policy_poll_t policy_poll(void *p){
+    (void)p;char path[128];snprintf(path,sizeof path,"/api/v3/device/config?boot_id=%s",boot);
+    cp_v3_transport_response_t response={0};
+    te_small_request_result_t result=te_small_request_once(&http_io,CP_V3_HTTP_GET,path,NULL,0,false,&response);
+    if(identity_denied)return TE_POLICY_TERMINAL;
+    if(result==TE_REQUEST_OK){policy_response_bytes=response.body_bytes;return TE_POLICY_RESPONSE;}
+    return result==TE_REQUEST_TRANSIENT?TE_POLICY_PENDING:TE_POLICY_TERMINAL;
+}
+static bool policy_offer(void *p,cp_v3_time_t t){
+    (void)p;return cp_v3_control_offer(control,reply,policy_response_bytes,t)==CP_V3_CONTROL_OK;
 }
 static bool control_match(void *p,const cp_v3_expected_t *e,const void *bytes,size_t n,const void *receipt,size_t rn){
     (void)p;return cp_v3_control_match_frozen_receipt(workspace,&e->scope,bytes,n,receipt,rn,cp_v3_transport_sha256,NULL)==CP_V3_CONTROL_OK;
@@ -494,12 +515,17 @@ static bool run(void){
     cp_v3_transport_response_t r={0};phase("REGISTER");
     te_small_registration_io_t registration={&http_io,NULL,registration_wait,registration_attempt};
     if(!te_small_registration_exchange(&registration,bytes,n,&r)||!current(&t)||cp_v3_control_registration_receipt(control,reply,r.body_bytes,t)!=CP_V3_CONTROL_OK)return false;
-    char path[128];snprintf(path,sizeof path,"/api/v3/device/config?boot_id=%s",boot);bool offered=false;phase("WAIT POLICY");
-    for(unsigned i=0;i<180&&!request_stopped(NULL);i++){
-        if(request(CP_V3_HTTP_GET,path,NULL,0,false,&r)&&current(&t)&&cp_v3_control_offer(control,reply,r.body_bytes,t)==CP_V3_CONTROL_OK){offered=true;break;}
-        vTaskDelay(pdMS_TO_TICKS(1000));
+    phase("WAIT POLICY");
+    te_small_policy_wait_io_t policy_io={NULL,request_stopped,policy_current,policy_poll,policy_offer,registration_wait};
+    te_small_policy_wait_result_t waited=te_small_policy_wait(&policy_io,control);
+    if(waited!=TE_POLICY_OFFERED){
+        autonomous=false;
+        const char *reason=waited==TE_POLICY_EXPIRED?"capability_expired":waited==TE_POLICY_CLOCK_INVALID?"clock_invalid":
+            waited==TE_POLICY_CANCELLED?"cancelled":"request_terminal";
+        ESP_LOGE(TAG,"policy_wait_stopped reason=%s usb_required=1",reason);
+        return false;
     }
-    if(!offered||!current(&t))return false;
+    if(!current(&t))return false;
     cp_v3_boundary_t boundary={0};if(cp_v3_control_apply(control,t,boundary,++control_seq,apply,NULL)!=CP_V3_CONTROL_OK)return false;
     bytes=cp_v3_control_ack_bytes(control,&n);
     if(!bytes||!exchange("config_ack","/api/v3/device/config/ack",bytes,n,control_seq,false)||control->apply_result!=CP_V3_APPLY_OK)return false;

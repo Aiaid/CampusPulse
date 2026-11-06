@@ -19,7 +19,7 @@ export function addDeviceV3OpenApi<T extends { paths: object; components: { sche
     operationId, tags: ['Administration'], security: [{ AdminSession: [] }], description,
     ...(method === 'get' ? { parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-z0-9_-]{1,64}$' } }] }
       : { requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false,
-          required: ['policy','expected_generation'], properties: { policy: { type: 'object' }, expected_generation: { type: 'integer', minimum: 0 } } } } } } }),
+          required: ['policy','expected_generation'], properties: { policy: { type: 'object' }, expected_generation: { type: 'integer', minimum: 0 }, expected_startup_revision: { type: 'integer', minimum: 0, description: 'Optional setup-flow compare-and-swap guard, checked in the assignment transaction.' } } } } } } }),
     responses: { '200': result('DeviceV3Response'), ...failures },
   });
   Object.assign(document.paths, {

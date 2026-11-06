@@ -4,7 +4,8 @@
 
 typedef enum {
     EDGE_UI_WAIT_USB, EDGE_UI_STARTING, EDGE_UI_COLLECTING, EDGE_UI_PAUSED,
-    EDGE_UI_STOPPING, EDGE_UI_STOPPED_SAFE, EDGE_UI_ERROR
+    EDGE_UI_STOPPING, EDGE_UI_STOPPED_SAFE, EDGE_UI_ERROR,
+    EDGE_UI_WAIT_POLICY, EDGE_UI_POLICY_EXPIRED
 } edge_ui_phase_t;
 
 /* A copied, non-identifying view. Known bits distinguish zero from unavailable.

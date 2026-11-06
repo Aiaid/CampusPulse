@@ -8,6 +8,7 @@ import AccountSecurity from './AccountSecurity.jsx';
 import HelpTip from './HelpTip.jsx';
 import { Bootstrap, Login, ReauthDialog } from './AuthScreens.jsx';
 import { adminErrorReference } from './error-reference.js';
+import { withAssignmentTransition } from './provisioning/assignment-transition.js';
 import './admin.css';
 
 const messages = {
@@ -23,7 +24,7 @@ const messages = {
   storage_unavailable: '管理服务或存储暂时不可用，请稍后重试。', settings_unavailable: '运行设置暂时不可用，请检查数据库迁移和服务状态。',
   invalid_settings: '站点设置不符合要求，请检查名称、模式和各数值范围。',
   placement_mismatch: '配置引用的部署不属于这台设备，请重新选择。', placement_inactive: '发布只能引用当前有效的部署；未来或历史部署的更改可以先保存草稿。',
-  v3_capabilities_required: '设备尚未自行登记 V3 能力，请先通过 USB 启动设备并刷新。', v3_generation_conflict: '期望 generation 已变化，请刷新并重新准备策略。', v3_policy_incompatible: '策略与设备当前能力不匹配，请检查参数。',
+  v3_capabilities_required: '设备尚未自行登记 V3 能力，请先通过 USB 启动设备并刷新。', v3_capabilities_expired: '设备能力已过期，请先让设备重新联网登记能力，再刷新状态；历史 ACK 不代表本次启动已上线。', v3_generation_conflict: '期望 generation 已变化，请刷新并重新准备策略。', v3_policy_incompatible: '策略与设备当前能力不匹配，请检查参数。',
   device_not_found: '该设备不存在，请刷新列表。', place_not_found: '该地点不存在，请刷新列表。', draft_not_found: '该草稿不存在或已发布，请刷新列表。',
   config_published: '此版本已经发布，不能覆盖。请复制为新草稿。', method_not_allowed: '管理 API 不支持本次操作，请检查前后端版本。', not_found: '未找到该管理接口。',
 };
@@ -67,7 +68,7 @@ export default function AdminApp() {
       error.requestId = adminErrorReference(body.error?.request_id);
       throw error;
     }
-    return body;
+    return path==='/device-v3/assignments'&&options.method==='POST'?withAssignmentTransition(body,response.headers):body;
   }, []);
   const closeReauth = useCallback(result => {
     reauthPending.current?.resolve(result);

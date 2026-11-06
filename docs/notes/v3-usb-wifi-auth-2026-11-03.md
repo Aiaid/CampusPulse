@@ -1,5 +1,11 @@
 # V3 USB Wi-Fi authentication repair — 2026-11-03
 
+**Partially superseded 2026-11-06:** the later
+[default startup implementation](default-autostart-2026-11-06.md) supports saved
+PEAP NONE and automatic initial policy delivery/renewal setup. Statements below
+that all PEAP persistence is unavailable describe this earlier release only.
+Strict CA-mode manual authentication and its full date checks remain current.
+
 Status: software repair published at `14114d7`; [release CI/CD
 41583972805](https://github.com/Aiaid/CampusPulse/actions/runs/41583972805)
 passed. The subsequent Waveshare app-only upgrade and direct USB HELLO passed;

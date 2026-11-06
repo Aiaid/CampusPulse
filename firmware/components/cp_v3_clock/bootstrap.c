@@ -2,6 +2,7 @@
 #include "sdkconfig.h"
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
+#include "esp_eap_client.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -27,6 +28,7 @@ static TaskHandle_t owner;
 static esp_netif_t *station;
 static esp_event_handler_instance_t wifi_handler,ip_handler;
 static bool wifi_initialized,wifi_started,sntp_started,link_up,hint_ready;
+static bool eap_configured,enterprise_enabled;
 static bool (*cancel_check)(void);
 static struct timeval previous_wall;
 static uint64_t previous_mono;
@@ -100,6 +102,14 @@ esp_err_t cp_v3_clock_stop(void){
         wall_saved=false;
     }
     if(wifi_started){esp_err_t e=esp_wifi_stop();if(e!=ESP_OK&&e!=ESP_ERR_WIFI_NOT_STARTED)return e;wifi_started=false;}
+    if(enterprise_enabled){esp_err_t e=esp_wifi_sta_enterprise_disable();if(e!=ESP_OK)return e;enterprise_enabled=false;}
+    if(eap_configured){
+        esp_eap_client_clear_identity();esp_eap_client_clear_username();esp_eap_client_clear_password();esp_eap_client_clear_ca_cert();
+        esp_err_t e=esp_eap_client_set_domain_name(NULL);if(e!=ESP_OK)return e;
+        e=esp_eap_client_set_disable_time_check(false);if(e!=ESP_OK)return e;
+        e=esp_eap_client_use_default_cert_bundle(false);if(e!=ESP_OK)return e;
+        eap_configured=false;
+    }
     if(wifi_initialized){esp_err_t e=esp_wifi_deinit();if(e!=ESP_OK)return e;wifi_initialized=false;}
     if(wifi_handler){esp_err_t e=esp_event_handler_instance_unregister(WIFI_EVENT,ESP_EVENT_ANY_ID,wifi_handler);if(e!=ESP_OK)return e;wifi_handler=NULL;}
     if(ip_handler){esp_err_t e=esp_event_handler_instance_unregister(IP_EVENT,ESP_EVENT_ANY_ID,ip_handler);if(e!=ESP_OK)return e;ip_handler=NULL;}
@@ -108,12 +118,13 @@ esp_err_t cp_v3_clock_stop(void){
     __atomic_store_n(&link_up,false,__ATOMIC_RELEASE);__atomic_store_n(&hint_ready,false,__ATOMIC_RELEASE);
     __atomic_store_n(&owner,NULL,__ATOMIC_RELEASE);return ESP_OK;
 }
-esp_err_t cp_v3_clock_bootstrap(const cp_settings_t *settings,const uint8_t spki[91],
-    const char *key_id,bool (*cancel_fn)(void),cp_v3_time_t *out){
+static esp_err_t bootstrap(const cp_settings_t *settings,const uint8_t spki[91],
+    const char *key_id,bool (*cancel_fn)(void),cp_v3_time_t *out,bool peap_none){
     if(!out)return ESP_ERR_INVALID_ARG;
     memset(out,0,sizeof *out);
     if(!settings||!spki||!key_id||!cp_settings_validate(settings)||
-       strcmp(settings->api_origin,CP_API_ORIGIN)||settings->wifi_security==CP_WIFI_ENTERPRISE_PEAP||
+       strcmp(settings->api_origin,CP_API_ORIGIN)||
+       (peap_none ? settings->wifi_security!=CP_WIFI_ENTERPRISE_PEAP : settings->wifi_security==CP_WIFI_ENTERPRISE_PEAP)||
        !*key_id||strnlen(key_id,33)>32)return ESP_ERR_INVALID_ARG;
     TaskHandle_t expected=NULL;
     if(!__atomic_compare_exchange_n(&owner,&expected,xTaskGetCurrentTaskHandle(),false,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE))return ESP_ERR_INVALID_STATE;
@@ -137,8 +148,25 @@ esp_err_t cp_v3_clock_bootstrap(const cp_settings_t *settings,const uint8_t spki
     result=esp_event_handler_instance_register(IP_EVENT,ESP_EVENT_ANY_ID,wifi_event,NULL,&ip_handler);if(result!=ESP_OK)goto done;
     wifi_config_t wifi={0};memcpy(wifi.sta.ssid,settings->ssid,strlen(settings->ssid));
     memcpy(wifi.sta.password,settings->password,strlen(settings->password));
-    wifi.sta.threshold.authmode=settings->wifi_security==CP_WIFI_OPEN?WIFI_AUTH_OPEN:WIFI_AUTH_WPA2_PSK;wifi.sta.pmf_cfg.capable=true;
+    wifi.sta.threshold.authmode=peap_none?WIFI_AUTH_WPA2_ENTERPRISE:
+        settings->wifi_security==CP_WIFI_OPEN?WIFI_AUTH_OPEN:WIFI_AUTH_WPA2_PSK;wifi.sta.pmf_cfg.capable=true;
     result=esp_wifi_set_mode(WIFI_MODE_STA);if(result==ESP_OK)result=esp_wifi_set_config(WIFI_IF_STA,&wifi);wipe(&wifi,sizeof wifi);if(result!=ESP_OK)goto done;
+    if(peap_none){
+        /* SDK credentials are copied. Mark partial setup before the first API
+         * so every failure clears it while we still own the stopped station. */
+        eap_configured=true;
+        result=esp_eap_client_use_default_cert_bundle(false);
+        esp_eap_client_clear_ca_cert();
+        if(result==ESP_OK)result=esp_eap_client_set_domain_name(NULL);
+        if(result==ESP_OK)result=esp_eap_client_set_disable_time_check(true);
+        if(result==ESP_OK)result=esp_eap_client_set_eap_methods(ESP_EAP_TYPE_PEAP);
+        if(result==ESP_OK)result=esp_eap_client_set_identity((const unsigned char *)settings->eap_identity,strlen(settings->eap_identity));
+        if(result==ESP_OK)result=esp_eap_client_set_username((const unsigned char *)settings->eap_username,strlen(settings->eap_username));
+        if(result==ESP_OK)result=esp_eap_client_set_password((const unsigned char *)settings->eap_password,strlen(settings->eap_password));
+        if(result==ESP_OK)result=esp_wifi_sta_enterprise_enable();
+        if(result!=ESP_OK)goto done;
+        enterprise_enabled=true;
+    }
     result=esp_wifi_start();if(result!=ESP_OK)goto done;wifi_started=true;
     result=esp_wifi_connect();if(result!=ESP_OK)goto done;
     uint64_t deadline=mono()+30000;
@@ -196,4 +224,12 @@ done: {
         if(result!=ESP_OK)memset(out,0,sizeof *out);
         return result;
     }
+}
+esp_err_t cp_v3_clock_bootstrap(const cp_settings_t *settings,const uint8_t spki[91],
+    const char *key_id,bool (*cancel_fn)(void),cp_v3_time_t *out){
+    return bootstrap(settings,spki,key_id,cancel_fn,out,false);
+}
+esp_err_t cp_v3_clock_bootstrap_peap_none(const cp_settings_t *settings,const uint8_t spki[91],
+    const char *key_id,bool (*cancel_fn)(void),cp_v3_time_t *out){
+    return bootstrap(settings,spki,key_id,cancel_fn,out,true);
 }

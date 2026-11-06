@@ -1,7 +1,7 @@
 #include "cp_v3_startup.h"
 #include <string.h>
 
-enum { HEADER = 16, VERSION = 1 };
+enum { HEADER = 16, VERSION = 2, LEGACY_VERSION = 1 };
 static const uint8_t p256_prefix[] = {
     0x30,0x59,0x30,0x13,0x06,0x07,0x2a,0x86,0x48,0xce,0x3d,0x02,0x01,
     0x06,0x08,0x2a,0x86,0x48,0xce,0x3d,0x03,0x01,0x07,0x03,0x42,0x00,0x04
@@ -25,11 +25,14 @@ static void put16(uint8_t *p, uint16_t n) { p[0] = (uint8_t)n; p[1] = (uint8_t)(
 static void put32(uint8_t *p, uint32_t n) { for (unsigned i = 0; i < 4; ++i) p[i] = (uint8_t)(n >> (i * 8)); }
 static uint16_t get16(const uint8_t *p) { return (uint16_t)p[0] | (uint16_t)((uint16_t)p[1] << 8); }
 static uint32_t get32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
-bool cp_v3_startup_validate(const cp_v3_startup_profile_t *p, const char *node) {
+static bool validate(const cp_v3_startup_profile_t *p, const char *node, bool legacy) {
     if (!p || !cp_settings_validate(&p->settings) || !cp_settings_mqtt_ready(&p->settings) ||
-        (p->auto_start && p->settings.wifi_security == CP_WIFI_ENTERPRISE_PEAP) ||
         p->time_public_spki_len != CP_V3_STARTUP_TIME_SPKI_BYTES ||
         memcmp(p->time_public_spki, p256_prefix, sizeof p256_prefix)) return false;
+    if (p->settings.wifi_security == CP_WIFI_ENTERPRISE_PEAP) {
+        if (p->eap_verification != CP_V3_STARTUP_EAP_NONE &&
+            !(legacy && !p->auto_start && p->eap_verification == CP_V3_STARTUP_EAP_UNSPECIFIED)) return false;
+    } else if (p->eap_verification != CP_V3_STARTUP_EAP_UNSPECIFIED) return false;
     if (node && (length(node, sizeof p->settings.node_id) != 15 || memcmp(node, p->settings.node_id, 16))) return false;
     size_t n = length(p->time_key_id, sizeof p->time_key_id);
     if (!n || n == sizeof p->time_key_id) return false;
@@ -41,6 +44,9 @@ bool cp_v3_startup_validate(const cp_v3_startup_profile_t *p, const char *node) 
     uint8_t nonzero = 0;
     for (size_t i = sizeof p256_prefix; i < p->time_public_spki_len; ++i) nonzero |= p->time_public_spki[i];
     return nonzero != 0;
+}
+bool cp_v3_startup_validate(const cp_v3_startup_profile_t *p, const char *node) {
+    return validate(p, node, false);
 }
 
 /* Strings use lengths and bytes only. No compiler padding, unused credential
@@ -56,6 +62,7 @@ bool cp_v3_startup_encode(const cp_v3_startup_profile_t *p, void *out, size_t ca
     if (!out || !written || !cp_v3_startup_validate(p, NULL)) return false;
     uint8_t bytes[CP_V3_STARTUP_MAX_BYTES] = {0}; size_t pos = HEADER;
     put32(bytes + pos, p->settings.wifi_security); pos += 4;
+    put32(bytes + pos, (uint32_t)p->eap_verification); pos += 4;
 #define WRITE_STRING(field) do { size_t n = length(p->field, sizeof p->field); \
     if (pos + 2 + n > sizeof bytes) { wipe(bytes, sizeof bytes); return false; } \
     put16(bytes + pos, (uint16_t)n); pos += 2; memcpy(bytes + pos, p->field, n); pos += n; } while (0);
@@ -78,12 +85,15 @@ bool cp_v3_startup_decode(const void *input, size_t size, const char *node, cp_v
     if (!input || size < HEADER + 4 || size > CP_V3_STARTUP_MAX_BYTES) return false;
     uint8_t bytes[CP_V3_STARTUP_MAX_BYTES]; memcpy(bytes, input, size);
     uint32_t expected = get32(bytes + 12); put32(bytes + 12, 0);
-    bool ok = !memcmp(bytes, "CPS3", 4) && get16(bytes + 4) == VERSION &&
+    uint16_t version = get16(bytes + 4);
+    bool ok = !memcmp(bytes, "CPS3", 4) && (version == VERSION || version == LEGACY_VERSION) &&
         get16(bytes + 6) <= 1 && get32(bytes + 8) == size && crc32(bytes, size) == expected;
+    if (version == VERSION && size < HEADER + 8) ok = false;
     size_t pos = HEADER;
     if (ok) {
         out->settings.version = CP_SETTINGS_VERSION;
         out->settings.wifi_security = get32(bytes + pos); pos += 4;
+        if (version == VERSION) { out->eap_verification = get32(bytes + pos); pos += 4; }
         out->auto_start = get16(bytes + 6) != 0;
         memcpy(out->settings.api_origin, CP_API_ORIGIN, sizeof CP_API_ORIGIN);
         memcpy(out->settings.mqtt_uri, CP_MQTT_PRODUCTION_URI, sizeof CP_MQTT_PRODUCTION_URI);
@@ -100,7 +110,7 @@ bool cp_v3_startup_decode(const void *input, size_t size, const char *node, cp_v
             out->time_public_spki_len = get16(bytes + pos); pos += 2;
             if (out->time_public_spki_len <= sizeof out->time_public_spki && out->time_public_spki_len == size - pos) {
                 memcpy(out->time_public_spki, bytes + pos, out->time_public_spki_len);
-                ok = cp_v3_startup_validate(out, node);
+                ok = validate(out, node, version == LEGACY_VERSION);
             } else ok = false;
         } else ok = false;
     }

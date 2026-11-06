@@ -20,7 +20,7 @@ def verify(root):
     description = json.loads((root / 'project_description.json').read_text())
     assert description['target'] == 'esp32s3'
     assert description['project_name'] == 'waveshare_v3'
-    assert description['project_version'] == '0.4.0-autostart'
+    assert description['project_version'] == '0.4.1-autostart'
     components = set(description['build_components'])
     assert not components.intersection(('cp_network', 'cp_provision', 'cp_runtime'))
     assert {'mqtt', 'tcp_transport'} <= components
