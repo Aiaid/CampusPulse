@@ -507,12 +507,22 @@ void app_main(void){
 }
 static bool run(void){
     cp_v3_transport_config_t cfg={.origin=bootstrap.origin,.server_ca_pem=bootstrap.server_ca_pem[0]?bootstrap.server_ca_pem:NULL,
-        .eap_verification=bootstrap.eap_verification,.eap_ca_pem=bootstrap.eap_ca_pem[0]?bootstrap.eap_ca_pem:NULL,.eap_domain=bootstrap.eap_domain[0]?bootstrap.eap_domain:NULL,.clock_seed=bootstrap.clock_seed,.wifi_timeout_ms=10000,.request_timeout_ms=te_small_request_timeout_ms(bootstrap.origin),.server_clock_error_ms=1000,
+        .eap_verification=bootstrap.eap_verification,.eap_ca_pem=bootstrap.eap_ca_pem[0]?bootstrap.eap_ca_pem:NULL,.eap_domain=bootstrap.eap_domain[0]?bootstrap.eap_domain:NULL,.clock_seed=bootstrap.clock_seed,.wifi_timeout_ms=30000,.request_timeout_ms=te_small_request_timeout_ms(bootstrap.origin),.server_clock_error_ms=1000,
         .flush_dns_on_network_failure=false,.mode=bootstrap.transport,.active_boot=boot,.cancelled=cancelled};
-    if(cp_v3_transport_start(&bootstrap.settings,&cfg)!=ESP_OK)return false;
-    if(!recover())return false;
-    cp_v3_time_t t;if(!current(&t))return false;
-    size_t n=capabilities(t);if(!n||cp_v3_control_init(control,workspace,node,boot,reply,n,t,cp_v3_transport_sha256,NULL)!=CP_V3_CONTROL_OK)return false;
+    uint64_t began=mono();phase("CONNECT WIFI");
+    esp_err_t started=cp_v3_transport_start(&bootstrap.settings,&cfg);
+    ESP_LOGI(TAG,"startup_stage=transport_start error=%ld error_name=%s elapsed_ms=%llu",(long)started,esp_err_to_name(started),(unsigned long long)(mono()-began));
+    if(started!=ESP_OK){printf("V3 START FAILED stage=transport_start error=%ld\n",(long)started);fflush(stdout);return false;}
+    began=mono();phase("RECOVER QUEUE");bool recovered=recover();
+    ESP_LOGI(TAG,"startup_stage=recover result=%u elapsed_ms=%llu",recovered,(unsigned long long)(mono()-began));
+    if(!recovered){puts("V3 START FAILED stage=recover");fflush(stdout);return false;}
+    began=mono();cp_v3_time_t t;esp_err_t timed=cp_v3_transport_time(&t);
+    ESP_LOGI(TAG,"startup_stage=current error=%ld error_name=%s elapsed_ms=%llu",(long)timed,esp_err_to_name(timed),(unsigned long long)(mono()-began));
+    if(timed!=ESP_OK){printf("V3 START FAILED stage=current error=%ld\n",(long)timed);fflush(stdout);return false;}
+    began=mono();size_t n=capabilities(t);
+    cp_v3_control_result_t initialized=n?cp_v3_control_init(control,workspace,node,boot,reply,n,t,cp_v3_transport_sha256,NULL):CP_V3_CONTROL_INVALID;
+    ESP_LOGI(TAG,"startup_stage=control_init control_result=%u elapsed_ms=%llu",(unsigned)initialized,(unsigned long long)(mono()-began));
+    if(initialized!=CP_V3_CONTROL_OK){printf("V3 START FAILED stage=control_init control_result=%u\n",(unsigned)initialized);fflush(stdout);return false;}
     const char *bytes;if(cp_v3_control_registration(control,1,t.mono_ms,&bytes,&n)!=CP_V3_CONTROL_OK)return false;
     cp_v3_transport_response_t r={0};phase("REGISTER");
     te_small_registration_io_t registration={&http_io,NULL,registration_wait,registration_attempt};

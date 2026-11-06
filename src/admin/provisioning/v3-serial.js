@@ -79,6 +79,19 @@ export function buildV3Start({identity,nonce,expectedNode,bootId,token,mqtt,reus
  if (bytes(frame)>=8192) throw new Error('V3 USB 消息超出固件上限。');
  return frame;
 }
+/** Only fixed startup stages/numeric results cross the USB diagnostic boundary. */
+export function v3StartupFailure(line) {
+ if(typeof line!=='string')return null;
+ const a=/^V3 START FAILED stage=(transport_start|current) error=(-?[0-9]{1,10})$/.exec(line),
+  b=/^V3 START FAILED stage=control_init control_result=([0-9]{1,10})$/.exec(line);
+ const stage=a?.[1]||(b?'control_init':line==='V3 START FAILED stage=recover'?'recover':null);
+ if(!stage)return null;
+ const result=a?Number(a[2]):b?Number(b[1]):null;
+ if(result!==null&&(!Number.isSafeInteger(result)||result< -2147483648||result>4294967295))return null;
+ const label={transport_start:'Wi-Fi 连接初始化',current:'可信时间校验',control_init:'能力控制初始化',recover:'本地队列恢复'}[stage];
+ const error=new Error(`设备启动失败：${label}${result===null?'':`（返回码 ${result}）`}。本次配置尚未确认保存，请检查网络或设备诊断。`);
+ error.code='v3_device_start_failed';error.stage=stage;error.result=result;return error;
+}
 /** Bounded line reader. Unrecognized device output is discarded, never logged. */
 export async function openV3Serial(port) {
  await port.open({baudRate:115200});
@@ -86,7 +99,7 @@ export async function openV3Serial(port) {
  const lines=[],waiters=[];
  try { await port.setSignals?.({dataTerminalReady:false,requestToSend:false}); reader=port.readable.getReader();writer=port.writable.getWriter(); }
  catch(error){await port.close();throw error;}
- const push=line=>{if(!line.startsWith('V3 HELLO ')&&!line.startsWith('V3 START REJECTED')&&!['V3 START ACCEPTED','V3 STARTUP SAVED','V3 STARTUP SAVE FAILED','V3 ERR BOOTSTRAP'].includes(line))return;if(waiters.length)waiters.shift()(line);else {lines.push(line);if(lines.length>32)lines.shift();}};
+ const push=line=>{if(!v3StartupFailure(line)&&!line.startsWith('V3 HELLO ')&&!line.startsWith('V3 START REJECTED')&&!['V3 START ACCEPTED','V3 STARTUP SAVED','V3 STARTUP SAVE FAILED','V3 ERR BOOTSTRAP'].includes(line))return;if(waiters.length)waiters.shift()(line);else {lines.push(line);if(lines.length>32)lines.shift();}};
  const pump=(async()=>{try{while(!closed){const {value,done}=await reader.read();if(done)break;for(const byte of value){if(byte===10){if(!overflow)push(buffer.replace(/\r$/,''));buffer='';overflow=false;}else if(buffer.length<8192&&!overflow){buffer+=String.fromCharCode(byte);}else{overflow=true;buffer='';}}}}catch{failure=new Error('USB 连接已中断。');}finally{closed=true;while(waiters.length)waiters.shift()(null);}})();
  const line=async timeout=>{if(lines.length)return lines.shift();if(closed)throw failure||new Error('USB 连接已关闭。');return new Promise(resolve=>{const deliver=value=>{clearTimeout(timer);resolve(value);};const timer=setTimeout(()=>{const i=waiters.indexOf(deliver);if(i>=0)waiters.splice(i,1);resolve(null);},timeout);waiters.push(deliver);});};
  const write=async text=>{if(closed)throw failure||new Error('USB 连接已关闭。');const bytes=new TextEncoder().encode(text);try{await writer.write(bytes);}finally{bytes.fill(0);}};
@@ -102,6 +115,6 @@ export async function openV3Serial(port) {
  return {hello,async restart(expectedNode){if(typeof expectedNode!=='string'||!nodePattern.test(expectedNode))throw new Error('安全重启前必须核对设备身份。');const anchor=await hello(expectedNode,{allowRestartRequired:true});if(anchor.identity.restart_required!==true)throw new Error('设备未声明安全重启状态；未发送 RESTART。');await write('RESTART\n');return {restart_requested:true,node_id:anchor.identity.node_id};},async start(input){validateV3Wifi(input);const anchor=await hello(input.expectedNode);if(input.bootId&&anchor.identity.boot_id!==input.bootId)throw new Error('设备已经重启，请重新连接并核对身份。');const frame=buildV3Start({...input,...anchor});lines.length=0;await write(frame);const deadline=performance.now()+5000;
   while(performance.now()<deadline){const text=await line(Math.max(1,deadline-performance.now()));if(text==='V3 START ACCEPTED'){startedSave=input.saveStartup===true;saved=false;return {accepted:true,node_id:anchor.identity.node_id,boot_id:anchor.identity.boot_id};}if(text==='V3 ERR BOOTSTRAP'||text?.startsWith('V3 START REJECTED'))throw new Error('固件拒绝 V3 启动材料。');}
   throw new Error('启动结果未知；不能据此认定已保存或已采集。请检查设备与云端状态。');},
-  async waitStartupSaved(timeout=300000){if(!startedSave)throw new Error('本次未请求保存启动配置。');if(saved)return {saved:true};if(waitingSave)throw new Error('正在等待启动配置保存回执。');if(!Number.isFinite(timeout)||timeout<=0||timeout>600000)throw new Error('保存确认等待时限无效。');waitingSave=true;try{const deadline=performance.now()+timeout;while(performance.now()<deadline){const text=await line(Math.max(1,deadline-performance.now()));if(text==='V3 STARTUP SAVED'){saved=true;return {saved:true};}if(text==='V3 STARTUP SAVE FAILED'||text==='V3 ERR BOOTSTRAP')throw new Error('保存未确认，请检查诊断或重新配置；当前不能确认生效的启动配置。');}throw new Error('尚未收到 V3 STARTUP SAVED；保存状态未知。请完成首次策略 ACK 后继续等待。');}finally{waitingSave=false;}},
+  async waitStartupSaved(timeout=300000){if(!startedSave)throw new Error('本次未请求保存启动配置。');if(saved)return {saved:true};if(waitingSave)throw new Error('正在等待启动配置保存回执。');if(!Number.isFinite(timeout)||timeout<=0||timeout>600000)throw new Error('保存确认等待时限无效。');waitingSave=true;try{const deadline=performance.now()+timeout;while(performance.now()<deadline){const text=await line(Math.max(1,deadline-performance.now()));if(text==='V3 STARTUP SAVED'){saved=true;return {saved:true};}const failed=v3StartupFailure(text);if(failed)throw failed;if(text==='V3 STARTUP SAVE FAILED'||text==='V3 ERR BOOTSTRAP')throw new Error('保存未确认，请检查诊断或重新配置；当前不能确认生效的启动配置。');}throw new Error('尚未收到 V3 STARTUP SAVED；保存状态未知。请完成首次策略 ACK 后继续等待。');}finally{waitingSave=false;}},
   async close(){closed=true;lines.length=0;buffer='';try{await reader.cancel();await pump;}finally{reader.releaseLock();writer.releaseLock();await port.close();}}};
 }

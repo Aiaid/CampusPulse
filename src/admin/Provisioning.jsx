@@ -22,7 +22,7 @@ export default function Provisioning({onClose,initialNodeId=''}) {
  const cancelSetup=()=>{setupFlow.current?.cancel();setupFlow.current=null;};
  const cancelAutomaticGrant=()=>{cancelSetup();if(grantState==='approved'){setGrantState('manual');setGrantError(null);}else if(grantState!=='idle'){setGrantState('incomplete');setGrantError(new Error('已改为手动操作，本次自动启动授权申请已取消。'));}};
  const manualPolicyChanged=()=>{if(setupFlow.current?.policyChanged())cancelAutomaticGrant();};
- const waitForSave=connection=>{setSaveState('waiting');setSaveError(null);void connection.waitStartupSaved().then(()=>{if(mounted.current&&client.current===connection){setSaveState('saved');void setupFlow.current?.saved();}}).catch(error=>{if(mounted.current&&client.current===connection){setSaveState('unknown');setSaveError(error);}});};
+ const waitForSave=connection=>{setSaveState('waiting');setSaveError(null);void connection.waitStartupSaved().then(()=>{if(mounted.current&&client.current===connection){setSaveState('saved');void setupFlow.current?.saved();}}).catch(error=>{if(mounted.current&&client.current===connection){cancelSetup();setSaveState('unknown');setSaveError(error);setGrantState('incomplete');setGrantError(error);}});};
  const clearWifi=()=>{setPassword('');setEapUsername('');setEapIdentity('');setEapPassword('');setEapCaPem('');setEapDomain('');};
  const clear=()=>{mqtt.current=null;setMqttReady(false);setToken('');clearWifi();};
  const changeSecurity=value=>{clearWifi();setEapServerVerification('none');setSecurity(value);};

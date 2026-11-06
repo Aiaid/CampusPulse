@@ -11,6 +11,15 @@ const spki=Buffer.from('3059301306072a8648ce3d020106082a8648ce3d030107034200046b
 const clockKey={schema:'cp-v3-signed-clock-key/1',audience:V3_ORIGIN,key_id:'synthetic-key-1',public_key_spki:spki.toString('base64url')};
 function portFixture(onWrite){let controller;const writes=[];return{writes,readable:new ReadableStream({start(c){controller=c;}}),writable:new WritableStream({write(bytes){const line=new TextDecoder().decode(bytes);writes.push(line);onWrite(line,text=>controller.enqueue(new TextEncoder().encode(text)));}}),async open(){},async setSignals(){},async close(){}};}
 describe('native V3 USB bootstrap',()=>{
+ it('reports a real startup-stage failure immediately after START acceptance',async()=>{
+  const port=portFixture((line,emit)=>{
+   if(line.startsWith('HELLO '))emit('V3 HELLO '+JSON.stringify({...identity,request_id:line.trim().slice(6)})+'\n');
+   if(line.startsWith('V3START '))emit('V3 START ACCEPTED\nV3 START FAILED stage=transport_start error=263\n');
+  });
+  const client=await openV3Serial(port);
+  try{await client.start({...input,saveStartup:true,clockKey});await expect(client.waitStartupSaved(1000)).rejects.toMatchObject({code:'v3_device_start_failed',stage:'transport_start',result:263});}
+  finally{await client.close();}
+ });
  it('matches native V3START and conservative MQTT/raw-off onboarding without legacy fields',()=>{const frame=buildV3Start(input);expect(frame.startsWith('V3START ')).toBe(true);const body=JSON.parse(frame.slice(8));expect(body).toMatchObject({node_id:node,boot_id:boot,security:'personal',uplink_transport:'mqtt_tls',max_windows:1,utc_ms:1800000000010,uncertainty_ms:261,anchor_mono_ms:1234});expect(body).not.toHaveProperty('capture_config');expect(body).not.toHaveProperty('reuse_saved_credential');});
  it('allows explicit or inferred unverified PEAP without trust fields, never downgrades supplied CA',()=>{
   const {eapCaPem,eapDomain,...unverified}=peap;
