@@ -5,9 +5,13 @@ import { fieldIllustration } from '../../src/campus/field-illustration.js';
 import FieldIllustration from '../../src/campus/FieldIllustration.jsx';
 
 const now = Date.parse('2026-10-25T10:00:00Z'), iso = offset => new Date(now + offset).toISOString();
-const sensor = (extra = {}) => ({ source: 'sensor', dataset: 'field', observed_at: iso(-1000), valid_until: iso(89000), duration_ms: 30000, scan_enabled_ms: 30000, visible_identifiers: 12, ...extra });
+const sensor = (extra = {}) => ({ source: 'sensor', dataset: 'field', protocol: 'campuspulse/3', node_id: 'node', boot_id: 'boot', placement_id: 'placement',
+  policy_id: 'policy', assignment_generation: 1, seq: 1, uncertainty_ms: 0, reports_aggregated: 30, aggregation_drops: 0,
+  unique_table_overflow: false, quality_flags: [], freshness: 'fresh',
+  observed_at: iso(-1000), valid_until: iso(89000), duration_ms: 30000, scan_enabled_ms: 30000, visible_identifiers: 12, ...extra });
 const parking = (extra = {}) => ({ id: 'manual', place_id: 'library', source: 'manual', status: 'active', kind: 'parking', parking_min: 2, parking_max: 5, observed_at: iso(-1000), valid_until: iso(89000), ...extra });
-const vehicles = (extra = {}) => ({ status: 'candidate_estimate', source: 'ble_rule_inference', evidence_kind: 'compact', sample_count: 8, candidate_count: 2, car_related_count: 1, ecosystem_count: 1, observed_at: iso(-1000), valid_until: iso(89000), ...extra });
+const vehicles = (extra = {}) => ({ status: 'candidate_estimate', source: 'ble_rule_inference', model_version: 'vehicle-rules/1', reason: null, quality_flags: [],
+  evidence_kind: 'compact', sample_count: 8, candidate_count: 2, car_related_count: 1, ecosystem_count: 1, observed_at: iso(-1000), valid_until: iso(89000), ...extra });
 const place = { id: 'library', kind: 'activity', observation_kinds: ['activity', 'parking', 'elevator'] };
 const manualWait = (extra = {}) => ({ ...parking(), kind: 'elevator', wait_seconds: 27, ...extra });
 const baseline = (extra = {}) => ({ status: 'historical_estimate', source: 'manual_historical_baseline', calibrated: false, wait_seconds: 55.5, sample_count: 5, day_count: 2, observed_at: iso(-2000), valid_until: iso(88000), ...extra });
@@ -19,24 +23,22 @@ const reported = extra => sensor({ node_id: 'node', boot_id: 'boot', placement_i
   reports_aggregated: 30, aggregation_drops: 0, quality_flags: [], unique_table_overflow: false, ...extra });
 
 describe('observation-driven place diagrams', () => {
-  test('shows people from reported identifiers and explicitly illustrative vehicles without claiming a measured car count', () => {
+  test('retains unverified reported identifiers without inventing vehicle evidence', () => {
     const result = read({ place, sensor: null, last_reported_sensor: reported() });
     expect(result.groups).toMatchObject([
-      { kind: 'people', source: 'sensor', quantity: '12 个 BLE 标识', figure_count: 3, unverified: true, observed_at: null, valid_until: null },
-      { kind: 'bikes', source: 'illustrative', quantity: '车辆示意', figure_count: 2, unverified: true },
+      { kind: 'people', source: 'sensor', quantity: '12 个 BLE 标识', figure_count: 3, actor_eligible: false, unverified: true, observed_at: null, valid_until: null },
     ]);
     const html = render(result);
-    expect(html).toContain('推测');
+    expect(html).not.toContain('车辆示意');
     expect(html).toContain('时间未知 · 上传');
     expect(html).toContain('17:59:59');
     expect(html).not.toContain('最后观测');
     expect(html).not.toContain('有效观察');
-    expect(result.groups[1]).not.toHaveProperty('candidate_count');
-    expect(result.groups[1].label).not.toMatch(/\d+ 辆/);
+    expect(result.vehicle_status).toContain('车辆待观测');
     expect(read({ place, sensor: sensor({ visible_identifiers: 4 }), last_reported_sensor: reported({ visible_identifiers: 99 }) }).groups[0].quantity).toBe('4 个 BLE 标识');
   });
 
-  test('vehicle illustrations require positive usable activity and parking purpose, and never displace real vehicle evidence or a valid zero', () => {
+  test('sensor activity never creates vehicles regardless of parking purpose, layer switches or clock verification', () => {
     const data = { place, sensor: null, last_reported_sensor: reported() };
     for (const extra of [{ latest_observation: parking() }, { latest_observation: parking({ parking_min: 0, parking_max: 0 }) },
       { automatic_observations: { vehicles: vehicles() } }, { automatic_observations: { vehicles: vehicles({ candidate_count: 0, car_related_count: 0 }) } }]) {
@@ -47,10 +49,76 @@ describe('observation-driven place diagrams', () => {
     }
     expect(read({ ...data, last_reported_sensor: null }).groups).toEqual([]);
     expect(read({ ...data, place: { ...place, observation_kinds: ['activity'] } }).groups.map(group => group.kind)).toEqual(['people']);
-    expect(read(data, { layers: { people: false } }).groups[0].source).toBe('illustrative');
+    expect(read(data, { layers: { people: false } }).groups).toEqual([]);
     expect(read(data, { layers: { bikes: false } }).groups.map(group => group.kind)).toEqual(['people']);
+    for (const record of [sensor(), sensor({ visible_identifiers: 10000 }), sensor({ visible_identifiers: 0 }), reported()]) {
+      for (const layers of [{}, { people: false }, { bikes: false }]) {
+        const result = read({ place, sensor: record }, { layers });
+        expect(result.groups.every(group => group.kind === 'people')).toBe(true);
+        expect(result.groups.some(group => group.source === 'illustrative')).toBe(false);
+      }
+    }
     const replay = read(data, { mode: 'replay', cursor: now - 1000, history: state({ records: [] }) });
     expect(replay).toBeNull();
+  });
+
+  test('binds the projection to its explicit place and admits only complete fresh V3 activity for actors', () => {
+    expect(read({ place, sensor: sensor() })).toMatchObject({ place_id: 'library', groups: [{ actor_eligible: true, metric_value: 12 }] });
+    expect(read({ sensor: sensor() }).place_id).toBeNull();
+    expect(read({ place, sensor: sensor() }, { place: { ...place, id: 'canteen' } }).place_id).toBe('canteen');
+    expect(read({ sensor: sensor({ uncertainty_ms: 250, quality_flags: ['uncertain_clock'] }) }).groups[0].actor_eligible).toBe(true);
+    for (const patch of [
+      { protocol: undefined }, { node_id: '' }, { boot_id: undefined }, { placement_id: undefined }, { policy_id: '' },
+      { assignment_generation: 0 }, { seq: undefined }, { reports_aggregated: undefined }, { uncertainty_ms: undefined },
+      { uncertainty_ms: 5001, quality_flags: ['uncertain_clock'] }, { scan_enabled_ms: 29000 }, { aggregation_drops: 1 },
+      { unique_table_overflow: true }, { max_addresses: 12 }, { quality_flags: undefined },
+      ...['partial_window', 'scan_gap', 'callback_loss', 'aggregation_loss', 'identifier_overflow', 'unknown'].map(flag => ({ quality_flags: [flag] })),
+      { freshness: 'unverified' }, { freshness: 'stale' }, { time_status: 'unknown' }, { time_status: 'uncertain' },
+      { valid_until: iso(-1) },
+    ]) {
+      const result = read({ sensor: sensor(patch) });
+      expect(result.groups[0].actor_eligible, JSON.stringify(patch)).toBe(false);
+      expect(result.groups[0].quantity).toBe('12 个 BLE 标识');
+    }
+    expect(read({ sensor: sensor({ observed_at: iso(1) }) })).toBeNull();
+    expect(read({ sensor: sensor(), last_known: { sensor: 'source_unavailable' } }).groups[0].actor_eligible).toBe(false);
+    const data = { sensor: sensor() };
+    expect(read(data, { live: { data, error: 'read failed' } }).groups[0].actor_eligible).toBe(false);
+  });
+
+  test('keeps manual and limited candidate cards while requiring fresh complete candidate metadata for actors', () => {
+    expect(read({ latest_observation: parking() }).groups[0].actor_eligible).toBe(false);
+    const candidates = extra => read({ automatic_observations: { vehicles: vehicles(extra) } });
+    expect(candidates().groups.every(group => group.actor_eligible)).toBe(true);
+    expect(candidates({ candidate_count: 0, car_related_count: 0 }).groups[0]).toMatchObject({ actor_eligible: true, figure_count: 0, metric_value: 0 });
+    for (const patch of [{ model_version: undefined }, { reason: 'limited' }, { quality_flags: undefined },
+      { quality_flags: ['scan_gap'] }, { quality_flags: ['uncertain_clock'] }, { valid_until: iso(-1) },
+      { freshness: 'unverified' }, { unverified: true }, { time_status: 'unknown' }]) {
+      expect(candidates(patch).groups.every(group => group.actor_eligible === false)).toBe(true);
+    }
+    const data = { automatic_observations: { vehicles: vehicles() }, last_known: { vehicles: 'source_unavailable' } };
+    expect(read(data).groups.every(group => !group.actor_eligible)).toBe(true);
+    expect(read(data, { live: { data, error: 'read failed' } }).groups.every(group => !group.actor_eligible)).toBe(true);
+    expect(candidates({ observed_at: iso(1) })).toBeNull();
+  });
+
+  test('projects uploaded candidates independently from manual parking card preference', () => {
+    const data = { place, sensor: sensor(), latest_observation: parking(), automatic_observations: { vehicles: vehicles() } };
+    const result = read(data);
+    expect(result.groups.map(group => [group.kind, group.source])).toEqual([['people', 'sensor'], ['bikes', 'manual'], ['cars', 'candidate']]);
+    expect(result.actor_groups.map(group => [group.kind, group.source, group.actor_eligible])).toEqual([
+      ['people', 'sensor', true], ['bikes', 'candidate', true], ['cars', 'candidate', true],
+    ]);
+    expect(result.actor_groups[1]).toMatchObject({ metric_value: 2, quantity: '2 个候选标识' });
+    for (const patch of [{ valid_until: iso(-1) }, { quality_flags: ['scan_gap'] }]) {
+      const limited = read({ ...data, automatic_observations: { vehicles: vehicles(patch) } });
+      expect(limited.groups.find(group => group.kind === 'bikes').source).toBe('manual');
+      expect(limited.actor_groups.filter(group => group.source === 'candidate').every(group => !group.actor_eligible)).toBe(true);
+    }
+    expect(read({ ...data, automatic_observations: undefined }).actor_groups.map(group => group.kind)).toEqual(['people']);
+    expect(read({ place, latest_observation: parking() }).actor_groups).toEqual([]);
+    expect(read(data, { layers: { bikes: false } }).actor_groups.map(group => group.kind)).toEqual(['people']);
+    expect(read({ ...data, automatic_observations: { vehicles: vehicles({ candidate_count: 0, car_related_count: 0 }) } }).actor_groups[1]).toMatchObject({ metric_value: 0, figure_count: 0 });
   });
   test('uses bounded schematic budgets, explicitly keeps physical people unknown, and never bands a saturated table', () => {
     const bands = [1, 12, 19, 20, 64, 99, 100, 10000].map(visible_identifiers => read({ sensor: sensor({ visible_identifiers }) }));
@@ -184,7 +252,7 @@ describe('observation-driven place diagrams', () => {
     const records = [sensor({ observed_at: iso(-60000), valid_until: iso(-1), visible_identifiers: 12 }), parking({ observed_at: iso(-65000), valid_until: iso(-55000) }), manualWait({ observed_at: iso(-65000), valid_until: iso(-55000), wait_seconds: 19 })];
     const at = cursor => read(current, { place, mode: 'replay', cursor, history: state({ records }) });
     expect(at(now - 60000).groups.map(group => [group.kind, group.source, group.figure_count])).toEqual([['people', 'sensor', 3], ['bikes', 'manual', 2]]);
-    expect(at(now - 60000).groups[0]).toMatchObject({ stale: false, last_known: undefined });
+    expect(at(now - 60000).groups[0]).toMatchObject({ stale: false, last_known: undefined, actor_eligible: true });
     expect(at(now - 60000).groups.map(group => group.quantity)).toEqual(['12 个 BLE 标识', '2–5 辆 · 人工']);
     expect(render(at(now - 60000))).toContain('<strong class="field-illustration-quantity">12 个 BLE 标识</strong>');
     expect(at(now - 60000).elevator).toMatchObject({ status: 'manual', wait_seconds: 19 });
@@ -192,6 +260,18 @@ describe('observation-driven place diagrams', () => {
     expect(at(now - 30000).elevator.status).toBe('waiting');
     expect(at(now - 30000).elevator).not.toHaveProperty('wait_seconds');
     expect(read(current, { mode: 'replay', cursor: now - 60000, history: { data: { records }, error: 'failure' } })).toBeNull();
+  });
+
+  test('replay actor eligibility requires captured complete windows even when their live expiry has passed', () => {
+    const captured = sensor({ observed_at: iso(-60000), valid_until: iso(-1), freshness: 'stale' });
+    const replay = (record, cursor = now - 60000) => read({}, { mode: 'replay', cursor, place, history: state({ records: [record] }) });
+    expect(replay(captured).groups[0]).toMatchObject({ actor_eligible: true, stale: false });
+    for (const patch of [{ scan_enabled_ms: 29000 }, { aggregation_drops: 1 }, { quality_flags: ['callback_loss'] },
+      { unique_table_overflow: true }, { uncertainty_ms: undefined }, { freshness: 'unverified' }]) {
+      expect(replay({ ...captured, ...patch }).groups[0].actor_eligible).toBe(false);
+    }
+    expect(replay(captured, now - 60001 - captured.duration_ms).groups).toEqual([]);
+    expect(replay(captured, now - 59999).groups).toEqual([]);
   });
 
   test('renders a concise bounded card with quantities/times and keeps schematic explanation accessible', () => {

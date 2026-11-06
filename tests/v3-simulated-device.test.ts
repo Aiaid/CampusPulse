@@ -5,13 +5,15 @@ import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from 'miniflare';
 import { createAdminSession } from '../worker/admin-auth';
 import { sha256 } from '../worker/http';
 import { createSimulatedV3Device, createSimulationPolicy } from '../scripts/lib/v3-simulated-device.mjs';
+import { parseSimulatorArgs, startV3Simulator } from '../scripts/v3-simulator.mjs';
 
 let mf: Miniflare, db: D1Database, cookie: string;
 const origin = 'https://simulator.example.test', secret = 'synthetic-simulator-admin-secret';
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const localField = { storage: 'ephemeral-local-d1', dataset: 'field', purpose: 'site_observation' };
 beforeAll(async () => {
-  const bundle = await build({ stdin: { contents: `import {handleDeviceV3Control} from './worker/device-v3-control'; import {handleDeviceV3Statistics} from './worker/device-v3-statistics'; export default {async fetch(r,e){return await handleDeviceV3Control(r,e) ?? await handleDeviceV3Statistics(r,e) ?? new Response('Not found',{status:404})}};`, resolveDir: process.cwd(), loader: 'ts' },
-    bundle: true, write: false, format: 'esm', platform: 'neutral', external: ['node:*'], target: 'es2022' });
+  const bundle = await build({ entryPoints: ['worker/index.ts'],
+    bundle: true, write: false, format: 'esm', platform: 'neutral', mainFields: ['module', 'main'], external: ['cloudflare:*', 'node:*'], target: 'es2022' });
   mf = new Miniflare(convertV4MiniflareOptions({ name: 'v3-simulated-device-test', modules: true, script: bundle.outputFiles[0].text,
     compatibilityDate: '2026-10-23', compatibilityFlags: ['nodejs_compat'], d1Databases: ['DB'],
     bindings: { DEVICE_V3_CONTROL_ENABLED: 'true', DEVICE_V3_STATISTICS_ENABLED: 'true', DEVICE_V3_PRODUCER_VERSIONS: '["synthetic-statistics/1"]', ADMIN_TOKEN: secret }, log: new Log(LogLevel.ERROR) }));
@@ -26,12 +28,13 @@ beforeAll(async () => {
 }, 30000);
 afterAll(async () => { await mf?.dispose(); });
 
-async function setup(node: string, customize?: (path: string, init: RequestInit, response: Response) => Promise<Response>, transport: 'https' | 'mqtt_tls' = 'https') {
+async function setup(node: string, customize?: (path: string, init: RequestInit, response: Response) => Promise<Response>, transport: 'https' | 'mqtt_tls' = 'https', localConfiguration?: typeof localField, placeId = localConfiguration ? 'library' : null) {
   const token = `private-simulator-token-${node}`, placement = `${node}-place`;
   await db.prepare('INSERT INTO device_nodes(id,credential_sha256) VALUES(?,?)').bind(node, await sha256(new TextEncoder().encode(token))).run();
-  await db.prepare('INSERT INTO placements(id,node_id,valid_from_ms) VALUES(?,?,?)').bind(placement, node, Date.now() - 10000).run();
+  await db.prepare('INSERT INTO placements(id,node_id,place_id,valid_from_ms) VALUES(?,?,?,?)')
+    .bind(placement, node, placeId, Date.now() - 10000).run();
   const requests: { path: string; body: string }[] = [];
-  const device = await createSimulatedV3Device({ nodeId: node, deviceBearer: token, transport,
+  const device = await createSimulatedV3Device({ nodeId: node, deviceBearer: token, transport, localConfiguration,
     request: async (path: string, init: RequestInit) => {
       requests.push({ path, body: String(init.body ?? '') });
       const response = await mf.dispatchFetch(origin + path, { method: init.method, headers: init.headers as Record<string, string>,
@@ -39,7 +42,7 @@ async function setup(node: string, customize?: (path: string, init: RequestInit,
       return customize ? customize(path, init, response) : response;
     } });
   async function assign(generation = 1, overrides?: (p: any) => void) {
-    const policy = await createSimulationPolicy(device.capabilities, { placementId: placement, generation });
+    const policy = await createSimulationPolicy(device.capabilities, { placementId: placement, generation, localConfiguration });
     overrides?.(policy);
     const result = await mf.dispatchFetch(origin + '/api/v1/admin/device-v3/assignments', { method: 'POST',
       headers: { Cookie: cookie, Origin: origin, 'Content-Type': 'application/json' },
@@ -57,6 +60,61 @@ async function setup(node: string, customize?: (path: string, init: RequestInit,
 }
 
 describe.sequential('session-only simulated device against real V3 workerd and D1', () => {
+  it('requires an explicit local live choice and rejects historical promotion before reading replay files', async () => {
+    expect(parseSimulatorArgs([]).view).toBe('test');
+    expect(parseSimulatorArgs(['--view', 'live']).view).toBe('live');
+    expect(() => parseSimulatorArgs(['--view', 'demo'])).toThrow('View must');
+    expect(() => parseSimulatorArgs(['--replay', 'unused.json', '--view', 'live'])).toThrow('Historical replay');
+    await expect(startV3Simulator({ replayFile: 'must-not-be-read.json', view: 'live' })).rejects.toThrow('Historical replay');
+    await expect(createSimulatedV3Device({ nodeId: 'x', deviceBearer: 'x', request: () => {}, localConfiguration: { ...localField, storage: 'remote' } })).rejects.toThrow('explicit ephemeral');
+    await expect(createSimulatedV3Device({ nodeId: 'x', deviceBearer: 'x', request: () => {}, localConfiguration: { ...localField, purpose: 'controlled_test' } })).rejects.toThrow('explicit ephemeral');
+    await expect(createSimulatedV3Device({ nodeId: 'x', deviceBearer: 'x', request: () => {}, localConfiguration: localField, replay: { windows: [] } })).rejects.toThrow('Historical replay');
+  });
+
+  it('keeps default controlled tests out of normal live and history, and rejects field assignments', async () => {
+    const f = await setup('sim-isolated', undefined, 'https', undefined, 'library');
+    await f.device.start(); await f.assign(); await f.device.tick(); await f.window();
+    const live = await (await mf.dispatchFetch(origin + '/api/v3/places/library/statistics')).json() as any;
+    expect(live).toMatchObject({ state: 'unavailable', reason: 'no_field_statistics' });
+    const history = await (await mf.dispatchFetch(origin + '/api/v1/places/library/history?minutes=15', { headers: { 'Cache-Control': 'no-cache' } })).json() as any;
+    expect(history.sensor_windows).toEqual([]);
+    await f.assign(2, p => { p.custody.dataset = 'field'; p.custody.purpose = 'site_observation'; });
+    expect((await f.device.tick()).phase).toBe('failed');
+    await db.prepare('UPDATE device_nodes SET enabled=0 WHERE id=?').bind(f.node).run();
+    f.device.stop();
+  });
+
+  it('sends explicit local field windows through the normal public live and history APIs with backend-only provenance', async () => {
+    const f = await setup('sim-local-live', undefined, 'https', localField);
+    await f.device.start(); const policy = await f.assign();
+    expect(policy.custody).toMatchObject({ dataset: 'field', purpose: 'site_observation' });
+    expect(policy.local_raw).toEqual({ mode: 'off' });
+    await f.device.tick(); await f.window();
+    const readLive = async () => await (await mf.dispatchFetch(origin + '/api/v3/places/library/statistics')).json() as any;
+    const quiet = await readLive();
+    expect(quiet).toMatchObject({ state: 'observed', visible_identifiers: 2, estimated_total: null });
+    f.device.setScenario('busy'); await f.window();
+    const busy = await readLive();
+    expect(busy).toMatchObject({ state: 'observed', visible_identifiers: 12 });
+    expect(Date.parse(busy.observed_at)).toBeGreaterThan(Date.parse(quiet.observed_at));
+    const summary = await (await mf.dispatchFetch(origin + '/api/v1/places/library/summary', { headers: { 'Cache-Control': 'no-cache' } })).json() as any;
+    expect(summary.sensor.visible_identifiers).toBe(12);
+    const history = await (await mf.dispatchFetch(origin + '/api/v1/places/library/history?minutes=15', { headers: { 'Cache-Control': 'no-cache' } })).json() as any;
+    expect(history.sensor_windows).toHaveLength(2);
+    expect(history.sensor_windows.map((w: any) => w.visible_identifiers)).toEqual([12, 2]);
+    expect(JSON.stringify({ quiet, busy, history })).not.toContain('synthetic');
+    const inspection = await (await mf.dispatchFetch(origin + `/api/v1/admin/device-v3/nodes/${f.node}`, { headers: { Cookie: cookie } })).json() as any;
+    expect(inspection.capabilities.producer_version).toBe('synthetic-statistics/1');
+    expect(f.requests.filter(r => r.path.includes('/ingest')).every(r => JSON.parse(r.body).d === 'field')).toBe(true);
+    // The permission cannot be broadened by delivering a different dataset or raw policy.
+    await f.assign(2, p => { p.custody.dataset = 'controlled_test'; p.custody.purpose = 'controlled_test'; });
+    expect((await f.device.tick()).phase).toBe('failed');
+    await f.assign(3, p => { p.local_raw = { mode: 'tf_cpraw', format: 'cpraw/1', max_segment_bytes: 1048576, max_total_bytes: 16777216,
+      min_free_bytes: 1048576, sync_interval_ms: 1000, full_behavior: 'stop_recording' }; });
+    expect((await f.device.tick()).phase).toBe('failed');
+    f.device.stop();
+  }, 10000);
+
   it('negotiates native-mode policy declarations and accepts rolling buffers with event reports off', async () => {
     const f = await setup('sim-native-mode', undefined, 'mqtt_tls');
     expect(f.device.capabilities.uplink.transports).toEqual(['mqtt_tls']);

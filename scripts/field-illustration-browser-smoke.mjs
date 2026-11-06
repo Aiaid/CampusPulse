@@ -22,6 +22,24 @@ try {
     observed_at: iso(-1000), valid_until: iso(89000), duration_ms: 30000, scan_enabled_ms: 30000, visible_identifiers: 16,
     reports_aggregated: 100, uncertainty_ms: 0, aggregation_drops: 0, quality_flags: [], unique_table_overflow: false };
   let scenario = 'known';
+  const currentPlace = () => scenario === 'unmapped' ? { ...place, id: 'unmapped-near-library', name: '未注册路线观察点' } : place;
+  const currentSensor = () => ['reported', 'empty', 'retained'].includes(scenario) ? null : {
+    ...sensor,
+    ...(scenario === 'busy' ? { visible_identifiers: 120 } : {}),
+    ...(scenario === 'zero' ? { visible_identifiers: 0 } : {}),
+    ...(scenario === 'expired' ? { valid_until: iso(-1) } : {}),
+    ...(scenario === 'loss' ? { scan_enabled_ms: 29000, quality_flags: ['scan_gap'] } : {}),
+  };
+  const manualParking = { id: 'manual-parking', place_id: place.id, source: 'manual', status: 'active', kind: 'parking',
+    parking_min: 4, parking_max: 8, observed_at: iso(-1000), valid_until: iso(89000) };
+  const candidateObservations = {
+    vehicles: { status: 'candidate_estimate', source: 'ble_rule_inference', model_version: 'fixture-candidates/1',
+      observed_at: iso(-1000), valid_until: iso(89000), candidate_count: 2, car_related_count: 0, ecosystem_count: 0,
+      sample_count: 8, reason: null, quality_flags: [], evidence_kind: 'compact' },
+    elevator: { status: 'unavailable', source: 'manual_historical_baseline', model_version: 'fixture-elevator/1',
+      observed_at: null, valid_until: null, wait_seconds: null, range_seconds: null, sample_count: 0, day_count: 0,
+      reason: 'no_manual_samples', calibrated: false },
+  };
   const requests = [], errors = [];
   await context.route('**/*', route => {
     const request = route.request(), url = new URL(request.url());
@@ -29,11 +47,13 @@ try {
     if (!url.pathname.startsWith('/api/v1/')) return route.continue();
     requests.push(request.method());
     if (url.pathname.endsWith('/settings')) return route.fulfill({ json: { site_name: 'CampusPulse', default_mode: 'field' } });
-    if (url.pathname === '/api/v1/places') return route.fulfill({ json: { places: [place] } });
-    if (url.pathname.endsWith('/summary')) return route.fulfill({ json: { place, as_of: iso(0), sensor: scenario === 'known' ? sensor : null,
+    if (url.pathname === '/api/v1/places') return route.fulfill({ json: { places: [currentPlace()] } });
+    if (url.pathname.endsWith('/summary') && scenario === 'failed') return route.fulfill({ status: 503, json: {} });
+    if (url.pathname.endsWith('/summary')) return route.fulfill({ json: { place: currentPlace(), as_of: iso(0), sensor: currentSensor(),
       last_reported_sensor: scenario === 'reported' ? { ...sensor, visible_identifiers: 9, received_at: iso(-1000), observed_at: null, valid_until: null, uncertainty_ms: null, time_status: 'unknown', freshness: 'unverified' } : null,
-      latest_observation: null, latest_observations: { parking: null, elevator: null } } });
-    if (url.pathname.endsWith('/history')) return route.fulfill({ json: { place_id: place.id, from: iso(-3600000), to: iso(0), truncated: false, sensor_truncated: false, sensor_windows: [], observations: [] } });
+      ...(['candidate', 'candidate-with-manual'].includes(scenario) ? { automatic_observations: candidateObservations } : {}),
+      latest_observation: null, latest_observations: { parking: scenario === 'candidate-with-manual' ? manualParking : null, elevator: null } } });
+    if (url.pathname.endsWith('/history')) return route.fulfill({ json: { place_id: currentPlace().id, from: iso(-3600000), to: iso(0), truncated: false, sensor_truncated: false, sensor_windows: [], observations: [] } });
     return route.fulfill({ status: 404, json: {} });
   });
   const page = await context.newPage();
@@ -55,19 +75,53 @@ try {
     await expect(page.locator('.field-illustration')).toHaveCount(0);
   };
   const empty = async () => {
-    await expect.poll(() => allLayers.evaluateAll(layers => layers.length > 0 && layers.every(layer => layer.dataset.actorCount === '0'))).toBe(true);
+    await expect.poll(() => allLayers.evaluateAll(layers => layers.map(layer => layer.dataset.actorCount)),
+      { message: `No actors for ${scenario}`, timeout: 15000 }).toEqual(['0', '0']);
     await expect.poll(nontransparent).toBe(0);
+  };
+  const scopedPeopleOnly = async () => {
+    await expect.poll(() => allLayers.evaluateAll(layers => layers.length > 0 && layers.every(layer =>
+      layer.dataset.actorPlaceIds === 'library' && layer.dataset.ridingCount === '0' && layer.dataset.parkedCount === '0')))
+      .toBe(true);
   };
   await page.goto(`${base}/?mode=field&place=library`);
   await populated();
+  await scopedPeopleOnly();
+  const initialCount = Number(await detail.getAttribute('data-actor-count'));
   await expect(detail).toHaveAttribute('data-scenario', 'field');
   await expect(page.locator('.field-data-panel')).toContainText('16 个 BLE 可见标识');
-  await expect(page.getByText('观测输入 · 推测场景', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '现场观察', exact: true })).toHaveAttribute('aria-pressed', 'true');
   scenario = 'reported'; await page.reload();
-  await populated();
+  await empty();
   await expect(page.locator('[data-source="last-reported-sensor"]')).toContainText('9 个 BLE 可见标识');
   await expect(page.locator('[data-source="last-reported-sensor"]')).toContainText('时间未知 · 上传');
   await expect(page.locator('[data-source="last-reported-sensor"]')).not.toContainText('有效观察');
+  for (const missing of ['zero', 'expired', 'loss', 'unmapped']) {
+    scenario = missing; await page.reload();
+    await empty();
+  }
+  // Retention is created by a real client read transition, not a backend flag.
+  scenario = 'known'; await page.reload(); await populated();
+  scenario = 'retained'; await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();
+  await empty();
+  await expect(page.locator('.field-data-panel')).toContainText('16 个 BLE 可见标识');
+  await expect(page.locator('.field-data-panel')).toContainText('最后观测');
+  scenario = 'failed'; await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();
+  await empty();
+  await expect(page.getByRole('alert')).toContainText('更新失败');
+  for (const supported of ['candidate', 'candidate-with-manual']) {
+    scenario = supported; await page.reload();
+    await populated();
+    await expect.poll(() => allLayers.evaluateAll(layers => layers.length > 0 && layers.every(layer =>
+      layer.dataset.actorPlaceIds === 'library' && layer.dataset.ridingCount === '2' && layer.dataset.parkedCount === '0')))
+      .toBe(true);
+  }
+  scenario = 'known'; await page.reload();
+  await populated(); await scopedPeopleOnly();
+  scenario = 'busy'; await page.getByRole('button', { name: '刷新现场数据', exact: true }).click();
+  await expect(page.locator('.field-data-panel')).toContainText('120 个 BLE 可见标识');
+  await expect.poll(async () => Number(await detail.getAttribute('data-actor-count'))).toBeGreaterThan(initialCount);
+  await scopedPeopleOnly();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   // Overflow is clipped before ResizeObserver/React and the next draw update
@@ -91,7 +145,7 @@ try {
   const axis = page.getByRole('slider', { name: '现场数据时间轴', exact: true });
   await axis.fill(String(now - 120000));
   await empty();
-  await expect(page.locator('.field-data-panel')).not.toContainText('9 个 BLE 可见标识');
+  await expect(page.locator('.field-data-panel')).not.toContainText('120 个 BLE 可见标识');
   await page.getByRole('button', { name: '返回实时', exact: true }).click();
   await populated();
   scenario = 'empty'; await page.reload();
@@ -104,5 +158,5 @@ try {
   await expect(page.locator('.field-illustration')).toHaveCount(0);
   assert.ok(requests.every(method => method === 'GET'));
   assert.deepEqual(errors, []);
-  console.log('Original scene fixture acceptance passed: field/receipt input, visible moving original actors, no card overlay, raw BLE/time labels, empty-data/replay gaps, demo isolation and 390px layout. Synthetic fixtures only.');
+  console.log('Field scene fixture acceptance passed: exact uploaded-place scope, people-only BLE input, no demo vehicles, zero/missing/expired/unverified/loss/retained/unmapped suppression, live density refresh, replay gaps, unchanged demo animation and 390px layout. Synthetic fixtures only.');
 } finally { await browser?.close(); await mf.dispose(); }

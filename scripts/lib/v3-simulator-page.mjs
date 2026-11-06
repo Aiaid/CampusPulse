@@ -79,15 +79,15 @@ export function simulatorPage() {
     <header>
       <p class="eyebrow">CAMPUSPULSE / LOCAL DEVELOPMENT</p>
       <h1>模拟设备控制台</h1>
-      <p class="intro">在本机切换合成场景，观察 V3 设备注册、上传与管理流程。这里操作的是软件模拟设备，所有活动数据都属于受控测试。</p>
+      <p class="intro">在本机切换合成场景，观察 V3 设备注册、上传与管理流程。这里操作的是软件模拟设备，所有数据仅保存在当前进程的隔离临时数据库。</p>
       <div class="badges" aria-label="运行边界">
         <span id="source-badge" class="badge synthetic">模拟设备 · 合成数据</span>
-        <span class="badge">controlled_test</span>
+        <span id="dataset-badge" class="badge">controlled_test</span>
         <span class="badge">仅本地运行</span>
       </div>
       <nav class="links" aria-label="本地应用">
         <a class="link-button primary" href="/__simulator/admin">自动登录本地管理后台 <span aria-hidden="true"> ↗</span></a>
-        <a class="link-button" href="/">查看前台 <span aria-hidden="true"> ↗</span></a>
+        <a id="public-link" class="link-button" href="/?mode=field&amp;place=library">查看正常现场前台 <span aria-hidden="true"> ↗</span></a>
       </nav>
     </header>
     <div class="layout">
@@ -126,7 +126,7 @@ export function simulatorPage() {
     </div>
     <aside class="notice" aria-label="测试范围说明">
       <p id="replay-notice" hidden><strong>历史 CPRAW 回放：</strong>统计来自已保存采集，使用当前测试时钟、新身份与租约重放；原始时间与来源哈希单独保留。回放结束后停止生成窗口，不混入合成活动。</p>
-      <p><strong>数据边界：</strong>前台的真实现场数据独立展示。controlled_test 合成记录可能不会出现在前台现场视图，请在本地管理后台检查。</p>
+      <p id="dataset-notice"><strong>数据边界：</strong>默认 controlled_test 记录与正常现场 API 隔离；请在本地管理后台检查。</p>
       <p><strong>验证边界：</strong>当前使用 CPV3 帧与真实本地网关、RPC 检查、服务绑定和 V3 API。Broker 与回包传输由本机模拟；未验证生产 EMQX、原生 MQTT/TLS 连接或真实无线硬件。</p>
       <p>本地管理登录使用临时会话；此页面与测试数据库仅用于当前本地开发服务。</p>
     </aside>
@@ -172,8 +172,9 @@ export function simulatorPage() {
         statusRequest = (async () => {
           try {
             const data = await request('/__simulator/status');
-            if (!data || data.schema !== 'campuspulse-v3-simulator/1' || data.dataset !== 'controlled_test') {
-              throw new Error('状态响应不符合本地受控测试协议。');
+            if (!data || data.schema !== 'campuspulse-v3-simulator/1' || data.isolation !== 'ephemeral-local-d1' ||
+                !(['test', 'live'].includes(data.view)) || data.dataset !== (data.view === 'live' ? 'field' : 'controlled_test')) {
+              throw new Error('状态响应不符合隔离本地模拟协议。');
             }
             byId('node-id').textContent = asText(data.node_id);
             byId('replay-notice').hidden = !data.device?.replay;
@@ -181,6 +182,11 @@ export function simulatorPage() {
             byId('source-badge').textContent = replayMode ? '历史采集 · 测试回放' : '模拟设备 · 合成数据';
             updateControls();
             byId('dataset').textContent = asText(data.dataset);
+            byId('dataset-badge').textContent = data.dataset + (data.view === 'live' ? ' · 本地 live 调试' : '');
+            byId('public-link').href = data.urls.public;
+            byId('dataset-notice').textContent = data.view === 'live'
+              ? '数据边界：当前虚拟设备通过正常 field 策略与上传进入正常现场前台；合成来源保留在管理端。数据仅存在隔离的临时本地数据库，不接入生产。'
+              : '数据边界：当前 controlled_test 记录与正常现场 API 隔离；请在本地管理后台检查。';
             byId('window').textContent = asText(data.window_ms) + ' ms';
             byId('device-json').textContent = JSON.stringify({ ...data.device, gateway: data.transport }, null, 2);
             byId('updated').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });

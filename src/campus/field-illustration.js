@@ -22,6 +22,20 @@ const vehiclesUsable = record => record?.status === 'candidate_estimate' && reco
 const referenceUsable = record => record?.status === 'historical_estimate' && record.source === 'manual_historical_baseline'
   && record.calibrated === false && waitSeconds(record.wait_seconds) && count(record.sample_count) && record.sample_count > 0
   && count(record.day_count) && record.day_count > 0 && interval(record);
+// Bounded clock uncertainty is admitted by the V3 public projection. All loss,
+// partial-window and unknown quality flags prevent scene actors, while cards
+// still disclose the original observations and their limitations.
+const actorQuality = record => Array.isArray(record.quality_flags)
+  && record.quality_flags.every(flag => flag === 'uncertain_clock');
+const sensorActorUsable = record => sensorUsable(record) && record.protocol === 'campuspulse/3'
+  && ['node_id', 'boot_id', 'placement_id', 'policy_id'].every(key => typeof record[key] === 'string' && record[key].trim())
+  && count(record.assignment_generation) && record.assignment_generation > 0 && count(record.seq)
+  && count(record.reports_aggregated) && count(record.duration_ms) && count(record.uncertainty_ms) && record.uncertainty_ms <= 5000
+  && record.scan_enabled_ms === record.duration_ms && record.aggregation_drops === 0 && record.unique_table_overflow === false
+  && actorQuality(record) && record.freshness !== 'unverified' && !['unknown', 'uncertain'].includes(record.time_status)
+  && !(count(record.max_addresses) && record.max_addresses > 0 && record.visible_identifiers >= record.max_addresses);
+const vehicleActorUsable = record => vehiclesUsable(record) && Array.isArray(record.quality_flags) && record.quality_flags.length === 0
+  && typeof record.model_version === 'string' && Boolean(record.model_version.trim()) && record.reason === null;
 
 /** A place-level diagram, not inferred identities, positions or calibrated flow.
  * Bands choose a fixed drawing budget, never a conversion of BLE IDs to people.
@@ -44,43 +58,52 @@ export function fieldIllustration({ mode = 'field', live, history, cursor, now, 
   const usable = (record, validate) => validate(record) && (replay || Date.parse(record.observed_at) <= now);
   const evidence = (record, key) => ({ observed_at: record.observed_at, valid_until: record.valid_until,
     ...(isLastReportedSensor(record) ? { received_at: record.received_at, time_status: record.time_status, unverified: true } : {}),
+    ...(record.place_id ? { place_id: record.place_id } : {}),
     stale: !replay && recordFreshness(record, now) !== 'fresh', last_known: !replay ? state.data.last_known?.[key] : undefined });
   const fresh = (record, key) => recordFreshness(record, now) === 'fresh' && !state.data.last_known?.[key];
-  const purposes = observationKinds(place || state.data.place), groups = [];
+  const actorEligible = (record, key, validate) => validate(record) && !state.error && record.unverified !== true
+    && record.freshness !== 'unverified' && !['unknown', 'uncertain'].includes(record.time_status)
+    && (replay || (fresh(record, key) && record.freshness !== 'stale'));
+  const purposes = observationKinds(place || state.data.place), groups = [], actor_groups = [];
   let vehicle_status = null, elevator = null;
   if (layers.people !== false && usableSensor) {
     const saturated = sensor.unique_table_overflow === true
       || (count(sensor.max_addresses) && sensor.max_addresses > 0 && sensor.visible_identifiers >= sensor.max_addresses);
     const band = saturated ? null : sensor.visible_identifiers < 20 ? 1 : sensor.visible_identifiers < 100 ? 2 : 3;
-    groups.push({ kind: 'people', figure_count: sensor.visible_identifiers === 0 ? 0 : saturated ? 5 : [3, 5, 7][band - 1], band, source: 'sensor', saturated,
+    const group = { kind: 'people', figure_count: sensor.visible_identifiers === 0 ? 0 : saturated ? 5 : [3, 5, 7][band - 1], band, source: 'sensor', saturated,
+      actor_eligible: actorEligible(sensor, 'sensor', sensorActorUsable),
       metric_value: sensor.visible_identifiers, quantity: `${sensor.visible_identifiers} 个 BLE 标识`,
       description: saturated ? '已达采集上限 · 人数未知' : `广播活动量级示意 ${band} 档 · 人数未知`,
       label: `${sensor.visible_identifiers} 个 BLE 标识 · ${saturated ? '已达采集上限 · 人数未知' : `广播活动量级示意 ${band} 档 · 人数未知`}`,
-      ...evidence(sensor, reported ? 'last_reported_sensor' : 'sensor') });
+      ...evidence(sensor, reported ? 'last_reported_sensor' : 'sensor') };
+    groups.push(group);
+    actor_groups.push(group);
   }
   if (layers.bikes !== false) {
     const hasParking = usable(parking, parkingUsable), hasVehicles = usable(vehicles, vehiclesUsable);
     // A fresh source beats retained/expired evidence; prefer direct manual evidence
     // only within that freshness tier. Explicit zero remains a valid replacement.
     const useParking = hasParking && (!hasVehicles || replay || fresh(parking, 'parking') || !fresh(vehicles, 'vehicles'));
-    if (useParking) groups.push({ kind: 'bikes', figure_count: parking.parking_min > 0 ? 2 : 0, source: 'manual',
+    if (useParking) groups.push({ kind: 'bikes', figure_count: parking.parking_min > 0 ? 2 : 0, source: 'manual', actor_eligible: false,
       metric_value: (parking.parking_min + parking.parking_max) / 2, quantity: `${parking.parking_min}–${parking.parking_max} 辆 · 人工`, description: '人工停车观察',
       label: `人工停车观察 ${parking.parking_min}–${parking.parking_max} 辆`, ...evidence(parking, 'parking') });
     if (hasVehicles) {
-      if (!useParking && vehicles.candidate_count > 0) groups.push({ kind: 'bikes', figure_count: 2, source: 'candidate',
+      const bikes = { kind: 'bikes', figure_count: vehicles.candidate_count > 0 ? 2 : 0, source: 'candidate',
+        actor_eligible: actorEligible(vehicles, 'vehicles', vehicleActorUsable),
         metric_value: vehicles.candidate_count, quantity: `${vehicles.candidate_count} 个候选标识`,
-        label: '电动车相关广播 · 识别候选', ...evidence(vehicles, 'vehicles') });
-      if (vehicles.car_related_count > 0) groups.push({ kind: 'cars', figure_count: 2, source: 'candidate',
-        quantity: `${vehicles.car_related_count} 个候选标识`,
-        label: '汽车相关广播 · 识别候选', ...evidence(vehicles, 'vehicles') });
-      if (!useParking && vehicles.candidate_count === 0) groups.push({ kind: 'bikes', figure_count: 0, source: 'candidate',
-        quantity: '0 个候选标识',
-        label: '未识别到电动车候选 · 非无车结论', ...evidence(vehicles, 'vehicles') });
-    }
-    if (!replay && purposes.includes('parking') && !hasParking && !hasVehicles && usableSensor && sensor.visible_identifiers > 0) {
-      groups.push({ kind: 'bikes', figure_count: 2, source: 'illustrative', quantity: '车辆示意',
-        description: '推测 · 非车辆观测数量', label: '车辆示意 · 推测',
-        ...evidence(sensor, reported ? 'last_reported_sensor' : 'sensor') });
+        label: vehicles.candidate_count > 0 ? '电动车相关广播 · 识别候选' : '未识别到电动车候选 · 非无车结论', ...evidence(vehicles, 'vehicles') };
+      // Manual preference belongs to the observation card. It must not hide an
+      // independent uploaded candidate from the device-only scene projection.
+      if (!useParking) groups.push(bikes);
+      actor_groups.push(bikes);
+      if (vehicles.car_related_count > 0) {
+        const cars = { kind: 'cars', figure_count: 2, source: 'candidate',
+          actor_eligible: actorEligible(vehicles, 'vehicles', vehicleActorUsable), metric_value: vehicles.car_related_count,
+          quantity: `${vehicles.car_related_count} 个候选标识`,
+          label: '汽车相关广播 · 识别候选', ...evidence(vehicles, 'vehicles') };
+        groups.push(cars);
+        actor_groups.push(cars);
+      }
     }
     if (purposes.includes('parking') && !groups.some(group => group.kind === 'bikes')) {
       vehicle_status = replay ? '所选时刻车辆待观测' : '车辆待观测 · 等待有效人工或识别证据';
@@ -99,6 +122,6 @@ export function fieldIllustration({ mode = 'field', live, history, cursor, now, 
         label: `候梯参考约 ${seconds} 秒 · 历史样本`, note: '历史已完成样本参考，不是当前等待预测', ...evidence(reference, 'elevator_reference') };
     } else elevator = { status: 'waiting', label: replay ? '所选时刻候梯待观测' : '候梯样本不足 / 待观测', note: '暂无有效参考，缺失不表示零秒' };
   }
-  return groups.length || elevator || vehicle_status ? { replay, groups, elevator, vehicle_status, update_failed: !replay && Boolean(state.error),
+  return groups.length || elevator || vehicle_status ? { replay, place_id: place?.id || state.data.place?.id || null, groups, actor_groups, elevator, vehicle_status, update_failed: !replay && Boolean(state.error),
     figure_count: groups.reduce((sum, group) => sum + group.figure_count, 0) } : null;
 }

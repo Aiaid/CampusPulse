@@ -5,7 +5,7 @@ import { chromium } from '@playwright/test';
 import { startV3Simulator } from './v3-simulator.mjs';
 
 const simulator = await startV3Simulator({ port: Number(process.env.SIMULATOR_SMOKE_PORT ?? 5195) });
-let browser;
+let browser, liveSimulator;
 try {
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
@@ -83,8 +83,56 @@ try {
   await page.goto(simulator.origin + '/__simulator');
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  // A separate ephemeral D1 opts into normal field policy/ingest. The public
+  // application receives exactly the same API shape and URL as real devices.
+  liveSimulator = await startV3Simulator({ port: Number(process.env.SIMULATOR_SMOKE_PORT ?? 5195) + 2, view: 'live' });
+  const livePage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  livePage.on('pageerror', error => errors.push(error.message));
+  await livePage.route('https://gis.ccnu.edu.cn/**', route => route.abort());
+  const readLive = async () => (await livePage.request.get(liveSimulator.origin + '/api/v3/places/library/statistics')).json();
+  async function liveUntil(predicate, message) {
+    for (let i = 0; i < 100; i++) {
+      const value = await readLive(); if (predicate(value)) return value;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.fail(message);
+  }
+  const quietLive = await liveUntil(s => s.state === 'observed' && s.visible_identifiers === 2, 'Local field quiet data accepted');
+  await livePage.goto(liveSimulator.origin + '/?mode=field&place=library');
+  const livePanel = livePage.getByRole('region', { name: '现场实时数据', exact: true });
+  await livePanel.getByText('2 个 BLE 可见标识', { exact: true }).waitFor();
+  assert.ok(await livePage.locator('.cp-map').count(), 'Normal map rendered');
+  assert.equal(await livePage.getByRole('heading', { name: '模拟设备控制台', exact: true }).count(), 0);
+  const publicRefresh = { headers: { 'Cache-Control': 'no-cache' } };
+  const quietSummary = await (await livePage.request.get(liveSimulator.origin + '/api/v1/places/library/summary', publicRefresh)).json();
+  assert.equal(quietSummary.sensor.visible_identifiers, 2);
+  assert.equal((await livePage.request.post(liveSimulator.origin + '/__simulator/scenario', {
+    headers: { Origin: liveSimulator.origin }, data: { scenario: 'busy' },
+  })).status(), 200);
+  const busyLive = await liveUntil(s => s.visible_identifiers === 12, 'Local field busy update accepted');
+  assert.ok(Date.parse(busyLive.observed_at) > Date.parse(quietLive.observed_at));
+  const busySummary = await (await livePage.request.get(liveSimulator.origin + '/api/v1/places/library/summary', publicRefresh)).json();
+  assert.equal(busySummary.sensor.visible_identifiers, 12);
+  await livePanel.getByRole('button', { name: '刷新现场数据', exact: true }).click();
+  await livePanel.getByText('12 个 BLE 可见标识', { exact: true }).waitFor();
+  const liveHistory = await (await livePage.request.get(liveSimulator.origin + '/api/v1/places/library/history?minutes=15', publicRefresh)).json();
+  assert.ok(liveHistory.sensor_windows.some(w => w.visible_identifiers === 2));
+  assert.ok(liveHistory.sensor_windows.some(w => w.visible_identifiers === 12));
+  assert.ok(!JSON.stringify({ quietLive, busyLive, busySummary, liveHistory }).includes('synthetic'));
+  await livePage.getByRole('region', { name: '现场数据连续时间轴', exact: true })
+    .getByRole('button', { name: /传感器 sim-v3-01 · 12 个 BLE 可见标识/ }).first().click();
+  await livePage.getByRole('region', { name: '现场历史回放', exact: true })
+    .getByText('12 个 BLE 可见标识', { exact: true }).waitFor();
+  await livePage.getByRole('button', { name: '返回实时', exact: true }).click();
+  await livePage.getByRole('region', { name: '现场实时数据', exact: true }).waitFor();
+  await livePage.goto(liveSimulator.origin + '/__simulator/admin');
+  const liveInspection = await (await livePage.request.get(liveSimulator.origin + '/api/v1/admin/device-v3/nodes/sim-v3-01')).json();
+  assert.equal(liveInspection.capabilities.producer_version, 'synthetic-statistics/1');
+  await livePage.goto(liveSimulator.origin + '/__simulator');
+  await livePage.waitForFunction(() => document.getElementById('dataset-badge').textContent.includes('field'));
+  assert.ok((await livePage.locator('#dataset-notice').textContent()).includes('临时本地数据库'));
   assert.deepEqual(errors, []);
-  console.log('V3 simulator browser smoke passed: CPV3 gateway, scenarios, receipts, offline recovery, reboot, admin policy preparation/publication, relogin, public isolation and mobile layout.');
+  console.log('V3 simulator browser smoke passed: CPV3 gateway, scenarios, receipts, offline recovery, reboot, admin policy preparation/publication, relogin, controlled-test isolation, normal live/history UI updates, backend provenance and mobile layout.');
 } finally {
-  try { await browser?.close(); } finally { await simulator.close(); }
+  try { await browser?.close(); } finally { try { await liveSimulator?.close(); } finally { await simulator.close(); } }
 }

@@ -12,6 +12,7 @@ import { sampleCampusActor } from './campus-scene-lighting';
 import { campusCrownMasks, drawCampusCrownMasks, drawNativeCanopyMasks } from './campus-tree-masks';
 import { getCampusNativeCanopyMasks, subscribeCampusNativeCanopy } from './CampusLightingLayer';
 import { createActorLightSampler, createRenderCache } from './render-cache';
+import { makeFieldActors } from './field-actors.js';
 
 const actorDefinitions = createRenderCache(8);
 const actorOcclusion = createRenderCache(200);
@@ -56,17 +57,15 @@ function actorPosition(actor, elapsed) {
   const position = sampleRoute(actor.route, progress);
   return { ...actor, ...position, heading: position.heading + (returning ? 180 : 0) };
 }
-function makeActors(minute, layers, scenarioId, input = null) {
-  const metricsFor = id => { const base = getMetrics(id, minute, scenarioId); return input?.placeId === id ? { ...base, people: input.people, bikes: input.bikes ?? base.bikes, parking: input.parking ?? base.parking } : base; };
-  const multiplier = input ? 2 : 1;
+function makeDemoActors(minute, layers, scenarioId) {
   const result = [];
   // Stable IDs and phase keep the same actors in place as density changes.
   for (const route of sceneRoutes) {
     if (route.points.length < 2 || !layers[route.kind === 'walk' ? 'people' : 'bikes']) continue;
-    const metrics = metricsFor(route.placeId);
+    const metrics = getMetrics(route.placeId, minute, scenarioId);
     // Higher peak pedestrian density follows the selected concept in EVERY
     // lighting mode. It is illustrative activity, never a field people count.
-    const count = (route.kind === 'walk' ? metrics.people === 0 ? 0 : clamp(Math.round(metrics.people / 10), 1, 10) : metrics.bikes === 0 ? 0 : clamp(Math.round(metrics.bikes / 24), 1, 4)) * multiplier;
+    const count = route.kind === 'walk' ? metrics.people === 0 ? 0 : clamp(Math.round(metrics.people / 10), 1, 10) : metrics.bikes === 0 ? 0 : clamp(Math.round(metrics.bikes / 24), 1, 4);
     const length = Math.max(pathLength(route), 1);
     for (let index = 0; index < count; index += 1) {
       result.push({ id: `${route.id}-${index}`, route, length, kind: route.kind, parked: false,
@@ -76,8 +75,8 @@ function makeActors(minute, layers, scenarioId, input = null) {
   }
   // A parking sprite contains no rider and never participates in motion.
   if (layers.bikes) for (const area of parkingAreas) {
-    const metrics = metricsFor(area.placeId);
-    const occupied = Math.min(area.slots.length, Math.round(area.slots.length * metrics.parking / 100) * multiplier);
+    const metrics = getMetrics(area.placeId, minute, scenarioId);
+    const occupied = Math.min(area.slots.length, Math.round(area.slots.length * metrics.parking / 100));
     for (const [index, slot] of area.slots.slice(0, occupied).entries()) {
       result.push({ id: `${area.id}-parked-${index}`, kind: 'ride', parked: true, ...slot });
     }
@@ -85,20 +84,6 @@ function makeActors(minute, layers, scenarioId, input = null) {
   // The extended chart has fewer than 200 actors even at peak density; every
   // place retains its route allocation and fixed parking comes after no cutoff.
   return result.slice(0, MAX_ACTORS);
-}
-function sceneInput(illustration, place) {
-  if (!illustration || !place) return null;
-  const people = illustration.groups.find(group => group.kind === 'people');
-  if (!people && !illustration.groups.some(group => group.kind === 'bikes' || group.kind === 'cars')) return null;
-  const nearest = sceneRoutes.reduce((best, route) => {
-    const distance = Math.min(...route.points.map(([x,y]) => Math.hypot(x-place.x,y-place.y)));
-    return !best || distance < best.distance ? { placeId: route.placeId, distance } : best;
-  }, null);
-  const id = nearest?.placeId;
-  const vehicles = illustration.groups.find(group => group.kind === 'bikes');
-  return { placeId: id, people: people?.metric_value ?? people?.figure_count ?? 0,
-    bikes: vehicles?.metric_value > 0 ? vehicles.metric_value : null,
-    parking: vehicles?.source === 'manual' ? Math.min(100, (vehicles.metric_value || 0) * 10) : null };
 }
 function loadImage(src, redraw) {
   const image = new Image();
@@ -204,7 +189,7 @@ function drawActorShadows(context, screen, spriteWidth, spriteHeight, mapScale, 
   return { cast: Boolean(shadow), contact: Boolean(stamp) };
 }
 
-/** Synthetic route animation; speed and density are demonstrations, not tracking. */
+/** Existing sprite animation; field density uses eligible uploaded evidence. */
 export default function ActivityLayer({ project, scale, translateX, translateY, viewWidth, viewHeight,
   layers = { people: true, bikes: true }, minute = 1200, scenarioId = 'weekday', isDark = false, xray = false, moving = true,
   selectedId = 'library', demo = true, lighting = 'atmospheric', detailView = false, fieldIllustration = null, fieldPlace = null,
@@ -266,10 +251,11 @@ export default function ActivityLayer({ project, scale, translateX, translateY, 
       const context = canvas.getContext('2d');
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
       context.clearRect(0, 0, width, height);
-      const input = props.demo ? null : sceneInput(props.fieldIllustration, props.fieldPlace);
-      const definitions = props.demo || input ? actorDefinitions.resolve(props.demo ? props.scenarioId : 'field-'+input.placeId,
-        [props.minute, props.layers.people, props.layers.bikes, input?.people, input?.bikes, input?.parking],
-        () => makeActors(props.minute, props.layers, props.scenarioId, input)) : [];
+      const definitions = props.demo
+        ? actorDefinitions.resolve(props.scenarioId, [props.minute, props.layers.people, props.layers.bikes],
+          () => makeDemoActors(props.minute, props.layers, props.scenarioId))
+        : actorDefinitions.resolve('field', [props.fieldIllustration, props.fieldPlace?.id, props.layers.people, props.layers.bikes],
+          () => makeFieldActors(props.fieldIllustration, props.fieldPlace, props.layers));
       const actors = definitions.map((actor) => actorPosition(actor, elapsed)).sort((a, b) => a.y - b.y);
       const treeRevision = treeMaterialState().revision;
       let hiddenCount = 0;

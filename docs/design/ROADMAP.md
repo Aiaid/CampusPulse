@@ -486,6 +486,27 @@ Historical context: the raw-first implementation direction was **superseded as
 
 ## Completed archive
 
+- [x] 2026-11-06: Make live map actors exclusively device-observation-driven.
+      Remove demo metrics, invented activity-derived vehicles and nearest-place
+      reassignment; budget only eligible uploaded activity/vehicle candidates
+      across their own registered routes. Missing/zero/stale/unverified/lossy/
+      retained/failed data draws no current actors. Manual cards remain separate.
+      All 490 frontend tests, production build and expanded desktop/390px browser
+      checks passed. Actual local simulator UI showed library-only activity,
+      zero riding/parked defaults and an empty historical gap. Demo animation
+      remains separate. No commit, deployment or hardware validation is claimed.
+      See [live rendering](../notes/live-device-rendering-2026-11-06.md).
+
+- [x] 2026-11-06: Connect a virtual V3 device to the normal live frontend with
+      explicit `--view live` in an isolated ephemeral local D1. Normal policy,
+      applied ACK, lease and compact uploads feed unchanged field summary/history
+      APIs; synthetic provenance remains in administration. Default controlled
+      tests and historical replay retain isolation. Ten simulator tests, the
+      full browser smoke and TypeScript checks passed; in-app-browser checks
+      confirmed busy/quiet live refresh, history selection and return to live.
+      No production data, API filters, hardware, commit or deployment changed.
+      See [local virtual-device live debugging](../notes/v3-device-simulator.md).
+
 - [x] 2026-11-06: Connect complete saved CPRAW aggregates to the deployed main
       frontend through authenticated historical replay. Version `5c180e39` and
       migration 0020 retain all 602,315 reports / 113 windows with original timing,

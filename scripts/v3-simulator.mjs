@@ -19,7 +19,7 @@ const token = () => randomBytes(32).toString('base64url');
 const check = (value, message) => { if (!value) throw new Error(message); };
 
 export function parseSimulatorArgs(args) {
-  const result = { port: 5174, cadenceMs: 1000, scenario: 'quiet' };
+  const result = { port: 5174, cadenceMs: 1000, scenario: 'quiet', view: 'test' };
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i], value = args[i + 1];
     check(value !== undefined, 'Each option needs a value.');
@@ -27,11 +27,14 @@ export function parseSimulatorArgs(args) {
     else if (key === '--window-ms') result.cadenceMs = Number(value);
     else if (key === '--scenario') result.scenario = value;
     else if (key === '--replay') result.replayFile = value;
-    else throw new Error('Unknown option. Use --port, --window-ms, --scenario or --replay.');
+    else if (key === '--view') result.view = value;
+    else throw new Error('Unknown option. Use --port, --window-ms, --scenario, --view or --replay.');
   }
   check(Number.isInteger(result.port) && result.port >= 1024 && result.port <= 65535, 'Port must be 1024–65535.');
   check([1000, 30000, 60000].includes(result.cadenceMs), 'Window must be 1000, 30000 or 60000ms.');
   check(['quiet', 'busy', 'loss', 'offline', 'failed'].includes(result.scenario), 'Unknown scenario.');
+  check(['test', 'live'].includes(result.view), 'View must be test or live.');
+  check(!result.replayFile || result.view !== 'live', 'Historical replay cannot enter the local live view.');
   return result;
 }
 
@@ -61,11 +64,17 @@ async function sendResponse(outgoing, response) {
 
 /** Each launch gets an independent ephemeral D1 and random local identities. */
 export async function startV3Simulator(options = {}) {
+  check(!options.replayFile || options.view !== 'live', 'Historical replay cannot enter the local live view.');
   const replay = options.replayFile ? await loadV3Replay(options.replayFile) : null;
   check(!replay || !['busy', 'loss'].includes(options.scenario), 'Synthetic activity injection is unavailable during historical replay.');
-  const { port, cadenceMs, scenario } = parseSimulatorArgs([
+  const { port, cadenceMs, scenario, view } = parseSimulatorArgs([
     '--port', String(options.port ?? 5174), '--window-ms', String(replay?.window_ms ?? options.cadenceMs ?? 1000), '--scenario', options.scenario ?? 'quiet',
+    '--view', options.view ?? 'test',
   ]);
+  // This permission is injected only by the local launcher, which owns an
+  // independent, nonpersistent Miniflare D1. It never changes a remote policy.
+  const localConfiguration = view === 'live' ? Object.freeze({ storage: 'ephemeral-local-d1', dataset: 'field', purpose: 'site_observation' }) : undefined;
+  const dataset = localConfiguration?.dataset ?? 'controlled_test';
   const origin = `http://127.0.0.1:${port}`;
   const secret = token(), deviceBearer = token(), webhookKey = token();
   let mf, vite, device, interval, closing = false, lastError = null, rebootCount = 0;
@@ -159,7 +168,7 @@ export async function startV3Simulator(options = {}) {
       check(inspection.status === 200, 'Cannot inspect local device.');
       const state = await inspection.json();
       const generation = (state.desired?.policy?.assignment_generation ?? 0) + 1;
-      const policy = await createSimulationPolicy(device.capabilities, { placementId: PLACEMENT, cadenceMs, generation });
+      const policy = await createSimulationPolicy(device.capabilities, { placementId: PLACEMENT, cadenceMs, generation, localConfiguration });
       const result = await mf.dispatchFetch(origin + '/api/v1/admin/device-v3/assignments', { method: 'POST',
         headers: { Cookie: cookie, Origin: origin, 'Content-Type': 'application/json' },
         body: JSON.stringify({ policy, expected_generation: generation - 1 }) });
@@ -170,7 +179,7 @@ export async function startV3Simulator(options = {}) {
     }
     async function boot(nextScenario) {
       device = await createSimulatedV3Device({ nodeId: NODE, deviceBearer, cadenceMs, scenario: nextScenario,
-        transport: 'mqtt_tls', request: deviceRequest, replay });
+        transport: 'mqtt_tls', request: deviceRequest, replay, localConfiguration });
       // Register before enabling the requested offline scenario.
       if (nextScenario === 'offline') device.setScenario('quiet');
       await device.start();
@@ -181,10 +190,10 @@ export async function startV3Simulator(options = {}) {
       if (nextScenario === 'offline') device.setScenario('offline');
     }
     await boot(scenario);
-    const snapshot = () => ({ schema: 'campuspulse-v3-simulator/1', dataset: 'controlled_test', node_id: NODE,
+    const snapshot = () => ({ schema: 'campuspulse-v3-simulator/1', dataset, view, isolation: 'ephemeral-local-d1', node_id: NODE,
       window_ms: device.status().cadenceMs, reboot_count: rebootCount, last_error: lastError, transport: { ...transportStatus },
       source: replay ? 'historical_cpraw_replay' : 'synthetic',
-      device: device.status(), urls: { admin: '/__simulator/admin', public: '/' } });
+      device: device.status(), urls: { admin: '/__simulator/admin', public: '/?mode=field&place=library' } });
     const plugin = {
       name: 'campuspulse-local-v3-simulator',
       configureServer(server) {
@@ -273,7 +282,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   let simulator;
   try {
     simulator = await startV3Simulator(parseSimulatorArgs(process.argv.slice(2)));
-    console.log(`V3 模拟设备（${simulator.snapshot().source === 'historical_cpraw_replay' ? '历史采集回放' : '合成数据'} / controlled_test）: ${simulator.origin}/__simulator`);
+    console.log(`V3 模拟设备（${simulator.snapshot().source === 'historical_cpraw_replay' ? '历史采集回放' : '合成数据'} / ${simulator.snapshot().dataset} / 临时本地数据库）: ${simulator.origin}/__simulator`);
+    console.log(`正常现场前台：${simulator.origin}${simulator.snapshot().urls.public}`);
     console.log('本地管理后台：控制面板中点击自动登录。Ctrl+C 停止；临时数据库和会话队列随进程结束清空。');
     for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => { await simulator.close(); process.exit(0); });
   } catch {

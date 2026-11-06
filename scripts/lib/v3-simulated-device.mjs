@@ -10,8 +10,15 @@ const check = (ok, message) => { if (!ok) throw new Error(message); };
 export const SIMULATION_SCENARIOS = Object.freeze(['quiet', 'busy', 'loss', 'offline', 'failed']);
 const cadence = n => { check([1000, 30000, 60000].includes(n), 'Cadence must be 1000, 30000 or 60000ms.'); return n; };
 const transportMode = value => { check(['https', 'mqtt_tls'].includes(value), 'Unsupported simulation transport.'); return value; };
-function safePolicy(p, transport) {
-  check(p.custody.dataset === 'controlled_test' && p.custody.purpose === 'controlled_test' && p.local_raw.mode === 'off', 'Simulation requires controlled_test and raw disabled.');
+function simulationCustody(localConfiguration) {
+  if (localConfiguration === undefined) return Object.freeze({ dataset: 'controlled_test', purpose: 'controlled_test' });
+  check(localConfiguration?.storage === 'ephemeral-local-d1' && localConfiguration.dataset === 'field' &&
+    localConfiguration.purpose === 'site_observation', 'Live simulation requires explicit ephemeral local field configuration.');
+  return Object.freeze({ dataset: localConfiguration.dataset, purpose: localConfiguration.purpose });
+}
+function safePolicy(p, transport, custody) {
+  check(p.custody.dataset === custody.dataset && p.custody.purpose === custody.purpose && p.local_raw.mode === 'off',
+    'Simulation policy must match the configured dataset/purpose and keep raw disabled.');
   check(p.evidence.mode === 'statistics' && p.evidence.schema === 'window-statistics/1' && p.evidence.extractor_version === 'cp-v3-stats/1' &&
     p.evidence.ruleset_version === 'unclassified-v1' && (p.temporal?.mode === 'off' ||
       p.temporal?.mode === 'rolling' && p.temporal.report_mode === 'off'), 'Unsupported simulation statistics policy.');
@@ -29,7 +36,8 @@ function safePolicy(p, transport) {
  * @param {any} options
  */
 export async function createSimulationPolicy(capabilities, { placementId, cadenceMs = 1000, generation = 1, now = Date.now(), leaseDurationMs = 120000,
-  transport = capabilities.uplink?.transports?.[0] ?? 'https' } = {}) {
+  transport = capabilities.uplink?.transports?.[0] ?? 'https', localConfiguration } = {}) {
+  const custody = simulationCustody(localConfiguration);
   cadence(cadenceMs);
   transportMode(transport);
   check(capabilities.uplink?.transports?.includes(transport), 'Selected transport is absent from simulated capabilities.');
@@ -42,7 +50,8 @@ export async function createSimulationPolicy(capabilities, { placementId, cadenc
   p.control.activation.after_segment_seq = 0;
   p.control.lease.duration_ms = leaseDurationMs;
   p.uplink.transport = transport;
-  safePolicy(p, transport);
+  Object.assign(p.custody, custody);
+  safePolicy(p, transport, custody);
   return (await tools.freezeDeviceConfigV3(p)).policy;
 }
 
@@ -56,10 +65,12 @@ export async function createSimulatedV3Device(options) {
 }
 
 export class SimulatedV3Device {
-  constructor({ nodeId, deviceBearer, request, cadenceMs = 1000, scenario = 'quiet', now = Date.now, transport = 'https', replay = null }, tools, caps) {
+  constructor({ nodeId, deviceBearer, request, cadenceMs = 1000, scenario = 'quiet', now = Date.now, transport = 'https', replay = null, localConfiguration }, tools, caps) {
     check(typeof request === 'function' && typeof nodeId === 'string' && typeof deviceBearer === 'string', 'A node, credential and injected request are required.');
     this.cadenceMs = cadence(cadenceMs); this.tools = tools; this.clock = now;
     this.transport = transportMode(transport);
+    this.custody = simulationCustody(localConfiguration);
+    check(!replay || this.custody.dataset === 'controlled_test', 'Historical replay cannot enter the local live view.');
     check(caps.uplink?.transports?.includes(this.transport), 'Selected transport is absent from simulated capabilities.');
     this.nodeId = nodeId; this.bearer = deviceBearer; this.request = request; this.caps = caps;
     this.bootAt = now(); this.running = false; this.registered = false; this.pending = [];
@@ -74,7 +85,7 @@ export class SimulatedV3Device {
   get capabilities() { return structuredClone(this.caps); }
   setScenario(value) { check(SIMULATION_SCENARIOS.includes(value), 'Unknown simulation scenario.'); this.scenario = value; return this.status(); }
   status() {
-    return { nodeId: this.nodeId, bootId: this.caps.boot_id, producer: 'synthetic-statistics/1', dataset: 'controlled_test',
+    return { nodeId: this.nodeId, bootId: this.caps.boot_id, producer: 'synthetic-statistics/1', dataset: this.custody.dataset,
       running: this.running, registered: this.registered, scenario: this.scenario, phase: this.phase, cadenceMs: this.cadenceMs, transport: this.transport,
       queuePersistence: 'session-only', powerLossRecovery: false, pendingItems: this.pending.length,
       pendingControlItems: Number(!!this.pendingAck) + Number(!!this.pendingLease),
@@ -146,7 +157,7 @@ export class SimulatedV3Device {
     if (this.pending.length) return;
     let compatible = true;
     try {
-      safePolicy(p, this.transport);
+      safePolicy(p, this.transport, this.custody);
       if (this.replay) check(p.collection.summary.window_ms === this.replay.window_ms && p.collection.summary.bin_ms === this.replay.bin_ms,
         'Replay cadence is immutable for this source.');
     } catch { compatible = false; }
@@ -178,7 +189,7 @@ export class SimulatedV3Device {
   envelope(stream, item) {
     const p = this.applied.policy;
     const value = { p: 3, z: 'statistics/1', b: randomUUID(), n: this.nodeId, o: this.caps.boot_id,
-      c: p.policy_id, h: this.applied.policy_sha256, g: p.assignment_generation, d: 'controlled_test', k: stream, x: [item] };
+      c: p.policy_id, h: this.applied.policy_sha256, g: p.assignment_generation, d: this.custody.dataset, k: stream, x: [item] };
     const body = JSON.stringify(value);
     check(Buffer.byteLength(body) <= p.uplink.max_body_bytes, 'Synthetic batch exceeds negotiated body budget.');
     return { body, stream, batchId: value.b, attempts: 0, totalAttempts: 0, nextAttemptAt: 0, retry: { ...p.uplink.retry } };
