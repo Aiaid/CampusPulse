@@ -71,8 +71,12 @@ publication/deployment is checked against the actual main workflow run.
       Verify host/browser/build coverage and separately validate real reboot.
       Default setup and targeted fixes are committed/pushed and directly deployed;
       Waveshare normal setup, automatic grant and saved restart passed bounded
-      acceptance. T-Energy applied its new sustained quota; subsequent upload and
-      restart acceptance remain pending. See the
+      acceptance. T-Energy applied its new sustained quota, recovered old bodies
+      and produced new uploads after automatic restart; planned-cycle continuation
+      remains unaccepted. A November 7 snapshot confirms 161 Waveshare windows
+      and eight same-boot renewals over 165.67 minutes; current USB targets are
+      absent and further device diagnosis requires reconnection. See the
+      [overall integration record](../notes/automatic-startup-integration-2026-11-06.md) and
       [release and evidence record](../notes/default-autostart-2026-11-06.md).
 
 - [ ] Repair administrator V3 policy preparation after the real 2026-11-03

@@ -2,9 +2,11 @@
 
 Status: committed, pushed and deployed. Waveshare completed the normal webpage
 save flow, real applied ACK, automatic grant and saved-profile restart. T-Energy
-applied the new continuous-operation budget; its subsequent upload/restart
-acceptance is still being recorded. Same-boot continuous renewal is a separate
-follow-up and is not established by the earlier restart test.
+applied the new continuous-operation budget and completed automatic restart,
+old-body recovery and new uploads. Its planned-cycle continuation remains
+unaccepted. The later Waveshare 0.5.2 run established eight same-boot renewals and
+161 windows over a bounded 165.67-minute observation span; see the
+[overall integration record](automatic-startup-integration-2026-11-06.md).
 This supersedes the earlier blanket restriction on saved PEAP in the
 [November 3 authentication repair](v3-usb-wifi-auth-2026-11-03.md).
 
@@ -105,7 +107,8 @@ The USB-free boot registered and applied a policy, but USB was reconnected befor
 it completed a full window. The subsequent saved-profile boot uploaded windows
 without host configuration or time commands. Neither is an all-day or arbitrary
 power-loss test. The newer continuous, same-boot runtime remains separately
-tracked.
+tracked. The later overall record contains the actual repeated same-boot result,
+its observed gaps/failure counters and the current disconnected-device boundary.
 
 ## Verification boundary
 
